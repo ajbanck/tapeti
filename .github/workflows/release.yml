@@ -1,0 +1,116 @@
+name: Release desktop builds
+
+# Builds Tapeti — the desktop app in desktop/ — for macOS (universal), Linux and
+# Windows, and attaches the packages to a draft GitHub release. Runs on version
+# tags, or by hand from the Actions tab, which is the way to try the packaging
+# without cutting a release: the artifacts are attached to the run.
+#
+# Everything here is `node scripts/build-desktop.mjs --package`, the same command
+# used by hand, so a release is not a second way of building the app.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One binary for both architectures; the app declares macOS 11.
+          - os: macos-latest
+            args: --universal
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            name: macos
+          # Oldest supported LTS: it sets the glibc floor for the AppImage.
+          - os: ubuntu-22.04
+            args: ''
+            targets: ''
+            name: linux
+          - os: windows-latest
+            args: ''
+            targets: ''
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only to run the packaging script; the app itself has no JavaScript in it.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      # ALSA for cpal's output; the rest of the stack (winit, glutin, rfd's portal
+      # dialogs, arboard) loads what it needs at runtime.
+      - name: Install Linux dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+
+      # Nothing in the tree depends on appimagetool; without it the job still
+      # produces the tarball.
+      - name: Fetch appimagetool
+        if: matrix.name == 'linux'
+        run: |
+          url=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl -sSfL "$url" -o "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+
+      # Windows file associations are registry entries, so they need an installer.
+      # Pinned to the last version before the Open Source Maintenance Fee: WiX 6
+      # and 7 refuse to run until their OSMF EULA is accepted (error WIX7015),
+      # and that is a licence decision, not something a workflow should take.
+      - name: Install WiX
+        if: matrix.name == 'windows'
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build and package
+        run: node scripts/build-desktop.mjs --package ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tapeti-${{ matrix.name }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.AppImage
+            desktop/dist/*.tar.gz
+            desktop/dist/*.msi
+            desktop/dist/*portable.exe
+          if-no-files-found: error
+
+  # Tags get a draft release with everything attached; a manual run stops above,
+  # with the packages on the run itself.
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --title "Tapeti ${{ github.ref_name }}" \
+            --notes "Desktop builds. macOS bundles are unsigned: right-click, Open on first launch." \
+            packages/*

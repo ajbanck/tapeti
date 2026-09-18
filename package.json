@@ -1,0 +1,44 @@
+{
+  "name": "tapeti",
+  "version": "0.3.3",
+  "private": true,
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "description": "ZX Spectrum TZX/TAP tape editor for the desktop and the browser",
+  "scripts": {
+    "dev": "vite",
+    "predev": "node scripts/build-wasm.mjs",
+    "build": "tsc --noEmit && vite build",
+    "prebuild": "node scripts/build-wasm.mjs",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "pretest": "node scripts/build-wasm.mjs",
+    "typecheck": "tsc --noEmit",
+    "pretypecheck": "node scripts/build-wasm.mjs",
+    "smoke": "node scripts/ui-smoke.mjs",
+    "presamples": "node scripts/build-wasm.mjs",
+    "samples": "node scripts/make-samples.mjs",
+    "core:wasm": "node scripts/build-wasm.mjs",
+    "core:test": "cd core && cargo test",
+    "desktop": "node scripts/build-desktop.mjs",
+    "desktop:debug": "node scripts/build-desktop.mjs --debug",
+    "desktop:test": "cd desktop && cargo test",
+    "desktop:package": "node scripts/build-desktop.mjs --package",
+    "clean": "cargo clean --manifest-path desktop/Cargo.toml && cargo clean --manifest-path core/Cargo.toml",
+    "core:fixtures": "node scripts/dump-blocks.mjs \"public/samples/Tapeti demo.tzx\" \"public/samples/Tapeti demo (variant).tzx\" \"public/samples/Tapeti demo.tap\""
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.2",
+    "pako": "^3.0.2",
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^26.6.1",
+    "@types/pako": "^2.0.4",
+    "puppeteer-core": "^25.11.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

@@ -1,0 +1,16 @@
+node_modules
+dist
+scratch
+core/target
+desktop/target
+desktop/dist
+src/tzx/core.wasm.ts
+
+# Private tapes stay out of the repo; only the generated samples are tracked
+*.tzx
+*.tap
+*.TZX
+*.TAP
+!public/samples/*.tzx
+!public/samples/*.tap
+.DS_Store

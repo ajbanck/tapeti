@@ -1,0 +1,67 @@
+[package]
+name = "tapeti-desktop"
+version = "0.3.3"
+description = "Tapeti, the desktop app: egui on the Rust tape core"
+license = "GPL-2.0-or-later"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "tapeti"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["glow", "wayland", "x11"] }
+egui = "0.36"
+tapeti-core = { path = "../core" }
+# Native file dialogs (open/save/pick a program), the rfd the Tauri build reaches
+# through its dialog plugin.
+rfd = "0.16"
+# Audio out. The web build hands its samples to Web Audio; here they go to the
+# default output device.
+cpal = "0.18"
+# Inflating Z-RLE CSW blocks: the core is dependency-free on purpose, so zlib
+# lives on this side, the way the web build uses pako.
+miniz_oxide = "0.9"
+# "Save PNG" in the screen view.
+png = "0.18"
+# The system clipboard, for Paste into a focused text field: on macOS the menu
+# owns ⌘V, so the keystroke eframe would have turned into a paste never arrives.
+# Already in the tree — eframe uses it for the same job.
+arboard = { version = "3.6", default-features = false }
+
+# Two macOS-only needs. `muda` is the platform's own menu bar, the same crate the
+# Tauri shell used here until stage 5, called directly — macOS only, because
+# `init_for_hwnd` on a winit window breaks the client area (see src/menu.rs), so
+# Windows draws the egui bar like Linux. `objc2` is "open with": Launch Services
+# sends an Apple Event rather than argv and neither eframe nor winit surfaces it
+# (see src/macos.rs). Both are versions the rest of the tree already builds.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = "0.20"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSArray",
+  "NSNotification",
+  "NSObject",
+  "NSOperation",
+  "NSString",
+  "NSURL",
+] }
+
+# Not the core's size-first profile: this one is a desktop binary, not a wasm
+# module in a web bundle. Kept here rather than in a workspace root so that
+# core/Cargo.toml keeps owning the profile the wasm build needs.
+#
+# `strip = "debuginfo"` rather than `true`: the symbol table is what makes the
+# backtrace in `crashlog.rs` name functions instead of repeating
+# `__mh_execute_header`, and a report that names the call path is the whole
+# point of writing one. It costs 0.77 MB of 6.2, which is a trade this profile
+# is already on the right side of.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = "debuginfo"

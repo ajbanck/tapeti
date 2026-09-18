@@ -1,0 +1,24 @@
+[package]
+name = "tapeti-core"
+version = "0.3.3"
+description = "TZX/TAP data layer for Tapeti"
+license = "GPL-2.0-or-later"
+edition = "2021"
+
+[lib]
+name = "tapeti_core"
+path = "src/lib.rs"
+# cdylib for the wasm build the app loads, rlib for the tests and for the native
+# binary stage 3 links against.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+# The wasm module ships in the web bundle, so it is built for size: no unwinding
+# tables, one codegen unit, LTO, symbols stripped.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

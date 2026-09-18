@@ -1,0 +1,186 @@
+//! Tables the UI shows and the core does not need: the archive-info kinds and
+//! the hardware list of `src/tzx/types.ts`.
+//!
+//! They stay out of `core/` for the same reason the block names nearly did —
+//! they are labels, not data the parser or the writer depends on. Generated
+//! from the TypeScript once, in its order, so the two dropdowns offer the same
+//! choices in the same places.
+
+/// `ARCHIVE_TYPES`: the kind byte of an Archive info entry.
+pub const ARCHIVE_TYPES: &[(u8, &str)] = &[
+    (0x00, "Full title"),
+    (0x01, "Software house/publisher"),
+    (0x02, "Author(s)"),
+    (0x03, "Year of publication"),
+    (0x04, "Language"),
+    (0x05, "Game/utility type"),
+    (0x06, "Price"),
+    (0x07, "Protection scheme/loader"),
+    (0x08, "Origin"),
+    (0xff, "Comment(s)"),
+];
+
+/// `HARDWARE_INFO`: what the entry says about the hardware.
+pub const HARDWARE_INFO: [&str; 4] = [
+    "Runs on this hardware",
+    "Uses this hardware",
+    "Runs but does not use the hardware",
+    "Does not run on this hardware",
+];
+
+/// `HARDWARE_TYPES`: hardware class, then the devices in it.
+pub const HARDWARE_TYPES: &[(&str, &[&str])] = &[
+    (
+        "Computers",
+        &[
+            "ZX Spectrum 16k",
+            "ZX Spectrum 48k, Plus",
+            "ZX Spectrum 48k ISSUE 1",
+            "ZX Spectrum 128k +(Sinclair)",
+            "ZX Spectrum 128k +2 (grey case)",
+            "ZX Spectrum 128k +2A, +3",
+            "Timex Sinclair TC-2048",
+            "Timex Sinclair TS-2068",
+            "Pentagon 128",
+            "Sam Coupe",
+            "Didaktik M",
+            "Didaktik Gama",
+            "ZX-80",
+            "ZX-81",
+            "ZX Spectrum 128k, Spanish version",
+            "ZX Spectrum, Arabic version",
+            "Microdigital TK 90-X",
+            "Microdigital TK 95",
+            "Byte",
+            "Elwro 800-3",
+            "ZS Scorpion 256",
+            "Amstrad CPC 464",
+            "Amstrad CPC 664",
+            "Amstrad CPC 6128",
+            "Amstrad CPC 464+",
+            "Amstrad CPC 6128+",
+            "Jupiter ACE",
+            "Enterprise",
+            "Commodore 64",
+            "Commodore 128",
+            "Inves Spectrum+",
+            "Profi",
+            "GrandRomMax",
+            "Kay 1024",
+            "Ice Felix HC 91",
+            "Ice Felix HC 2000",
+            "Amaterske RADIO Mistrum",
+            "Quorum 128",
+            "MicroART ATM",
+            "MicroART ATM Turbo 2",
+            "Chrome",
+            "ZX Badaloc",
+            "TS-1500",
+            "Lambda",
+            "TK-65",
+            "ZX-97",
+        ],
+    ),
+    (
+        "External storage",
+        &[
+            "ZX Microdrive",
+            "Opus Discovery",
+            "MGT Disciple",
+            "MGT Plus-D",
+            "Rotronics Wafadrive",
+            "TR-DOS (BetaDisk)",
+            "Byte Drive",
+            "Watsford",
+            "FIZ",
+            "Radofin",
+            "Didaktik disk drives",
+            "BS-DOS (MB-02)",
+            "ZX Spectrum +3 disk drive",
+            "JLO (Oliger) disk interface",
+            "Timex FDD3000",
+            "Zebra disk drive",
+            "Ramex Millenia",
+            "Larken",
+            "Kempston disk interface",
+            "Sandy",
+            "ZX Spectrum +3e hard disk",
+            "ZXATASP",
+            "DivIDE",
+            "ZXCF",
+        ],
+    ),
+    (
+        "ROM/RAM type add-ons",
+        &[
+            "Sam Ram",
+            "Multiface ONE",
+            "Multiface 128k",
+            "Multiface +3",
+            "MultiPrint",
+            "MB-02 ROM/RAM expansion",
+            "SoftROM",
+            "1k",
+            "16k",
+            "48k",
+            "Memory in 8-16k used",
+        ],
+    ),
+    (
+        "Sound devices",
+        &[
+            "Classic AY hardware (compatible with 128k ZXs)",
+            "Fuller Box AY sound hardware",
+            "Currah microSpeech",
+            "SpecDrum",
+            "AY ACB stereo (A+C=left, B+C=right); Melodik",
+            "AY ABC stereo (A+B=left, B+C=right)",
+            "RAM Music Machine",
+            "Covox",
+            "General Sound",
+            "Intec Electronics Digital Interface B8001",
+            "Zon-X AY",
+            "QuickSilva AY",
+            "Jupiter ACE",
+        ],
+    ),
+    (
+        "Joysticks",
+        &["Kempston", "Cursor, Protek, AGF", "Sinclair 2 Left (12345)", "Sinclair 1 Right (67890)", "Fuller"],
+    ),
+    ("Mice", &["AMX mouse", "Kempston mouse"]),
+    ("Other controllers", &["Trickstick", "ZX Light Gun", "Zebra Graphics Tablet", "Defender Light Gun"]),
+    ("Serial ports", &["ZX Interface 1", "ZX Spectrum 128k"]),
+    (
+        "Parallel ports",
+        &[
+            "Kempston S",
+            "Kempston E",
+            "ZX Spectrum +3",
+            "Tasman",
+            "DK'Tronics",
+            "Hilderbay",
+            "INES Printerface",
+            "ZX LPrint Interface 3",
+            "MultiPrint",
+            "Opus Discovery",
+            "Standard 8255 chip with ports 31,63,95",
+        ],
+    ),
+    ("Printers", &["ZX Printer, Alphacom 32 & compatibles", "Generic printer", "EPSON compatible"]),
+    ("Modems", &["Prism VTX 5000", "T/S 2050 or Westridge 2050"]),
+    (
+        "Digitizers",
+        &["RD Digital Tracer", "DK'Tronics Light Pen", "British MicroGraph Pad", "Romantic Robot Videoface"],
+    ),
+    ("Network adapters", &["ZX Interface 1"]),
+    ("Keyboards & keypads", &["Keypad for ZX Spectrum 128k"]),
+    ("AD/DA converters", &["Harley Systems ADC 8.2", "Blackboard Electronics"]),
+    ("EPROM programmers", &["Orme Electronics"]),
+    ("Graphics", &["WRX Hi-Res", "G007", "Memotech", "Lambda Colour"]),
+];
+
+/// The devices of a hardware class.
+pub fn hardware_ids(kind: u8) -> &'static [&'static str] {
+    HARDWARE_TYPES.get(kind as usize).map_or(&[], |(_, ids)| *ids)
+}
