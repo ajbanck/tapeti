@@ -12,7 +12,7 @@ Desktop builds for macOS, Linux and Windows are attached to each
 
 | Platform | File | Requirements |
 |---|---|---|
-| macOS 11+ (Intel and Apple Silicon) | `.dmg` or `.zip` | The bundle is unsigned: right-click the app and choose **Open** the first time. |
+| macOS 11+ (Intel and Apple Silicon) | `.dmg` or `.zip` | The bundle is unsigned: run `xattr -cr /Applications/Tapeti.app` once, or open it from System Settings > Privacy & Security. |
 | Linux | `.AppImage` or `.tar.gz` | glibc 2.35 (Ubuntu 22.04 and newer); ALSA for sound. |
 | Windows 10+ | `.msi`, or the portable `.exe` | Nothing: the app is one self-contained binary. |
 

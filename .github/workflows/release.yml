@@ -117,5 +117,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --draft \
             --title "${{ github.ref_name }}" \
-            --notes "Desktop builds. macOS bundles are unsigned: right-click, Open on first launch." \
+            --notes "Desktop builds. macOS bundles are unsigned: run \`xattr -cr Tapeti.app\` once, or allow the app under System Settings > Privacy & Security." \
             packages/*
