@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # One binary for both architectures; the app declares macOS 11.
+          # One binary for both architectures; the app declares macOS 10.14.
           - os: macos-latest
             args: --universal
             targets: aarch64-apple-darwin,x86_64-apple-darwin

@@ -12,7 +12,7 @@ Desktop builds for macOS, Linux and Windows are attached to each
 
 | Platform | File | Requirements |
 |---|---|---|
-| macOS 11+ (Intel and Apple Silicon) | `.dmg` or `.zip` | The bundle is unsigned: run `xattr -cr /Applications/Tapeti.app` once, or open it from System Settings > Privacy & Security. |
+| macOS 10.14+ (Intel), 11+ (Apple Silicon) | `.dmg` or `.zip` | The bundle is unsigned: run `xattr -cr /Applications/Tapeti.app` once, or open it from System Settings > Privacy & Security. |
 | Linux | `.AppImage` or `.tar.gz` | glibc 2.35 (Ubuntu 22.04 and newer); ALSA for sound. |
 | Windows 10+ | `.msi`, or the portable `.exe` | Nothing: the app is one self-contained binary. |
 
@@ -182,7 +182,7 @@ one binary, the way the release workflow does.
 
 | Platform | Minimum | Notes |
 |---|---|---|
-| macOS | 11 | Intel and Apple Silicon in one universal binary from CI. |
+| macOS | 10.14 on Intel, 11 on Apple Silicon | Both in one universal binary from CI; Apple Silicon never had anything older than 11. |
 | Linux | Ubuntu 22.04 (glibc 2.35) | X11 or Wayland, OpenGL 3.3 or GLES, ALSA for sound. |
 | Windows | 10 | One executable; the `.msi` only adds the shortcut and the file associations. |
 | Browser | Safari 14.1, Chrome 90, Firefox 90 | The build targets these engines explicitly. |

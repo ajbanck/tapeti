@@ -137,7 +137,10 @@ function macApp() {
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${version}</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <!-- Mojave is winit's regularly-tested floor, and the first macOS with a dark mode
+       for the theme switch to follow. The Intel slice itself is built for 10.12 and
+       the Apple Silicon one starts at 11, so this key is what sets the floor. -->
+  <key>LSMinimumSystemVersion</key><string>10.14</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleDocumentTypes</key>
