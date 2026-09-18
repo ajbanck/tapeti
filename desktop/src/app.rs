@@ -546,7 +546,30 @@ impl App {
         if self.theme_applied != Some(want) {
             self.tokens = theme::tokens(want.0, want.1);
             ctx.set_visuals(self.tokens.visuals());
-            self.theme_applied = Some(want);
+            // The WM draws the title bar from `_GTK_THEME_VARIANT`, and winit's
+            // X11 fallback for "no preference" is dark: a black bar over a light
+            // window. So name the variant rather than leaving it unset.
+            //
+            // macOS in "system" mode is the exception: naming one pins
+            // `NSWindow.appearance`, and winit's observer then stops reporting
+            // appearance changes for a window the app has customised, so
+            // "system" would freeze at whatever it was at launch. Unpinned the
+            // title bar already follows the desktop, and going back to "system"
+            // unpins it, which makes the observer emit the theme it missed.
+            ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(
+                if cfg!(target_os = "macos") && want.0 == Theme::System {
+                    egui::SystemTheme::SystemDefault
+                } else if self.tokens.dark {
+                    egui::SystemTheme::Dark
+                } else {
+                    egui::SystemTheme::Light
+                },
+            ));
+            // Frame one has no window yet, so that hint is dropped: leave
+            // `theme_applied` unset to send it again once there is one.
+            if !self.first_frame {
+                self.theme_applied = Some(want);
+            }
         }
 
         self.progress = self.player.poll();
