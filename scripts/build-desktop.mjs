@@ -7,11 +7,15 @@
 //   (nothing)    release build, plus Tapeti.app on macOS
 //   --debug      debug build, for a quick run
 //   --package    also write the artifacts a release carries:
-//                  macOS    Tapeti_<version>_<arch>.dmg and .zip
-//                  Linux    Tapeti-<version>-<arch>.AppImage (if appimagetool is
-//                           there) and a .tar.gz, always
-//                  Windows  Tapeti_<version>_x64_portable.exe and, with the WiX
-//                           `wix` command on PATH, an .msi that registers .tzx/.tap
+//                Names follow the other zxtoolkit releases,
+//                Tapeti-v<version>-<platform>-<arch>.<ext>, so a file still says
+//                what it is for once it has been downloaded:
+//                  macOS    Tapeti-v<version>-macos-<arch>.dmg and .zip
+//                  Linux    Tapeti-v<version>-linux-<arch>.AppImage (if appimagetool
+//                           is there) and a .tar.gz, always
+//                  Windows  Tapeti-v<version>-windows-x86_64-portable.exe and, with
+//                           the WiX `wix` command on PATH, an .msi that registers
+//                           .tzx/.tap
 //   --universal  macOS: build both architectures and lipo them into one binary
 //   --no-build   package what is already in desktop/target
 //
@@ -173,9 +177,9 @@ function macApp() {
 /** A .dmg and a .zip of the bundle. `hdiutil create` lays the image out itself, so
  *  unlike the DMG packager Tauri used it opens no Finder window. */
 function macPackages(app) {
-  const arch = universal ? 'universal' : process.arch === 'x64' ? 'x64' : 'aarch64';
-  const dmg = out(`Tapeti_${version}_${arch}.dmg`);
-  const zip = out(`Tapeti_${version}_${arch}.zip`);
+  const arch = universal ? 'universal' : process.arch === 'x64' ? 'x86_64' : 'aarch64';
+  const dmg = out(`Tapeti-v${version}-macos-${arch}.dmg`);
+  const zip = out(`Tapeti-v${version}-macos-${arch}.zip`);
   const staging = join(dist, 'dmg');
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
@@ -225,17 +229,18 @@ function linuxPackages() {
   chmodSync(join(appdir, 'AppRun'), 0o755);
 
   const made = [];
-  const tar = out(`Tapeti_${version}_${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}.tar.gz`);
+  const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
+  const tar = out(`Tapeti-v${version}-linux-${arch}.tar.gz`);
   run('tar', ['-czf', tar, '-C', appdir, 'usr/bin/tapeti', 'tapeti.desktop', 'tapeti.png']);
   made.push(tar);
 
   // appimagetool is not a build dependency: without it the tarball is the download.
   const tool = process.env.APPIMAGETOOL || 'appimagetool';
-  const appimage = out(`Tapeti-${version}-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}.AppImage`);
+  const appimage = out(`Tapeti-v${version}-linux-${arch}.AppImage`);
   try {
     rmSync(appimage, { force: true });
     run(tool, ['--appimage-extract-and-run', appdir, appimage], {
-      env: { ...process.env, ARCH: process.arch === 'arm64' ? 'aarch64' : 'x86_64' },
+      env: { ...process.env, ARCH: arch },
     });
     made.push(appimage);
   } catch (e) {
@@ -292,7 +297,7 @@ function wxs() {
 
 function windowsPackages() {
   const made = [];
-  const portable = out(`Tapeti_${version}_x64_portable.exe`);
+  const portable = out(`Tapeti-v${version}-windows-x86_64-portable.exe`);
   copyFileSync(bin, portable);
   made.push(portable);
 
@@ -303,7 +308,7 @@ function windowsPackages() {
   copyFileSync(bin, join(staging, 'tapeti.exe'));
   copyFileSync(join(icons, 'icon.ico'), join(staging, 'icon.ico'));
   writeFileSync(join(staging, 'tapeti.wxs'), wxs());
-  const msi = out(`Tapeti_${version}_x64.msi`);
+  const msi = out(`Tapeti-v${version}-windows-x86_64.msi`);
   try {
     run('wix', ['build', 'tapeti.wxs', '-arch', 'x64', '-o', msi], { cwd: staging, shell: true });
     made.push(msi);
