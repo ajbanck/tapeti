@@ -1,6 +1,6 @@
 [package]
 name = "tapeti-desktop"
-version = "0.3.3"
+version = "0.4.0"
 description = "Tapeti, the desktop app: egui on the Rust tape core"
 license = "GPL-2.0-or-later"
 edition = "2021"
