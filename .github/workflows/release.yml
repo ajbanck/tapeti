@@ -104,10 +104,90 @@ jobs:
         with:
           path: packages
           merge-multiple: true
+      # The notes below name every file, and the names carry the version from
+      # Cargo.toml while the release carries the tag. If those two ever drift,
+      # the notes would point at downloads that are not there: stop instead.
+      - name: Check the packages match the tag
+        run: |
+          set -eu
+          cd packages
+          for f in Tapeti-$V-macos-universal.dmg \
+                   Tapeti-$V-macos-universal.zip \
+                   Tapeti-$V-linux-x86_64.AppImage \
+                   Tapeti-$V-linux-x86_64.tar.gz \
+                   Tapeti-$V-windows-x86_64.msi \
+                   Tapeti-$V-windows-x86_64-portable.exe; do
+            [ -s "$f" ] || { echo "::error::missing or empty: $f"; exit 1; }
+          done
+        env:
+          V: ${{ github.ref_name }}
+
       # One line per package, so a download can be checked with `shasum -c`.
       # Named rather than globbed, to keep the sums file out of its own listing.
       - name: Checksum the packages
         run: cd packages && shasum -a 256 Tapeti-* > SHA256SUMS
+
+      # The notes a release page carries, as SevenuP's workflow writes them: a
+      # heredoc here rather than a file in the repo, because this job only
+      # downloads the packages and never checks the tree out. VERSION becomes
+      # the tag, which is also what the file names hold. Anything about this
+      # release in particular is added to the draft by hand before publishing.
+      - name: Write the release notes
+        run: |
+          sed "s|VERSION|$V|g" > release-notes.md <<'NOTES'
+          Tapeti is an editor for ZX Spectrum TZX and TAP tape images. Everything
+          runs locally: no file is uploaded anywhere.
+
+          The desktop app is one native executable — no WebView2, no system
+          WebKit, no WebKitGTK — and the `.tzx` and `.tap` file associations come
+          with the bundle on macOS and with the installer on Windows.
+
+          **macOS** (Intel and Apple Silicon)
+
+          1. Download **Tapeti-VERSION-macos-universal.dmg**
+          2. Open it and drag **Tapeti.app** to Applications
+          3. Run `xattr -cr /Applications/Tapeti.app`, then double-click the app
+
+          The bundle is unsigned, which is what step 3 is for: without it macOS
+          refuses to open the app. If you would rather not use the terminal,
+          double-click the app anyway and then go to System Settings > Privacy &
+          Security, where a button offers to open it after all. Once it has opened
+          once, `.tzx` and `.tap` files can be double-clicked straight into it.
+          **Tapeti-VERSION-macos-universal.zip** holds the same app for anyone who
+          would rather not mount a disk image. One download for both: Intel needs
+          macOS 10.14 Mojave or newer, Apple Silicon needs 11 Big Sur or newer.
+
+          **Windows**
+
+          1. Download **Tapeti-VERSION-windows-x86_64.msi**
+          2. Run it; it installs the app, the Start menu shortcut and the `.tzx`
+             and `.tap` file associations
+          3. Start **Tapeti** from the Start menu
+
+          The installer is not signed, so the browser may ask you to keep the
+          download, and SmartScreen shows "Windows protected your PC" the first
+          time you run it: click **More info**, then **Run anyway**.
+
+          **Tapeti-VERSION-windows-x86_64-portable.exe** is the same app as a
+          single file that installs nothing; it has no file associations, since
+          those are registry entries only an installer writes. Windows 10 or newer.
+
+          **Linux**
+
+          1. Download **Tapeti-VERSION-linux-x86_64.AppImage**
+          2. Make it executable: `chmod +x Tapeti-VERSION-linux-x86_64.AppImage`
+          3. Run `./Tapeti-VERSION-linux-x86_64.AppImage`
+
+          Needs glibc 2.35 or newer — Ubuntu 22.04, Debian 12 or anything more
+          recent — and ALSA for sound. **Tapeti-VERSION-linux-x86_64.tar.gz**
+          holds the binary, the icon and a `.desktop` file for anyone who would
+          rather install it by hand.
+
+          `SHA256SUMS` is attached alongside the assets.
+          NOTES
+          cat release-notes.md
+        env:
+          V: ${{ github.ref_name }}
 
       - name: Draft the release
         env:
@@ -117,5 +197,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --draft \
             --title "${{ github.ref_name }}" \
-            --notes "Desktop builds. macOS bundles are unsigned: run \`xattr -cr Tapeti.app\` once, or allow the app under System Settings > Privacy & Security." \
+            --notes-file release-notes.md \
             packages/*
