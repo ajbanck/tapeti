@@ -101,8 +101,8 @@ Options → Emulator… picks another program (ZEsarUX, Spectaculator, a Flatpak
 If the exported part would break jumps, loops or calls, you are asked first. The browser build
 downloads the TZX instead.
 
-**Dec / Hex** switch, in the status bar of the main window and beside the data window's base
-address: it belongs to the screen it is on. The main window's covers the block list, the editor and
+**Dec / Hex** switch, in the bottom left corner of the main window and of the data window: it
+belongs to the screen it is on. The main window's covers the block list, the editor and
 the dialogs opened from it; the data window has its own, starting at Dec every time one is opened,
 so switching either leaves the other alone. Neither is remembered between sessions, and a field
 that wants a number takes `$`/`0x` for hex and `#` for decimal whatever base it is showing.

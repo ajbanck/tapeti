@@ -310,11 +310,13 @@ textarea.wide { width: 100%; }
 .datawin .hdrview .k { color: var(--muted); width: 130px; flex: none; }
 .datawin .hdrview .v { color: var(--text); white-space: pre; display: flex; align-items: center; gap: 6px; }
 /* The window's own Dec/Hex switch, the status bar's cell in the data window. */
-.datawin .controls .c.basecell { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; color: var(--muted); gap: 6px; transition: background .12s; }
-.datawin .controls .c.basecell:hover { background: var(--surface-3); color: var(--text); }
-.datawin .controls .c.basecell b { color: var(--text); font-weight: 600; font-size: 12px; }
-.datawin .controls .c.basecell.on { border-color: var(--accent-soft-2); background: var(--accent-soft); color: var(--accent); }
-.datawin .controls .c.basecell.on b { color: var(--accent); }
+.datawin .basecell { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; transition: background .12s; }
+.datawin .basecell:hover { background: var(--surface-3); color: var(--text); }
+.datawin .basecell b { color: var(--text); font-weight: 600; font-size: 12px; }
+.datawin .basecell.on { border-color: var(--accent-soft-2); background: var(--accent-soft); color: var(--accent); }
+.datawin .basecell.on b { color: var(--accent); }
+.datawin .mfooter { justify-content: flex-start; align-items: center; }
+.datawin .mfooter .vsep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
 .datawin .controls input[type=text] { width: 80px; }
 .datawin .view { flex: 1; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; font: var(--mono); position: relative; outline: none; }
 .datawin .view:focus-within { border-color: var(--accent); box-shadow: var(--focus); }

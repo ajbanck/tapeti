@@ -303,13 +303,6 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     w::num(ui, "dw-base", &mut dw.base, 0, 0xffff, hex, 70.0, true);
                     ui.label("Base address");
-                    // This window's switch, the status bar's cell put where the
-                    // numbers it applies to are.
-                    let label = if hex { "Hex" } else { "Dec" };
-                    let icon = Some(&crate::icons::HASH);
-                    if crate::statusbar::cell(ui, icon, "", label, hex, "Number base in this window", &tok) {
-                        dw.hex = !hex;
-                    }
                 });
             });
             let view = dw.view_bytes();
@@ -399,6 +392,14 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
             // ---- footer
             ui.separator();
             ui.horizontal(|ui| {
+                // This window's switch, in the corner the main window's status
+                // bar keeps its one.
+                let label = if hex { "Hex" } else { "Dec" };
+                let icon = Some(&crate::icons::HASH);
+                if crate::statusbar::cell(ui, icon, "", label, hex, "Number base in this window", &tok) {
+                    dw.hex = !hex;
+                }
+                ui.separator();
                 if ui.add_enabled(dw.single() && !locked, egui::Button::new("Append file")).clicked() {
                     pick_file = Some(false);
                 }
