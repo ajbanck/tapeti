@@ -147,6 +147,11 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   return (
     <Modal title={title} onClose={close} cls="datawin" footer={
       <>
+        {/* This window's own Dec/Hex switch, in the corner the main window's status bar keeps its one. */}
+        <div class={'basecell' + (h ? ' on' : '')} title="Number base in this window" onClick={() => setH(!h)}>
+          <Icon name="hash" size={13} /><b>{h ? 'Hex' : 'Dec'}</b>
+        </div>
+        <span class="vsep" />
         <button onClick={() => appendFile(false)} disabled={!single || isLocked}>Append file</button>
         <button onClick={() => appendFile(true)} disabled={!single || isLocked}>Replace from file</button>
         <button onClick={saveFile}>Save to file</button>
@@ -162,9 +167,6 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
           ))}
         </div>
         <div class="c grow" />
-        <div class={'c basecell' + (h ? ' on' : '')} title="Number base in this window" onClick={() => setH(!h)}>
-          <Icon name="hash" size={13} /><b>{h ? 'Hex' : 'Dec'}</b>
-        </div>
         <div class="c"><label>Base address</label><NumInput value={base} max={0xffff} hex={h} onChange={setBase} /></div>
       </div>
       <div class="controls secondary">
