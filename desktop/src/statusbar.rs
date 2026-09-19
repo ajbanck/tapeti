@@ -13,7 +13,10 @@ use crate::icons::{self, Icon};
 /// One clickable cell — `.statusbar .cell`: a rounded outlined pill holding the
 /// icon the web bar shows and its text, tinted with the accent when it is `on`.
 /// The value half of the text is `<b>`, so it is drawn in the text colour.
-fn cell(
+///
+/// The data window borrows it for its own Dec/Hex switch, which is the same
+/// control on another screen.
+pub fn cell(
     ui: &mut Ui,
     icon: Option<&Icon>,
     text: &str,
@@ -72,7 +75,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let hex = app.store.hex;
         let base = if hex { "Hex" } else { "Dec" };
-        if cell(ui, Some(&icons::HASH), "", base, hex, "Number base for all numbers", &tok) {
+        if cell(ui, Some(&icons::HASH), "", base, hex, "Number base on this screen", &tok) {
             app.store.hex = !hex;
             app.store.touch_view();
         }

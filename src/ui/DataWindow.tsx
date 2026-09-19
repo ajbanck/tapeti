@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
-import { dataWindow, tapes, Side, replaceBlock, locked, fmtNum, hex, parseNum, setStatus, blockNo } from '../state/store';
+import { dataWindow, tapes, Side, replaceBlock, locked, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
 import { downloadBytes, pickFile } from '../state/files';
 import { Block } from '../tzx/types';
 import { detectContent } from '../tzx/content';
@@ -9,6 +9,7 @@ import { listBasic, listVariables, basicToText, BasicOptions } from '../spectrum
 import { disassemble, DisLine } from '../spectrum/z80dis';
 import { zxChar, dumpChar } from '../spectrum/charset';
 import { NumInput, Check } from './fields';
+import { Icon } from './icons';
 import { Modal } from './Dialogs';
 
 type ViewAs = 'dump' | 'screen' | 'basic' | 'vars' | 'text' | 'dis';
@@ -47,7 +48,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [hideCs, setHideCs] = useState(single && guess.skipChecksum);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
-  const h = hex.value;
+  // This window's own Dec/Hex switch: the main window's says nothing about it,
+  // and it starts at Dec every time a data window is opened.
+  const [h, setH] = useState(false);
   const isLocked = locked.value;
   const modifiers = flip || reverse || hideFlag || hideCs;
   const editable = single && !isLocked && !modifiers;
@@ -124,11 +127,14 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
           ))}
         </div>
         <div class="c grow" />
-        <div class="c"><label>Base address</label><NumInput value={base} max={0xffff} onChange={setBase} /></div>
+        <div class={'c basecell' + (h ? ' on' : '')} title="Number base in this window" onClick={() => setH(!h)}>
+          <Icon name="hash" size={13} /><b>{h ? 'Hex' : 'Dec'}</b>
+        </div>
+        <div class="c"><label>Base address</label><NumInput value={base} max={0xffff} hex={h} onChange={setBase} /></div>
       </div>
       <div class="controls secondary">
-        <div class="c stat">Raw length {fmtNum(work.data.length)} bytes{hasUsedBits && work.usedBits !== 8 ? ` (${fmtNum(work.usedBits)} bits used in last)` : ''}</div>
-        <div class="c stat">Length {fmtNum(view.length)} bytes</div>
+        <div class="c stat">Raw length {fmtNum(work.data.length, h)} bytes{hasUsedBits && work.usedBits !== 8 ? ` (${fmtNum(work.usedBits, h)} bits used in last)` : ''}</div>
+        <div class="c stat">Length {fmtNum(view.length, h)} bytes</div>
         {(modifiers || !single || isLocked) && <div class="c"><span class="chip">{modifiers ? 'read-only while modifiers are on' : !single ? 'read-only: multiple blocks' : 'locked'}</span></div>}
       </div>
       <div class="controls secondary">
@@ -140,8 +146,8 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
 
       {viewAs === 'dump' && <Dump data={view} startAddr={startAddr} editable={editable} setByte={setByte} h={h} />}
       {viewAs === 'screen' && <Screen data={view} offset={16384 - startAddr} />}
-      {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} />}
-      {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} />}
+      {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} />}
+      {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} h={h} />}
       {viewAs === 'text' && <TextView data={view} />}
       {viewAs === 'dis' && <Dis data={view} startAddr={startAddr} h={h} />}
 
@@ -168,7 +174,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
         <button class="small" disabled={!editable} onClick={() => setBits((d) => shiftRightBits(d, n * 8))}>Shift right</button>
         <span>byte(s)</span>
         <span style={{ width: 20 }} />
-        <label>N</label><NumInput value={n} min={1} max={0xffffff} width={70} onChange={setN} />
+        <label>N</label><NumInput value={n} min={1} max={0xffffff} width={70} hex={h} onChange={setN} />
         <span class="note">Drop/Add act on the end of the data; Shift left removes from the start, Shift right inserts zeros at the start.</span>
       </div>
     </Modal>
@@ -258,7 +264,7 @@ function Dump({ data, startAddr, editable, setByte, h }: { data: Uint8Array; sta
 
   const parsePattern = (): (number | null)[] | null => {
     const parts = pattern.split(/[\s,]+/).filter((x) => x !== '');
-    const out: (number | null)[] = parts.map((p) => (p === '?' || p === '??' ? null : parseNum(p)));
+    const out: (number | null)[] = parts.map((p) => (p === '?' || p === '??' ? null : parseNum(p, h)));
     if (out.some((x) => x !== null && (Number.isNaN(x) || x < 0 || x > 255))) return null;
     for (const c of asciiPat) out.push(c.charCodeAt(0) & 0xff);
     return out;
@@ -274,7 +280,7 @@ function Dump({ data, startAddr, editable, setByte, h }: { data: Uint8Array; sta
       if (ok) {
         setCur(i);
         setHits(new Set(Array.from({ length: pat.length }, (_, k) => i + k)));
-        setSearchMsg(`Found at ${fmtNum(startAddr + i)}`);
+        setSearchMsg(`Found at ${fmtNum(startAddr + i, h)}`);
         return;
       }
     }
@@ -313,7 +319,7 @@ function Dump({ data, startAddr, editable, setByte, h }: { data: Uint8Array; sta
         {data.length === 0 && <div style={{ padding: 10, color: '#666' }}>No data. Use Add or Append file.</div>}
       </div>
       <div class="searchrow">
-        <span>Cursor {fmtNum(startAddr + cur)} (offset {fmtNum(cur)}) {editable ? (ascii ? '— typing ASCII' : '— typing hex') : ''}</span>
+        <span>Cursor {fmtNum(startAddr + cur, h)} (offset {fmtNum(cur, h)}) {editable ? (ascii ? '— typing ASCII' : '— typing hex') : ''}</span>
         <span style={{ flex: 1 }} />
         <label>Search</label>
         <input type="text" placeholder={h ? 'CD ? 05' : '205 ? 5'} value={pattern} onInput={(e) => setPattern((e.target as HTMLInputElement).value)} onKeyDown={(e) => { if (e.key === 'Enter') findNext(); }} />
@@ -376,7 +382,7 @@ function Screen({ data, offset: atBase }: { data: Uint8Array; offset: number }) 
 
 // ---- BASIC / variables -----------------------------------------------------------
 
-function Basic({ data, startAddr, progLen, vars }: { data: Uint8Array; startAddr: number; progLen: number | null; vars: boolean }) {
+function Basic({ data, startAddr, progLen, vars, h }: { data: Uint8Array; startAddr: number; progLen: number | null; vars: boolean; h: boolean }) {
   const [prog, setProg] = useState(startAddr);
   const [varsAddr, setVarsAddr] = useState(progLen !== null ? startAddr + progLen : -1);
   const [opts, setOpts] = useState<BasicOptions>({ showNumbers: false, basic128: false, speccyFormat: false });
@@ -393,8 +399,8 @@ function Basic({ data, startAddr, progLen, vars }: { data: Uint8Array; startAddr
   return (
     <>
       <div class="row-flex">
-        <label>PROG</label><NumInput value={prog} max={0xffff} onChange={setProg} width={70} />
-        <label>VARS</label><NumInput value={autoVars} max={0xffff} onChange={setVarsAddr} width={70} />
+        <label>PROG</label><NumInput value={prog} max={0xffff} hex={h} onChange={setProg} width={70} />
+        <label>VARS</label><NumInput value={autoVars} max={0xffff} hex={h} onChange={setVarsAddr} width={70} />
         {!vars && <>
           <Check label="Show numbers" checked={opts.showNumbers} onChange={(v) => setOpts({ ...opts, showNumbers: v })} />
           <Check label="Speccy formatting" checked={opts.speccyFormat} onChange={(v) => setOpts({ ...opts, speccyFormat: v })} />
@@ -482,7 +488,7 @@ function Dis({ data, startAddr, h }: { data: Uint8Array; startAddr: number; h: b
   return (
     <>
       <div class="row-flex">
-        <label>From address</label><NumInput value={from} max={0xffff} onChange={setFrom} width={70} />
+        <label>From address</label><NumInput value={from} max={0xffff} hex={h} onChange={setFrom} width={70} />
         <Check label="ROM labels" checked={labels} onChange={setLabels} />
         <span class="note">{lines.length} instruction(s)</span>
       </div>

@@ -190,6 +190,22 @@ mod in_window {
         ui.add_space(8.0);
     }
 
+    /// The left padding every item of a dropdown gets, and the box the tick is
+    /// drawn in.
+    const TICK_GUTTER: f32 = 20.0;
+
+    /// The check mark in front of an option that is on, painted rather than
+    /// written: the app ships no font with a `✓` in it, and the glyph egui
+    /// would otherwise draw is an empty box.
+    fn tick(ui: &egui::Ui, response: &egui::Response) {
+        let colour = ui.style().interact(response).fg_stroke.color;
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(response.rect.left() + TICK_GUTTER / 2.0, response.rect.center().y),
+            egui::vec2(13.0, 13.0),
+        );
+        crate::icons::paint(ui.painter(), rect, &crate::icons::CHECK, colour);
+    }
+
     impl Menu {
         pub fn new() -> Menu {
             Menu {
@@ -230,6 +246,11 @@ mod in_window {
                     let side = menu.side.unwrap_or(active);
                     let state = &states[side];
                     ui.menu_button(menu.title, |ui| {
+                        // Room for a tick in front of every item, the way
+                        // `.menu .item` reserves 28px of padding-left for the
+                        // `::before` that draws one: the labels of a menu line
+                        // up whether or not the one above is checked.
+                        ui.spacing_mut().button_padding.x = TICK_GUTTER;
                         for id in menu.ids {
                             if id.is_empty() {
                                 ui.separator();
@@ -237,13 +258,13 @@ mod in_window {
                             }
                             let Some(it) = item(id) else { continue };
                             let on = checked.iter().find(|(i, _)| i == id).is_some_and(|(_, c)| *c);
-                            let label = if it.check && on {
-                                format!("✓ {}", it.label)
-                            } else {
-                                it.label.to_string()
-                            };
-                            let button = egui::Button::new(label).shortcut_text(crate::fmt::accel(it.keys));
-                            if ui.add_enabled(it.need.met(state), button).clicked() {
+                            let button =
+                                egui::Button::new(it.label).shortcut_text(crate::fmt::accel(it.keys));
+                            let response = ui.add_enabled(it.need.met(state), button);
+                            if it.check && on {
+                                tick(ui, &response);
+                            }
+                            if response.clicked() {
                                 fired = Some(((*id).to_string(), side));
                                 ui.close();
                             }
@@ -375,4 +396,79 @@ impl Menu {
             Menu::Headless => None,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::settings::Settings;
+    use crate::shot::{capture_with, Canvas};
+    use crate::state::Store;
+
+    /// Click the menu title `x` points along the bar open, then draw the
+    /// dropdown: a real click, through the real bar, because the tick is
+    /// painted over the rect the button ends up with.
+    fn dropdown(app: &mut App, ctx: &egui::Context, x: f32) -> Canvas {
+        let at = egui::pos2(x, 22.0);
+        let click = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        capture_with(
+            ctx,
+            app,
+            (1100.0, 720.0),
+            4,
+            |frame| {
+                if frame == 1 {
+                    click.clone()
+                } else {
+                    Vec::new()
+                }
+            },
+        )
+    }
+
+    /// An empty app whose two options are both on or both off. The tape is
+    /// empty, so nothing outside the menu can differ between the two frames.
+    fn app_with(options: bool) -> (egui::Context, App) {
+        let ctx = egui::Context::default();
+        let mut settings = Settings::default();
+        settings.hex_bytes = options;
+        settings.zero_based = options;
+        let store = Store::new(settings);
+        let app = App::build(&ctx, Menu::in_window(), store, std::time::Instant::now(), 0, false);
+        (ctx, app)
+    }
+
+    /// The check mark of an option that is on. It used to be a `✓` in the
+    /// label, which the app's font set has no glyph for: what the Options menu
+    /// actually showed was an empty box. Painting it leaves pixels in the
+    /// gutter, and nothing else in this frame differs — the tape is empty, so
+    /// no row or number moves when the options change.
+    #[test]
+    fn an_option_that_is_on_is_ticked() {
+        let (ctx, mut app) = app_with(false);
+        let plain = dropdown(&mut app, &ctx, OPTIONS_X);
+        let (ctx, mut app) = app_with(true);
+        let ticked = dropdown(&mut app, &ctx, OPTIONS_X);
+        let changed = plain.diff(&ticked);
+        assert!(changed > 30, "the Options menu draws the same {changed} pixels checked or not");
+        assert!(changed < 400, "{changed} pixels changed: more than two check marks moved");
+    }
+
+    /// Where "Options" sits in the bar: after the brand and Left, Right, Block.
+    const OPTIONS_X: f32 = 245.0;
 }

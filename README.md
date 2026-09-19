@@ -96,13 +96,17 @@ Options → Emulator… picks another program (ZEsarUX, Spectaculator, a Flatpak
 If the exported part would break jumps, loops or calls, you are asked first. The browser build
 downloads the TZX instead.
 
-**Dec / Hex** switch in the status bar affects every number in the UI (BASIC numbers included),
-except the sample-rate field.
+**Dec / Hex** switch, in the status bar of the main window and beside the data window's base
+address: it belongs to the screen it is on. The main window's covers the block list, the editor and
+the dialogs opened from it; the data window has its own, starting at Dec every time one is opened,
+so switching either leaves the other alone. Neither is remembered between sessions, and a field
+that wants a number takes `$`/`0x` for hex and `#` for decimal whatever base it is showing.
 
 **Options** menu (remembered between sessions): *Flag and checksum bytes in hex* shows those byte
-values as `0xXX` while other numbers stay decimal, *Number blocks from 0* switches block numbers
-in the list, data window, jump/call targets and consistency report to 0-based. The button at the
-right end of the menu bar cycles the theme between light, dark and follow-the-system.
+values as `0xXX` on a screen that is on Dec, *Number blocks from 0* numbers the blocks in the
+list, data window, jump/call targets and consistency report the way the file format counts them,
+from 0. It is on by default; turn it off for 1-based numbers. The button at the right end of the
+menu bar cycles the theme between light, dark and follow-the-system.
 
 ### Files on the desktop
 
@@ -115,9 +119,8 @@ browser, Save downloads a copy, and tapes can be given in the URL:
 
 ### Keyboard and mouse
 
-Help → Keyboard shortcuts… shows the full list inside the app. The essentials are listed with
-Windows and Linux keys. **On macOS, use ⌘ (Command) in place of Ctrl and Option in place of Alt**;
-Delete is the Backspace (⌫) key there.
+The keys are listed here with their Windows and Linux spelling. **On macOS, use ⌘ (Command) in
+place of Ctrl and Option in place of Alt**; Delete is the Backspace (⌫) key there.
 
 | Keys | Action |
 |---|---|

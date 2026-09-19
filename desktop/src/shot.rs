@@ -52,6 +52,13 @@ impl Canvas {
         );
     }
 
+    /// How many pixels differ from another canvas of the same size: what a test
+    /// asks when the question is whether something was drawn at all.
+    #[cfg(test)]
+    pub fn diff(&self, other: &Canvas) -> usize {
+        self.pixels.iter().zip(&other.pixels).filter(|(a, b)| a != b).count()
+    }
+
     /// PNG bytes, the same encoder the screen view saves with.
     pub fn to_png(&self) -> Vec<u8> {
         let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
@@ -183,11 +190,24 @@ fn edge(a: &Vertex, b: &Vertex, px: f32, py: f32) -> f32 {
 /// More than one frame because egui lays out on the size it measured last time:
 /// a modal is not where it will be until the frame after it opens.
 pub fn capture(ctx: &egui::Context, app: &mut crate::app::App, size: (f32, f32), frames: usize) -> Canvas {
+    capture_with(ctx, app, size, frames, |_| Vec::new())
+}
+
+/// The same, with the events of each frame decided by the caller: a test that
+/// wants a picture of something it has to click open first.
+pub fn capture_with(
+    ctx: &egui::Context,
+    app: &mut crate::app::App,
+    size: (f32, f32),
+    frames: usize,
+    mut events: impl FnMut(usize) -> Vec<egui::Event>,
+) -> Canvas {
     let mut textures = Textures::default();
     let mut canvas = Canvas::new(size.0 as usize, size.1 as usize);
     for frame in 0..frames.max(1) {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1))),
+            events: events(frame),
             ..Default::default()
         };
         let mut output = ctx.run_ui(input, |ui| app.frame(ui));

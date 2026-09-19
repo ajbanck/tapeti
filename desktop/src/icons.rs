@@ -121,6 +121,11 @@ pub const UNLOCK: Icon = Icon(&[
     Arc { c: (12.0, 8.0), r: 4.0, from: 180.0, to: 320.0 },
 ]);
 
+/// The tick a menu puts in front of an option that is on. The web app draws it
+/// with a `✓` in CSS; here it is geometry, because the font set the app ships
+/// has no glyph for it and egui would draw a square instead.
+pub const CHECK: Icon = Icon(&[Line(&[(5.0, 12.5), (10.0, 17.5), (19.0, 6.5)])]);
+
 pub const X: Icon = Icon(&[Line(&[(6.0, 6.0), (18.0, 18.0)]), Line(&[(18.0, 6.0), (6.0, 18.0)])]);
 
 pub const WAVE: Icon = Icon(&[Line(&[
@@ -281,10 +286,11 @@ mod tests {
             ("monitor", &MONITOR),
             ("lock", &LOCK),
             ("unlock", &UNLOCK),
+            ("check", &CHECK),
+            ("hash", &HASH),
             ("x", &X),
             ("wave", &WAVE),
             ("compare", &COMPARE),
-            ("hash", &HASH),
             ("list", &LIST),
             ("caret right", &CARET_RIGHT),
             ("caret down", &CARET_DOWN),

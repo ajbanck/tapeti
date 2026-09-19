@@ -394,8 +394,8 @@ function OffsetField({ label, value, side, onChange, disabled }: { label: string
 }
 
 function NumberList({ label, values, min = 0, max, h, onChange, setErrors, disabled, side }: { label: string; values: number[]; min?: number; max: number; h: boolean; onChange: (v: number[]) => void; setErrors: (e: string[]) => void; disabled: boolean; side?: Side }) {
-  const [text, setText] = useState(values.map(fmtNum).join(', '));
-  useEffect(() => setText(values.map(fmtNum).join(', ')), [values, h]);
+  const [text, setText] = useState(values.map((v) => fmtNum(v)).join(', '));
+  useEffect(() => setText(values.map((v) => fmtNum(v)).join(', ')), [values, h]);
   const t = side !== undefined ? tapes[side].value : null;
   return (
     <div>
@@ -406,7 +406,7 @@ function NumberList({ label, values, min = 0, max, h, onChange, setErrors, disab
           const s = (e.target as HTMLTextAreaElement).value;
           setText(s);
           const parts = s.split(/[\s,;]+/).filter((x) => x !== '');
-          const nums = parts.map(parseNum);
+          const nums = parts.map((x) => parseNum(x));
           const bad = parts.filter((p, i) => Number.isNaN(nums[i]) || nums[i] < min || nums[i] > max);
           if (bad.length) setErrors([`Invalid values: ${bad.join(', ')}`]);
           else {
@@ -438,7 +438,7 @@ function EntryList<T>({ items, onChange, create, render, disabled }: { items: T[
 // ---- Generalized data block -------------------------------------------------
 
 function symbolsToText(syms: SymDef[], h: boolean): string {
-  return syms.map((s, i) => `${fmtNum(i)}: ${fmtNum(s.flags)}; ${s.pulses.map(fmtNum).join(', ')}`).join('\n');
+  return syms.map((s, i) => `${fmtNum(i)}: ${fmtNum(s.flags)}; ${s.pulses.map((v) => fmtNum(v)).join(', ')}`).join('\n');
 }
 function textToSymbols(text: string): SymDef[] {
   const out: SymDef[] = [];
@@ -448,7 +448,7 @@ function textToSymbols(text: string): SymDef[] {
     const body = line.includes(':') ? line.slice(line.indexOf(':') + 1) : line;
     const parts = body.split(/[,;]/).map((x) => x.trim()).filter((x) => x !== '');
     if (parts.length === 0) throw new Error(`Symbol line "${raw}" has no flags`);
-    const nums = parts.map(parseNum);
+    const nums = parts.map((x) => parseNum(x));
     if (nums.some(Number.isNaN)) throw new Error(`Symbol line "${raw}" contains a bad number`);
     if (nums[0] < 0 || nums[0] > 3) throw new Error(`Symbol flags must be 0-3 in "${raw}"`);
     out.push({ flags: nums[0], pulses: nums.slice(1) });
@@ -460,7 +460,7 @@ function streamToText(runs: PilotRun[], h: boolean): string {
   return runs.map((r) => `${fmtNum(r.symbol)}, ${fmtNum(r.reps)}`).join('; ');
 }
 function textToStream(text: string): PilotRun[] {
-  const nums = text.split(/[\s,;]+/).filter((x) => x !== '').map(parseNum);
+  const nums = text.split(/[\s,;]+/).filter((x) => x !== '').map((x) => parseNum(x));
   if (nums.some(Number.isNaN)) throw new Error('Pilot stream contains a bad number');
   if (nums.length % 2) throw new Error('Pilot stream must be pairs of symbol, repetitions');
   const out: PilotRun[] = [];

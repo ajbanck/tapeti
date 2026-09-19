@@ -160,26 +160,19 @@ pub const MENUS: &[MenuDef] = &[
             cmd("clear-compare", "Clear Compare Marks", "", Always),
             sep(),
             cmd("switch-pane", "Switch Active Pane", "CmdOrCtrl+`", Always),
-            cmd("toggle-lock", "Toggle Lock", "CmdOrCtrl+L", Always),
+            check("toggle-lock", "Toggle Lock", "CmdOrCtrl+L"),
         ],
     },
     MenuDef {
         title: "Options",
         items: &[
-            check("toggle-hex", "Hex for All Numbers", "CmdOrCtrl+H"),
             check("opt-hex-bytes", "Flag and Checksum Bytes in Hex", ""),
             check("opt-zero-based", "Number Blocks from 0", ""),
             sep(),
             cmd("emu-settings", "Emulator…", "", Always),
         ],
     },
-    MenuDef {
-        title: "Help",
-        items: &[
-            cmd("shortcuts", "Keyboard Shortcuts…", "", Always),
-            cmd("about", "About Tapeti…", "", Always),
-        ],
-    },
+    MenuDef { title: "Help", items: &[cmd("about", "About Tapeti…", "", Always)] },
 ];
 
 /// How the **window's** menu bar groups the same commands: by pane, the way
@@ -262,18 +255,9 @@ pub const WINDOW_MENUS: &[WindowMenu] = &[
     WindowMenu {
         title: "Options",
         side: None,
-        ids: &[
-            "toggle-hex",
-            "opt-hex-bytes",
-            "opt-zero-based",
-            "",
-            "switch-pane",
-            "toggle-lock",
-            "",
-            "emu-settings",
-        ],
+        ids: &["opt-hex-bytes", "opt-zero-based", "", "switch-pane", "toggle-lock", "", "emu-settings"],
     },
-    WindowMenu { title: "Help", side: None, ids: &["shortcuts", "about"] },
+    WindowMenu { title: "Help", side: None, ids: &["about"] },
 ];
 
 /// Flat index of every item, the order `menu.rs` addresses them in.

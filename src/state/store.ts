@@ -38,6 +38,12 @@ export function emptyTape(name = 'new'): TapeState {
 
 export const tapes = [signal<TapeState>(emptyTape()), signal<TapeState>(emptyTape())] as const;
 export const active = signal<Side>(0);
+/**
+ * The **main window's** Dec/Hex switch, the one in the status bar. It belongs to
+ * that screen and to nothing else: it is not remembered between sessions, and
+ * the data window has a switch of its own (`useState` there), so turning this
+ * one to Hex leaves an open data window as it was.
+ */
 export const hex = signal(false);
 export const locked = signal(false);
 export const blockCompare = signal<BlockCompareMode>('data');
@@ -56,11 +62,18 @@ function loadTheme(): Theme {
 }
 export const theme = signal<Theme>(loadTheme());
 
-function loadFlag(key: string): boolean {
-  try { return localStorage.getItem(key) === '1'; } catch { return false; }
+function loadFlag(key: string, dflt = false): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? dflt : v === '1';
+  } catch { return dflt; }
 }
-/** Global display options, persisted per browser / desktop install. */
-export const zeroBased = signal(loadFlag('tapeti.zeroBased'));
+/**
+ * Global display options, persisted per browser / desktop install. Blocks are
+ * numbered from 0 unless the option is turned off: the block number is an index
+ * into the tape, and that is where the file format and the jump targets count from.
+ */
+export const zeroBased = signal(loadFlag('tapeti.zeroBased', true));
 export const hexBytes = signal(loadFlag('tapeti.hexBytes'));
 export function setOption(opt: 'zeroBased' | 'hexBytes', on: boolean) {
   (opt === 'zeroBased' ? zeroBased : hexBytes).value = on;
@@ -104,16 +117,19 @@ export function setStatus(s: string) {
   if (s) setTimeout(() => { if (status.value === s) status.value = ''; }, 6000);
 }
 
-/** Number formatting honouring the Dec/Hex switch. */
-export function fmtNum(n: number): string {
-  if (hex.value) return n.toString(16).toUpperCase();
+/**
+ * A number in the base a screen's switch selects. `hex` is the main window's,
+ * which is what a number drawn there follows; a screen with a switch of its own
+ * passes it in.
+ */
+export function fmtNum(n: number, h = hex.value): string {
+  if (h) return n.toString(16).toUpperCase();
   return n.toString(10);
 }
 /** Display number of the block at 0-based index `i`, honouring the zero-based option. */
 export function blockNo(i: number): number {
   return zeroBased.value ? i : i + 1;
 }
-/** Byte value (flag, checksum): hex when either the Dec/Hex switch or the hex-bytes option is on. */
 /** Seconds as m:ss.s, e.g. 1:05.3. */
 export function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -121,12 +137,18 @@ export function fmtTime(sec: number): string {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
-export function fmtByte(n: number): string {
-  if (hex.value) return n.toString(16).toUpperCase().padStart(2, '0');
-  if (hexBytes.value) return '0x' + n.toString(16).toUpperCase().padStart(2, '0');
+/**
+ * A flag or checksum byte: hex under the screen's switch or the "flag and
+ * checksum bytes in hex" option. The `0x` is part of it either way — these
+ * bytes are read out of a sentence ("Checksum byte 0x17"), where a bare 17
+ * would not say which base it is in.
+ */
+export function fmtByte(n: number, h = hex.value): string {
+  if (h || hexBytes.value) return '0x' + n.toString(16).toUpperCase().padStart(2, '0');
   return n.toString(10).padStart(3, '0');
 }
-export function parseNum(s: string): number {
+/** `$`/`0x` force hex and `#` forces decimal; anything else follows the screen's switch. */
+export function parseNum(s: string, h = hex.value): number {
   s = s.trim();
   if (s === '') return NaN;
   const neg = s.startsWith('-');
@@ -134,7 +156,7 @@ export function parseNum(s: string): number {
   let v: number;
   if (/^(\$|0x)/i.test(s)) v = parseInt(s.replace(/^(\$|0x)/i, ''), 16);
   else if (/^#/.test(s)) v = parseInt(s.slice(1), 10);
-  else v = parseInt(s, hex.value ? 16 : 10);
+  else v = parseInt(s, h ? 16 : 10);
   return neg ? -v : v;
 }
 
