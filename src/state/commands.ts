@@ -4,7 +4,7 @@
 import {
   Side, tapes, active, dialog, hexBytes, zeroBased, locked, setOption, toggleLock, undo, redo, selectAll,
   deleteUnit, copyUnit, cutUnit, paste, duplicateUnit, moveUnit, groupSelection, toggleCollapse, collapseAll,
-  runCompareTapes, runFindMatch, clearCompare, clipboard,
+  runCompareTapes, runFindMatch, clearCompare, clipboard, theme, applyTheme,
 } from './store';
 import { groupRanges } from '../tzx/programs';
 import { newTape, saveTzx, saveTap, pickAndOpen, confirmDiscard } from './files';
@@ -15,8 +15,8 @@ import { isMac } from '../platform';
 export interface Command {
   /** Menu label. A function when it depends on the tape (e.g. collapse vs expand). */
   label: string | ((side: Side) => string);
-  /** Shortcut shown in the in-app menus, already formatted with `fmtKey`; a function when it depends on the side (Ctrl+O vs Ctrl+Shift+O). */
-  key?: string | ((side: Side) => string);
+  /** Shortcut shown in the in-app menus, already formatted with `fmtKey`. */
+  key?: string;
   /** Defaults to always enabled. */
   enabled?: (side: Side) => boolean;
   /** Check mark state for toggles. */
@@ -28,7 +28,6 @@ const other = (side: Side): Side => (side === 0 ? 1 : 0);
 const tape = (side: Side) => tapes[side].value;
 const hasBlocks = (side: Side) => tape(side).blocks.length > 0;
 const hasCursor = (side: Side) => !!tape(side).blocks[tape(side).cursor];
-const sideKey = (k: string) => (side: Side) => fmtKey((side === 0 ? 'Mod+' : 'Mod+Shift+') + k);
 
 const MAC_SYMBOLS: Record<string, string> = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Mod: '⌘' };
 
@@ -47,13 +46,12 @@ export function fmtKey(spec: string, mac = isMac): string {
 export const COMMANDS = {
   // ---- file
   'new': { label: 'New', run: (s) => confirmDiscard(s, () => newTape(s)) },
-  'open': { label: 'Open…', key: sideKey('O'), run: (s) => confirmDiscard(s, () => pickAndOpen(s)) },
-  'open-other': { label: 'Open in other pane…', run: (s) => COMMANDS.open.run(other(s)) },
+  'open': { label: 'Open…', key: fmtKey('Mod+O'), run: (s) => confirmDiscard(s, () => pickAndOpen(s)) },
   'insert-file': { label: 'Insert file at cursor…', run: (s) => pickAndOpen(s, true) },
   /** A browser has nowhere to write back to, so Save is Save as. The desktop app writes
    *  in place — `desktop/src/files.rs` keeps the id and the rule. */
-  'save': { label: 'Save', key: sideKey('S'), enabled: hasBlocks, run: (s) => saveTzx(s) },
-  'save-as': { label: 'Save as TZX (download)', enabled: hasBlocks, run: (s) => saveTzx(s) },
+  'save': { label: 'Save', key: fmtKey('Mod+S'), enabled: hasBlocks, run: (s) => saveTzx(s) },
+  'save-as': { label: 'Save as TZX (download)', key: fmtKey('Mod+Shift+S'), enabled: hasBlocks, run: (s) => saveTzx(s) },
   'save-tap': { label: 'Save as TAP (download)', enabled: hasBlocks, run: (s) => saveTap(s) },
   'export-wav': { label: 'Export WAV…', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'wav', side: s }) },
   // ---- edit
@@ -92,17 +90,20 @@ export const COMMANDS = {
   'emu-tape': { label: 'Download tape for emulator', enabled: hasBlocks, run: (s) => openInEmulator(s, 'tape') },
   'emu-cursor': { label: 'Download from cursor for emulator', enabled: hasCursor, run: (s) => openInEmulator(s, 'cursor') },
   'emu-selection': { label: 'Download selection for emulator', enabled: hasCursor, run: (s) => openInEmulator(s, 'selection') },
-  'emu-settings': { label: 'Emulator…', run: () => (dialog.value = { kind: 'emulator' }) },
+  'emu-settings': { label: 'Emulator settings…', run: () => (dialog.value = { kind: 'emulator' }) },
   'programs': { label: 'Programs…', key: fmtKey('Mod+J'), enabled: hasBlocks, run: openProgramPicker },
   'tape-info': { label: 'Tape info…', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'tapeinfo', side: s }) },
   'consistency': { label: 'Check consistency…', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'consistency', side: s }) },
   'compare': { label: 'Compare tapes', run: () => runCompareTapes() },
   'clear-compare': { label: 'Clear compare marks', run: () => clearCompare() },
   'switch-pane': { label: 'Switch active pane', key: 'Tab', run: (s) => (active.value = other(s)) },
-  'toggle-lock': { label: 'Toggle lock', checked: () => locked.value, run: () => toggleLock() },
-  // ---- options
+  'toggle-lock': { label: 'Lock tapes', checked: () => locked.value, run: () => toggleLock() },
+  // ---- view
   'opt-hex-bytes': { label: 'Flag and checksum bytes in hex', checked: () => hexBytes.value, run: () => setOption('hexBytes', !hexBytes.value) },
   'opt-zero-based': { label: 'Number blocks from 0', checked: () => zeroBased.value, run: () => setOption('zeroBased', !zeroBased.value) },
+  'theme-light': { label: 'Theme: light', checked: () => theme.value === 'light', run: () => applyTheme('light') },
+  'theme-dark': { label: 'Theme: dark', checked: () => theme.value === 'dark', run: () => applyTheme('dark') },
+  'theme-system': { label: 'Theme: system', checked: () => theme.value === 'system', run: () => applyTheme('system') },
   // ---- help
   'about': { label: 'About Tapeti…', run: () => (dialog.value = { kind: 'about' }) },
 } satisfies Record<string, Command>;
@@ -132,9 +133,8 @@ export function commandLabel(id: CommandId, side: Side): string {
   return typeof l === 'function' ? l(side) : l;
 }
 
-export function commandKey(id: CommandId, side: Side): string | undefined {
-  const k = (COMMANDS[id] as Command).key;
-  return typeof k === 'function' ? k(side) : k;
+export function commandKey(id: CommandId): string | undefined {
+  return (COMMANDS[id] as Command).key;
 }
 
 /**

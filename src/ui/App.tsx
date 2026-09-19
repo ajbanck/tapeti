@@ -24,11 +24,11 @@ export function App() {
       if (dataWindow.value || dialog.value) return; // modal handles its own keys
       const side: Side = active.value;
       const t = tapes[side].value;
-      // Global shortcuts that work even inside fields; Shift picks the right-hand tape
+      // Global shortcuts that work even inside fields
       if (mod && !e.altKey) {
         const k = e.key.toLowerCase();
-        if (k === 'o') { e.preventDefault(); runCommand('open', e.shiftKey ? 1 : 0); return; }
-        if (k === 's') { e.preventDefault(); runCommand('save', e.shiftKey ? 1 : 0); return; }
+        if (k === 'o') { e.preventDefault(); runCommand('open', side); return; }
+        if (k === 's') { e.preventDefault(); runCommand(e.shiftKey ? 'save-as' : 'save', side); return; }
         if (k === 'z' && !inField) { e.preventDefault(); if (e.shiftKey) redo(side); else undo(side); return; }
         if (k === 'y' && !inField) { e.preventDefault(); redo(side); return; }
       }

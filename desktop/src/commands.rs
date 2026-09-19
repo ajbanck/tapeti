@@ -12,7 +12,8 @@ use crate::actions::{self, Scope, Then};
 use crate::app::App;
 use crate::dialogs::Dialog;
 use crate::files;
-use crate::menutable::{self, MenuState, Need};
+use crate::menutable::{self, MenuState};
+use crate::settings::Theme;
 use crate::state::{other, Side};
 
 /// The state the enabled rules ask about, for `side`.
@@ -31,11 +32,7 @@ pub fn menu_state(app: &App, side: Side) -> MenuState {
 
 pub fn enabled(app: &App, id: &str, side: Side) -> bool {
     let state = menu_state(app, side);
-    match id {
-        // The context menu's own item; it is in no menu bar, as on the web.
-        "toggle-collapse" => Need::Collapsible.met(&state),
-        _ => menutable::item(id).is_some_and(|i| i.need.met(&state)),
-    }
+    menutable::item(id).is_some_and(|i| i.need.met(&state))
 }
 
 /// The label a menu shows for `id`. Only one is dynamic, the way `commands.ts`
@@ -51,11 +48,24 @@ pub fn label(app: &App, id: &str, side: Side) -> String {
     menutable::item(id).map_or_else(|| id.to_string(), |i| i.label.to_string())
 }
 
+/// The label in a block's right-click menu, where the cursor is the block that
+/// was clicked on.
+pub fn context_label(app: &App, id: &str, side: Side) -> String {
+    match id {
+        "play-cursor" => "Play from Here".into(),
+        "emu-cursor" => "Open from Here in Emulator".into(),
+        _ => label(app, id, side),
+    }
+}
+
 pub fn checked(app: &App, id: &str) -> bool {
     match id {
         "opt-hex-bytes" => app.store.settings.hex_bytes,
         "opt-zero-based" => app.store.settings.zero_based,
         "toggle-lock" => app.store.locked,
+        "theme-light" => app.store.settings.theme == Theme::Light,
+        "theme-dark" => app.store.settings.theme == Theme::Dark,
+        "theme-system" => app.store.settings.theme == Theme::System,
         _ => false,
     }
 }
@@ -104,10 +114,6 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
         // ---- file
         "new" => actions::confirm_discard(app, side, Then::NewTape(side)),
         "open" => actions::confirm_discard(app, side, Then::Open(side)),
-        "open-other" => {
-            let o = other(side);
-            actions::confirm_discard(app, o, Then::Open(o));
-        }
         "insert-file" => files::pick_and_open(&mut app.store, side, true),
         "save" => {
             let save_as = app.store.tape(side).path.is_none();
@@ -161,7 +167,15 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
         "clear-compare" => app.store.clear_compare(),
         "switch-pane" => app.store.active = other(side),
         "toggle-lock" => app.store.toggle_lock(),
-        // ---- options
+        // ---- view
+        "theme-light" | "theme-dark" | "theme-system" => {
+            app.store.settings.theme = match id {
+                "theme-light" => Theme::Light,
+                "theme-dark" => Theme::Dark,
+                _ => Theme::System,
+            };
+            app.store.settings.save();
+        }
         "opt-hex-bytes" => {
             app.store.settings.hex_bytes = !app.store.settings.hex_bytes;
             app.store.settings.save();
@@ -182,12 +196,10 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
     true
 }
 
-/// The block context menu, `blockMenu` in `src/ui/MenuBar.tsx`. An empty string
-/// is a separator.
+/// The block context menu, `contextMenu` in `src/ui/MenuBar.tsx`: the short
+/// list, not the whole Block menu. An empty string is a separator.
 pub const CONTEXT_MENU: &[&str] = &[
-    "insert",
     "view-data",
-    "view-as-one",
     "",
     "cut",
     "copy",
@@ -195,21 +207,15 @@ pub const CONTEXT_MENU: &[&str] = &[
     "duplicate",
     "delete",
     "",
-    "move-up",
-    "move-down",
+    "insert",
     "group",
     "toggle-collapse",
-    "collapse-all",
-    "expand-all",
     "",
     "select-program",
     "extract",
     "",
+    "play-cursor",
     "emu-cursor",
-    "emu-selection",
-    "",
-    "find-match",
-    "set-timings",
 ];
 
 /// Keys the window handles itself. On macOS the platform menu owns every
@@ -255,7 +261,6 @@ mod tests {
     /// device, or the emulator. Everything else is run for real below.
     const REACHES_OUT: &[&str] = &[
         "open",
-        "open-other",
         "insert-file",
         "save",
         "save-as",

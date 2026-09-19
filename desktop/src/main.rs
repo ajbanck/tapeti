@@ -68,6 +68,7 @@ tapeti [TAPE…] [OPTIONS]
   --screenshot F[,WxH]   draw the app into a PNG and quit — no window, no GPU
   --theme NAME           light, dark or system (default: system)
   --cursor N             put the cursor on row N first
+  --menubar              draw the in-window menu bar in the screenshot, as off macOS
   --measure              time the core in process and the app's own first frame
   --rows N               repeat the tape's blocks until the list is N rows long
   --bench N              move the cursor once per frame N times, report the spread
@@ -82,6 +83,7 @@ struct Opts {
     rows: Option<usize>,
     bench: Option<usize>,
     exit_on_draw: bool,
+    menubar: bool,
     measure: bool,
     hex: bool,
     /// `--screenshot FILE[,WxH]`: draw the app into a PNG and quit, no window.
@@ -98,6 +100,7 @@ fn parse_args() -> Opts {
         rows: None,
         bench: None,
         exit_on_draw: false,
+        menubar: false,
         measure: false,
         hex: false,
         screenshot: None,
@@ -110,6 +113,7 @@ fn parse_args() -> Opts {
             "--rows" => o.rows = args.next().and_then(|v| v.parse().ok()),
             "--bench" => o.bench = args.next().and_then(|v| v.parse().ok()),
             "--exit-on-draw" => o.exit_on_draw = true,
+            "--menubar" => o.menubar = true,
             "--measure" => o.measure = true,
             "--hex" => o.hex = true,
             "--screenshot" => o.screenshot = args.next(),
@@ -308,9 +312,14 @@ fn main() -> eframe::Result<()> {
             store.set_cursor(0, at, state::SelectMode::Single);
         }
         let ctx = egui::Context::default();
-        // The in-window bar, not the headless menu a test draws with: a
-        // screenshot should show the window the way the window looks.
-        let mut app = app::App::build(&ctx, menu::Menu::in_window(), store, t0, 0, false);
+        // A screenshot should show the window the way the window looks: with
+        // the in-window bar, except on macOS, where the bar is the platform's.
+        let menu = if opts.menubar || !cfg!(target_os = "macos") {
+            menu::Menu::in_window()
+        } else {
+            menu::Menu::headless()
+        };
+        let mut app = app::App::build(&ctx, menu, store, t0, 0, false);
         let canvas = shot::capture(&ctx, &mut app, size, 3);
         std::fs::write(&path, canvas.to_png()).expect("write the screenshot");
         println!("{path}: {}×{}", canvas.width, canvas.height);
@@ -362,6 +371,7 @@ mod tests {
             rows: None,
             bench: None,
             exit_on_draw: false,
+            menubar: false,
             measure: false,
             hex: false,
             screenshot: None,

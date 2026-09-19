@@ -1,16 +1,15 @@
 //! The application menu, built from the table in `menutable.rs`.
 //!
-//! Two bars, from one table, and every platform gets the in-window one.
+//! One bar per platform, from one table, in one grouping.
 //!
-//! On macOS `muda` additionally hangs the table on `NSApp`, the same crate the
-//! Tauri shell reached through until stage 5, so the accelerators are the
-//! platform's there — `CmdOrCtrl+S` meaning ⌘S. The **window** keeps its own bar
-//! as well: the app has had one since it was a web page in a window (it is the
-//! app in README.md's screenshot), and dropping it on macOS lost the Left and
-//! Right menus from where people had been using them.
+//! On macOS `muda` hangs the table on `NSApp`, so the accelerators are the
+//! platform's there — `CmdOrCtrl+S` meaning ⌘S — and the window draws no bar of
+//! its own: it used to, grouped by pane (Left, Right), and two bars that split
+//! the same commands two ways was one too many. What was worth aiming at one
+//! pane is in that pane's header now (`App::pane_head`).
 //!
-//! Everywhere else the in-window bar is the only one, and `app.rs` handles the
-//! accelerators itself. **Including Windows**:
+//! Everywhere else the bar is drawn in the window by egui, and `app.rs` handles
+//! the accelerators itself. **Including Windows**:
 //! stage 5 tried `init_for_hwnd` there and it does not work with a winit window
 //! — the menu never appeared, a black strip took its place, and every click
 //! landed one menu-height away from what it hit, because a Win32 menu shrinks
@@ -24,11 +23,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::menutable::{item, MenuState, WINDOW_MENUS};
+use crate::menutable::{MenuState, MENUS};
 use crate::theme::Tokens;
 
-/// What the theme button reports; not a command id, because nothing but this
-/// bar has one to offer.
+/// What the theme button reports: the three-way cycle, which is not a command
+/// id — the View menu's three items each name a theme instead.
 pub const THEME: &str = "\0theme";
 
 #[derive(Default)]
@@ -44,7 +43,7 @@ impl Queue {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
-    use crate::menutable::{Item, MENUS};
+    use crate::menutable::Item;
     use muda::accelerator::Accelerator;
     use muda::{CheckMenuItem, Menu as MudaMenu, MenuItem, PredefinedMenuItem, Submenu};
 
@@ -166,7 +165,7 @@ mod platform {
     }
 }
 
-/// The menu bar egui draws inside the window, grouped by pane.
+/// The menu bar egui draws inside the window, where the platform has none.
 mod in_window {
     use super::*;
 
@@ -230,11 +229,12 @@ mod in_window {
             self.queue.take()
         }
 
-        /// Returns what was clicked: a command id and the pane it runs on.
+        /// Returns what was clicked: a command id and the pane it runs on,
+        /// which is the active one for anything a person can click.
         pub fn bar(
             &self,
             ui: &mut egui::Ui,
-            states: &[MenuState; 2],
+            state: &MenuState,
             active: usize,
             tok: &Tokens,
         ) -> Option<(String, usize)> {
@@ -242,22 +242,19 @@ mod in_window {
             let mut fired = None;
             egui::MenuBar::new().ui(ui, |ui| {
                 brand(ui, tok);
-                for menu in WINDOW_MENUS {
-                    let side = menu.side.unwrap_or(active);
-                    let state = &states[side];
+                for menu in MENUS {
                     ui.menu_button(menu.title, |ui| {
                         // Room for a tick in front of every item, the way
                         // `.menu .item` reserves 28px of padding-left for the
                         // `::before` that draws one: the labels of a menu line
                         // up whether or not the one above is checked.
                         ui.spacing_mut().button_padding.x = TICK_GUTTER;
-                        for id in menu.ids {
-                            if id.is_empty() {
+                        for it in menu.items {
+                            if it.id.is_empty() {
                                 ui.separator();
                                 continue;
                             }
-                            let Some(it) = item(id) else { continue };
-                            let on = checked.iter().find(|(i, _)| i == id).is_some_and(|(_, c)| *c);
+                            let on = checked.iter().find(|(i, _)| *i == it.id).is_some_and(|(_, c)| *c);
                             let button =
                                 egui::Button::new(it.label).shortcut_text(crate::fmt::accel(it.keys));
                             let response = ui.add_enabled(it.need.met(state), button);
@@ -265,7 +262,7 @@ mod in_window {
                                 tick(ui, &response);
                             }
                             if response.clicked() {
-                                fired = Some(((*id).to_string(), side));
+                                fired = Some((it.id.to_string(), active));
                                 ui.close();
                             }
                         }
@@ -294,10 +291,9 @@ mod in_window {
 
 /// Where this run's menu lives.
 pub enum Menu {
-    /// The platform's own bar through muda, *and* the one in the window; macOS
-    /// has both, the way the app has always looked there.
+    /// The platform's own bar through muda: macOS, where the window draws none.
     #[cfg(target_os = "macos")]
-    Platform { native: platform::Menu, bar: in_window::Menu },
+    Platform(platform::Menu),
     /// Drawn in the window by egui, and nowhere else.
     InWindow(in_window::Menu),
     /// Neither: the frames the tests draw have no menu at all.
@@ -308,7 +304,7 @@ impl Menu {
     /// The menu this platform gets.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Menu {
         #[cfg(target_os = "macos")]
-        return Menu::Platform { native: platform::Menu::new(&cc.egui_ctx), bar: in_window::Menu::new() };
+        return Menu::Platform(platform::Menu::new(&cc.egui_ctx));
         #[cfg(not(target_os = "macos"))]
         {
             let _ = cc;
@@ -345,26 +341,22 @@ impl Menu {
     #[cfg(test)]
     pub fn fire_next_frame(&self, id: &str, side: usize) {
         match self {
-            #[cfg(target_os = "macos")]
-            Menu::Platform { bar, .. } => bar.fire_next_frame(id, side),
             Menu::InWindow(m) => m.fire_next_frame(id, side),
-            Menu::Headless => panic!("a headless menu draws no bar to click"),
+            _ => panic!("only the in-window bar is drawn in a frame, to be clicked"),
         }
     }
 
-    /// Whether `bar` has anything to draw this frame: everything but a test.
+    /// Whether `bar` has anything to draw this frame: not on macOS, where the
+    /// bar is the platform's, and not in a headless test.
     pub fn draws_in_window(&self) -> bool {
-        !matches!(self, Menu::Headless)
+        matches!(self, Menu::InWindow(_))
     }
 
     /// Push the enabled and checked state of every item.
     pub fn set_state(&self, enabled: &[bool], checked: &[bool]) {
         match self {
             #[cfg(target_os = "macos")]
-            Menu::Platform { native, bar } => {
-                native.set_state(enabled, checked);
-                bar.set_state(enabled, checked);
-            }
+            Menu::Platform(m) => m.set_state(enabled, checked),
             Menu::InWindow(m) => m.set_state(enabled, checked),
             Menu::Headless => {}
         }
@@ -374,26 +366,24 @@ impl Menu {
     pub fn take_activated(&self) -> Vec<String> {
         match self {
             #[cfg(target_os = "macos")]
-            Menu::Platform { native, .. } => native.take_activated(),
+            Menu::Platform(m) => m.take_activated(),
             Menu::InWindow(m) => m.take_activated(),
             Menu::Headless => Vec::new(),
         }
     }
 
     /// Draw the in-window bar and report what was clicked, with the pane it
-    /// belongs to: Left and Right run on their own tape.
+    /// runs on.
     pub fn bar(
         &self,
         ui: &mut egui::Ui,
-        states: &[MenuState; 2],
+        state: &MenuState,
         active: usize,
         tok: &Tokens,
     ) -> Option<(String, usize)> {
         match self {
-            #[cfg(target_os = "macos")]
-            Menu::Platform { bar, .. } => bar.bar(ui, states, active, tok),
-            Menu::InWindow(m) => m.bar(ui, states, active, tok),
-            Menu::Headless => None,
+            Menu::InWindow(m) => m.bar(ui, state, active, tok),
+            _ => None,
         }
     }
 }
@@ -410,7 +400,11 @@ mod tests {
     /// dropdown: a real click, through the real bar, because the tick is
     /// painted over the rect the button ends up with.
     fn dropdown(app: &mut App, ctx: &egui::Context, x: f32) -> Canvas {
-        let at = egui::pos2(x, 22.0);
+        click_at(app, ctx, egui::pos2(x, 22.0))
+    }
+
+    /// Four frames with a click at `at` in the second; the last one drawn.
+    fn click_at(app: &mut App, ctx: &egui::Context, at: egui::Pos2) -> Canvas {
         let click = vec![
             egui::Event::PointerMoved(at),
             egui::Event::PointerButton {
@@ -454,21 +448,39 @@ mod tests {
     }
 
     /// The check mark of an option that is on. It used to be a `✓` in the
-    /// label, which the app's font set has no glyph for: what the Options menu
+    /// label, which the app's font set has no glyph for: what the menu
     /// actually showed was an empty box. Painting it leaves pixels in the
     /// gutter, and nothing else in this frame differs — the tape is empty, so
     /// no row or number moves when the options change.
     #[test]
     fn an_option_that_is_on_is_ticked() {
         let (ctx, mut app) = app_with(false);
-        let plain = dropdown(&mut app, &ctx, OPTIONS_X);
+        let plain = dropdown(&mut app, &ctx, VIEW_X);
         let (ctx, mut app) = app_with(true);
-        let ticked = dropdown(&mut app, &ctx, OPTIONS_X);
+        let ticked = dropdown(&mut app, &ctx, VIEW_X);
         let changed = plain.diff(&ticked);
-        assert!(changed > 30, "the Options menu draws the same {changed} pixels checked or not");
+        assert!(changed > 30, "the View menu draws the same {changed} pixels checked or not");
         assert!(changed < 400, "{changed} pixels changed: more than two check marks moved");
     }
 
-    /// Where "Options" sits in the bar: after the brand and Left, Right, Block.
-    const OPTIONS_X: f32 = 245.0;
+    /// The pane header's overflow button opens a menu of its own, over the
+    /// list: the home of what the Left and Right menus used to hold. Drawn
+    /// without a menu bar, the way macOS draws the window.
+    #[test]
+    fn the_pane_header_has_an_overflow_menu() {
+        let ctx = egui::Context::default();
+        let store = Store::new(Settings::default());
+        let mut app = App::build(&ctx, Menu::headless(), store, std::time::Instant::now(), 0, false);
+        let closed = click_at(&mut app, &ctx, egui::pos2(300.0, 400.0));
+        let open = click_at(&mut app, &ctx, MORE_AT);
+        let changed = closed.diff(&open);
+        assert!(changed > 2000, "clicking the overflow button changed {changed} pixels: no menu opened");
+    }
+
+    /// The left pane's overflow button in an 1100 point window with no menu bar.
+    const MORE_AT: egui::Pos2 = egui::pos2(506.0, 28.0);
+
+    /// Where "View" sits in the bar: after the brand and File, Edit, Block,
+    /// Tape, Play.
+    const VIEW_X: f32 = 300.0;
 }

@@ -1,6 +1,6 @@
 [package]
 name = "tapeti-core"
-version = "0.4.0"
+version = "0.5.0"
 description = "TZX/TAP data layer for Tapeti"
 license = "GPL-2.0-or-later"
 edition = "2021"

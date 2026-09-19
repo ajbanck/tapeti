@@ -135,6 +135,8 @@ button.icon:disabled { color: var(--faint); }
   position: absolute; top: calc(100% + 4px); left: 0; min-width: 260px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 6px; z-index: 30;
 }
+/* The pane header's overflow menu hangs from the right end of the toolbar. */
+.menu.pane-more .dropdown { left: auto; right: 0; }
 .ctxmenu {
   position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow-lg); padding: 6px; z-index: 50; min-width: 240px;
