@@ -15,6 +15,7 @@ use tapeti_core::bits::{
     add_bits, drop_bits, flip_bytes, join_bits, shift_left_bits, shift_right_bits, total_bits, BitData,
 };
 use tapeti_core::content::detect_content;
+use tapeti_core::describe::decode_header;
 use tapeti_core::spectrum::basic::{basic_to_text, list_basic, list_variables, BasicOptions};
 use tapeti_core::spectrum::charset::{dump_char, zx_char};
 use tapeti_core::spectrum::screen::{has_flash, render_screen, ScreenOptions, SCREEN_SIZE};
@@ -28,9 +29,10 @@ use crate::state::Side;
 use crate::theme::Tokens;
 use crate::widgets as w;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ViewAs {
     Dump,
+    Header,
     Screen,
     Basic,
     Vars,
@@ -38,8 +40,9 @@ pub enum ViewAs {
     Dis,
 }
 
-const VIEWS: [(ViewAs, &str); 6] = [
+const VIEWS: [(ViewAs, &str); 7] = [
     (ViewAs::Dump, "Dump"),
+    (ViewAs::Header, "Header"),
     (ViewAs::Screen, "Screen"),
     (ViewAs::Basic, "BASIC"),
     (ViewAs::Vars, "Variables"),
@@ -113,6 +116,7 @@ impl DataWin {
         let work = join_bits(&chosen.iter().map(|b| bit_data_of(b)).collect::<Vec<_>>());
         let base = if single { i64::from(guess.base) } else { 0x8000 };
         let view = match guess.kind {
+            tapeti_core::content::ContentKind::Header if single => ViewAs::Header,
             tapeti_core::content::ContentKind::Screen if single => ViewAs::Screen,
             tapeti_core::content::ContentKind::Basic if single => ViewAs::Basic,
             _ => ViewAs::Dump,
@@ -291,6 +295,10 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
             let body_h = ui.available_height() - 110.0;
             match dw.view {
                 ViewAs::Dump => dump(&mut dw, ui, &view, start, editable, hex, &tok, body_h),
+                // The block's own bytes, not the modified view: a header is the
+                // flag, 17 bytes and the checksum, and "hide flag byte" is on by
+                // default for exactly this content.
+                ViewAs::Header => header_view(ui, &dw.work.data, hex, &tok),
                 ViewAs::Screen => screen(&mut dw, ui, &view, 16384 - start, &tok, body_h),
                 ViewAs::Basic => basic(&mut dw, ui, &view, start, false, &tok, body_h),
                 ViewAs::Vars => basic(&mut dw, ui, &view, start, true, &tok, body_h),
@@ -886,6 +894,40 @@ fn text_view(dw: &mut DataWin, ui: &mut Ui, data: &[u8], h: f32) {
     );
 }
 
+// ---- header -----------------------------------------------------------------------
+
+/// The 17 bytes of a standard ROM header, read out. `editor.rs` edits the same
+/// fields; this is the data window's view of them, so a header opens on
+/// something better than its own hex dump.
+fn header_view(ui: &mut Ui, data: &[u8], hex: bool, tok: &Tokens) {
+    let Some(h) = decode_header(data) else {
+        ui.add_space(8.0);
+        w::note(ui, tok, "Not a standard header: that is 19 bytes beginning with flag 0.");
+        return;
+    };
+    let p1 = match h.kind {
+        0 => "Autostart line",
+        3 => "Start address",
+        _ => "Variable name",
+    };
+    let autostart = if h.kind == 0 && h.param1 >= 32768 { " (no autostart)" } else { "" };
+    let rows: [(&str, String); 5] = [
+        ("Type", format!("{} ({})", h.type_name, fmt::num(i64::from(h.kind), hex))),
+        ("Name", h.name.clone()),
+        ("Length", format!("{} bytes", fmt::num(i64::from(h.length), hex))),
+        (p1, format!("{}{autostart}", fmt::num(i64::from(h.param1), hex))),
+        (if h.kind == 0 { "Program length" } else { "Param 2" }, fmt::num(i64::from(h.param2), hex)),
+    ];
+    ui.add_space(8.0);
+    egui::Grid::new("header").num_columns(2).spacing(vec2(24.0, 8.0)).show(ui, |ui| {
+        for (k, v) in rows {
+            ui.label(RichText::new(k).size(12.0).color(tok.muted));
+            ui.label(RichText::new(v).size(12.0).color(tok.text));
+            ui.end_row();
+        }
+    });
+}
+
 // ---- disassembly ------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
@@ -965,7 +1007,30 @@ fn disassembly(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, hex: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tapeti_core::describe::{encode_header, HeaderInfo};
     use tapeti_core::types::Block;
+
+    /// A header block opens on the view that reads it out, not on its own hex
+    /// dump — the 17 bytes say more as a name and a load address.
+    #[test]
+    fn a_header_block_opens_on_the_header_view() {
+        let header = HeaderInfo {
+            kind: 3,
+            type_name: "Bytes".into(),
+            name: "demo.bin".into(),
+            length: 23,
+            param1: 32768,
+            param2: 0,
+        };
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data: encode_header(&header) })];
+        let uid = blocks[0].uid;
+        assert_eq!(DataWin::new(&blocks, 0, vec![uid]).view, ViewAs::Header);
+
+        // Anything else keeps the dump it had.
+        let other = vec![Block::new(Body::Standard { pause: 1000, data: vec![0xff, 1, 2, 3] })];
+        let uid = other[0].uid;
+        assert_eq!(DataWin::new(&other, 0, vec![uid]).view, ViewAs::Dump);
+    }
 
     /// The Dec/Hex switch belongs to the screen it is on: a data window opens on
     /// Dec whatever the main window is showing, and switching it there leaves

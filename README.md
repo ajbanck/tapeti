@@ -58,6 +58,8 @@ signal level, text, message, archive info, hardware type (full hardware list), c
 **Data window** (Enter, double-click or View data):
 
 - Hex dump with in-place hex and ASCII editing, search pattern with `?` wildcards.
+- Header view: the 17 bytes of a ROM header read out — type, name, length and both parameters,
+  labelled for the type. A header block opens on it.
 - View as Screen (with FLASH animation, hide attributes, Save to SCR / PNG).
 - BASIC listing with hidden-number detection, "Show numbers", Speccy 32-column formatting and 128k
   tokens; variables area listing.

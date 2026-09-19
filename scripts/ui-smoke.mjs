@@ -62,6 +62,17 @@ await page.keyboard.press('Escape');
 await wait(150);
 expect(!(await page.$('.datawin')), 'Escape closes the data window');
 
+// a header block opens on the view that reads it out
+const leftH = await page.$$('.pane:first-child .blocklist .row');
+await leftH[1].click();
+await page.keyboard.press('Enter');
+await page.waitForSelector('.datawin');
+await wait(250);
+expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'Header', 'header block opens on the Header tab');
+expect((await page.$$eval('.datawin .hdrview .row .v', (r) => r.map((e) => e.textContent))).join('|').includes('demo'), 'the header view names the file');
+await page.keyboard.press('Escape');
+await wait(150);
+
 // delete via menu, undo via menu
 const left = await page.$$('.pane:first-child .blocklist .row');
 await left[3].click();
