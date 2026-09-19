@@ -52,6 +52,12 @@ struct Snapshot {
     gen: u64,
     cursor: i32,
     selected: HashSet<Uid>,
+    /// What the tape was called and saved against when the snapshot was taken:
+    /// emptying a tape resets its identity, and undo brings that back too.
+    name: String,
+    path: Option<PathBuf>,
+    loaded_version: Option<Version>,
+    saved_gen: u64,
 }
 
 pub struct TapeState {
@@ -118,8 +124,57 @@ impl TapeState {
         self.cursor_block().is_some()
     }
 
-    /// Record that the current blocks are what is on disk.
+    /// Record that the current blocks are what is on disk. A snapshot remembers
+    /// the tape's identity, so that emptying it and undoing that puts the whole
+    /// thing back; a save re-bases that identity over the history too, because
+    /// the file on disk is these blocks under this name. Undoing past a save is
+    /// dirty again, and does not take the name back with it.
     pub fn mark_saved(&mut self) {
+        self.saved_gen = self.gen;
+        for snap in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            snap.saved_gen = self.gen;
+            snap.name.clone_from(&self.name);
+            snap.path.clone_from(&self.path);
+            snap.loaded_version = self.loaded_version;
+        }
+    }
+
+    /// The tape's identity and history position, to put back on undo.
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            blocks: self.blocks.clone(),
+            gen: self.gen,
+            cursor: self.cursor,
+            selected: self.selected.clone(),
+            name: self.name.clone(),
+            path: self.path.clone(),
+            loaded_version: self.loaded_version,
+            saved_gen: self.saved_gen,
+        }
+    }
+
+    /// Put a snapshot back, handing over what it replaced for the other stack.
+    fn restore(&mut self, snap: Snapshot) -> Snapshot {
+        let current = self.snapshot();
+        self.blocks = snap.blocks;
+        self.gen = snap.gen;
+        self.cursor = snap.cursor;
+        self.selected = snap.selected;
+        self.name = snap.name;
+        self.path = snap.path;
+        self.loaded_version = snap.loaded_version;
+        self.saved_gen = snap.saved_gen;
+        current
+    }
+
+    /// A tape with nothing left on it is a new tape, not a file with no blocks:
+    /// the name on the pane would go on promising the one that was loaded, and
+    /// saving it would write an empty file. Undo puts the name back.
+    fn reset_to_new(&mut self) {
+        self.name = "new".to_string();
+        self.path = None;
+        self.loaded_version = None;
+        self.collapsed.clear();
         self.saved_gen = self.gen;
     }
 
@@ -311,8 +366,8 @@ impl Store {
             return false;
         }
         let t = &mut self.tapes[side];
-        let snap =
-            Snapshot { blocks: t.blocks.clone(), gen: t.gen, cursor: t.cursor, selected: t.selected.clone() };
+        let snap = t.snapshot();
+        let was_empty = t.blocks.is_empty();
         let mut blocks = t.blocks.clone();
         let edit = f(&mut blocks);
         let last = blocks.len() as i32 - 1;
@@ -331,34 +386,24 @@ impl Store {
             t.undo.remove(0);
         }
         t.redo.clear();
+        if t.blocks.is_empty() && !was_empty {
+            t.reset_to_new();
+            self.set_status("Nothing left on the tape: the pane is a new tape again");
+        }
         true
     }
 
     pub fn undo(&mut self, side: Side) {
         let t = &mut self.tapes[side];
         let Some(snap) = t.undo.pop() else { return };
-        let current = Snapshot {
-            blocks: std::mem::replace(&mut t.blocks, snap.blocks),
-            gen: t.gen,
-            cursor: t.cursor,
-            selected: std::mem::replace(&mut t.selected, snap.selected),
-        };
-        t.gen = snap.gen;
-        t.cursor = snap.cursor;
+        let current = t.restore(snap);
         t.redo.push(current);
     }
 
     pub fn redo(&mut self, side: Side) {
         let t = &mut self.tapes[side];
         let Some(snap) = t.redo.pop() else { return };
-        let current = Snapshot {
-            blocks: std::mem::replace(&mut t.blocks, snap.blocks),
-            gen: t.gen,
-            cursor: t.cursor,
-            selected: std::mem::replace(&mut t.selected, snap.selected),
-        };
-        t.gen = snap.gen;
-        t.cursor = snap.cursor;
+        let current = t.restore(snap);
         t.undo.push(current);
     }
 
@@ -676,6 +721,51 @@ mod tests {
 
     /// The point of the generation counter: undoing back to the saved version
     /// clears `dirty`, and redoing sets it again.
+    /// Deleting the last block leaves a pane with a file name on it and nothing
+    /// under it, which promises a tape that is not there and would save as an
+    /// empty file. It becomes a new tape instead — and undo brings the old one
+    /// back whole, name and all.
+    #[test]
+    fn emptying_a_tape_makes_it_a_new_one() {
+        let mut store = store_with(&[0x10, 0x20]);
+        store.tape_mut(0).path = Some(PathBuf::from("/tapes/t.tzx"));
+        store.tape_mut(0).loaded_version = Some(Version { major: 1, minor: 20 });
+        store.delete_indices(0, vec![0, 1]);
+
+        let t = store.tape(0);
+        assert_eq!(t.name, "new");
+        assert_eq!(t.path, None);
+        assert_eq!(t.loaded_version, None);
+        assert_eq!(t.cursor, -1);
+        assert!(!t.dirty(), "an empty tape has nothing to save, so nothing to ask about");
+
+        store.undo(0);
+        let t = store.tape(0);
+        assert_eq!(ids(&store, 0), vec![0x10, 0x20]);
+        assert_eq!(t.name, "t.tzx");
+        assert_eq!(t.path, Some(PathBuf::from("/tapes/t.tzx")));
+        assert_eq!(t.loaded_version, Some(Version { major: 1, minor: 20 }));
+        assert!(!t.dirty(), "back to what was loaded");
+
+        store.redo(0);
+        assert_eq!(store.tape(0).name, "new");
+        assert!(store.tape(0).blocks.is_empty());
+        assert!(!store.tape(0).dirty());
+    }
+
+    /// A snapshot remembers what the tape was saved against, so saving has to
+    /// reach the ones already on the stack: undoing past a save is dirty again.
+    #[test]
+    fn undoing_past_a_save_is_dirty() {
+        let mut store = store_with(&[0x10, 0x20]);
+        store.delete_indices(0, vec![0]);
+        store.tape_mut(0).mark_saved();
+        assert!(!store.tape(0).dirty());
+        store.undo(0);
+        assert_eq!(ids(&store, 0), vec![0x10, 0x20]);
+        assert!(store.tape(0).dirty(), "the file on disk has one block, the tape has two");
+    }
+
     #[test]
     fn undo_back_to_the_saved_version_is_clean_again() {
         let mut store = store_with(&[0x10, 0x20]);

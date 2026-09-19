@@ -127,6 +127,44 @@ describe('store: undo and dirty tracking', () => {
     expect(tapes[0].value.dirty).toBe(true);
   });
 
+  it('a tape with nothing left on it becomes a new tape, and undo brings it back', () => {
+    insertBlocks(0, 0, [createBlock(0x20), createBlock(0x30)]);
+    markSaved(0, { name: 'demo.tzx', loadedVersion: { major: 1, minor: 20 } });
+    selectUids(0, [uidAt(0), uidAt(1)]);
+    setCursor(0, 0, 'keep');
+    deleteUnit(0);
+
+    expect(ids()).toEqual([]);
+    expect(tapes[0].value.name).toBe('new');
+    expect(tapes[0].value.loadedVersion).toBe(null);
+    expect(tapes[0].value.cursor).toBe(-1);
+    // Nothing to save, so nothing to ask about before a New or an Open.
+    expect(tapes[0].value.dirty).toBe(false);
+
+    undo(0);
+    expect(ids()).toEqual([0x20, 0x30]);
+    expect(tapes[0].value.name).toBe('demo.tzx');
+    expect(tapes[0].value.loadedVersion).toEqual({ major: 1, minor: 20 });
+    expect(tapes[0].value.dirty).toBe(false);
+
+    redo(0);
+    expect(ids()).toEqual([]);
+    expect(tapes[0].value.name).toBe('new');
+    expect(tapes[0].value.dirty).toBe(false);
+  });
+
+  it('a save re-bases the history: undoing past it is dirty and keeps the name', () => {
+    insertBlocks(0, 0, [createBlock(0x20), createBlock(0x30)]);
+    setCursor(0, 0);
+    deleteUnit(0);
+    markSaved(0, { name: 'saved.tzx' });
+    expect(tapes[0].value.dirty).toBe(false);
+    undo(0);
+    expect(ids()).toEqual([0x20, 0x30]);
+    expect(tapes[0].value.dirty).toBe(true);
+    expect(tapes[0].value.name).toBe('saved.tzx');
+  });
+
   it('undo restores cursor and selection', () => {
     insertBlocks(0, 0, groupedTape());
     setCursor(0, 2);
