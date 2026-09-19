@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { Side, tapes, active, setCursor, unitIndices, moveBlocks, toggleCollapse, hex, blockNo, zeroBased, dialog } from '../state/store';
-import { openFiles, pickAndOpen, saveTzx, confirmDiscard } from '../state/files';
+import { Side, tapes, active, setCursor, unitIndices, moveBlocks, toggleCollapse, hex, blockNo, zeroBased, fmtTime } from '../state/store';
+import { openFiles } from '../state/files';
+import { runCommand, commandLabel } from '../state/commands';
 import { checkConsistency, Issue } from '../tzx/consistency';
 import { groupRanges } from '../tzx/programs';
 import { describeBlock, blockLength, isMetadata } from '../tzx/describe';
 import { isDataBlock, isUnknown as isUnknownBlock, BLOCK_NAMES } from '../tzx/types';
 import { fmtNum } from '../state/store';
 import { BlockEditor } from './BlockEditor';
-import { MenuItems, blockMenu } from './MenuBar';
-import { viewData, playTape, openInsertDialog, openProgramPicker } from '../state/actions';
+import { MenuItems, contextMenu, paneMenu } from './MenuBar';
+import { viewData } from '../state/actions';
 import { IconBtn } from './icons';
-import { playing, playingSide, playingBlock, stopPlayback } from '../state/player';
+import { playing, playingSide, playingBlock, playPos } from '../state/player';
 import { requiredVersion } from '../tzx/writer';
 import { contentLabels } from '../tzx/content';
 import { useMemo } from 'preact/hooks';
@@ -123,7 +124,9 @@ export function Panes() {
 export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
   const t = tapes[side].value;
   const isActive = active.value === side;
+  const has = t.blocks.length > 0;
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null);
+  const [more, setMore] = useState(false);
   const [drop, setDrop] = useState<{ index: number; after: boolean } | null>(null);
   const [fileOver, setFileOver] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -160,6 +163,13 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
   // the list background: the list element itself or the "No tape loaded" placeholder inside it
   const isBackground = (target: EventTarget | null) =>
     target === listRef.current || (target instanceof Element && !!target.closest('.empty'));
+
+  useEffect(() => {
+    if (!more) return;
+    const close = () => setMore(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [more]);
 
   useEffect(() => {
     if (!ctx) return;
@@ -309,14 +319,27 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
           {t.dirty && <span class="dirty-dot" title="Unsaved changes" />}
           {t.blocks.length > 0 && (() => { const v = requiredVersion(t.blocks); return <span class="ver" title="TZX version this tape will be saved as">TZX {v.major}.{String(v.minor).padStart(2, '0')}</span>; })()}
         </div>
+        {playing.value && playingSide.value === side && (
+          <span class="playing-pill" onClick={() => runCommand('stop', side)} title="Click to stop"><span class="dot" /><span class="time">{fmtTime(playPos.value.elapsed)}</span></span>
+        )}
         <div class="toolbar">
-          <IconBtn name="folder" title="Open tape…" onClick={() => confirmDiscard(side, () => pickAndOpen(side))} />
-          <IconBtn name="save" title="Save as TZX" disabled={t.blocks.length === 0} onClick={() => saveTzx(side)} />
+          <IconBtn name="folder" title="Open tape…" onClick={() => runCommand('open', side)} />
+          <IconBtn name="save" title="Save as TZX" disabled={!has} onClick={() => runCommand('save', side)} />
           <span class="vsep" />
-          <IconBtn name="plus" title="Insert block…" onClick={() => openInsertDialog(side)} />
-          <IconBtn name={playing.value ? 'stop' : 'play'} title={playing.value ? 'Stop playback' : 'Play from cursor'} disabled={t.blocks.length === 0} onClick={() => (playing.value ? stopPlayback() : playTape(side, true))} />
-          <IconBtn name="list" title="Programs…" disabled={t.blocks.length === 0} onClick={() => openProgramPicker(side)} />
-          <IconBtn name="info" title="Tape info…" disabled={t.blocks.length === 0} onClick={() => (dialog.value = { kind: 'tapeinfo', side })} />
+          <IconBtn name="plus" title="Insert block…" onClick={() => runCommand('insert', side)} />
+          <IconBtn name={playing.value ? 'stop' : 'play'} title={playing.value ? 'Stop playback' : 'Play from cursor'} disabled={!has} onClick={() => runCommand(playing.value ? 'stop' : 'play-cursor', side)} />
+          <IconBtn name="launch" title={commandLabel('emu-tape', side)} disabled={!has} onClick={() => runCommand('emu-tape', side)} />
+          <IconBtn name="list" title="Programs…" disabled={!has} onClick={() => runCommand('programs', side)} />
+          <IconBtn name="info" title="Tape info…" disabled={!has} onClick={() => runCommand('tape-info', side)} />
+          <span class="vsep" />
+          <div class={'menu pane-more' + (more ? ' open' : '')}>
+            <IconBtn name="more" title="More for this tape" active={more} onClick={() => setMore(!more)} />
+            {more && (
+              <div class="dropdown" onClick={(e) => e.stopPropagation()}>
+                <MenuItems items={paneMenu(side)} onDone={() => setMore(false)} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div
@@ -387,7 +410,7 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
       <BlockEditor side={side} height={editorH} />
       {ctx && (
         <div class="ctxmenu" style={{ left: Math.min(ctx.x, window.innerWidth - 240), top: Math.min(ctx.y, window.innerHeight - 420) }} onClick={(e) => e.stopPropagation()}>
-          <MenuItems items={blockMenu(side)} onDone={() => setCtx(null)} />
+          <MenuItems items={contextMenu(side)} onDone={() => setCtx(null)} />
         </div>
       )}
     </div>

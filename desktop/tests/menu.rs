@@ -7,9 +7,6 @@
 
 include!("../src/menutable.rs");
 
-/// Ids that `COMMANDS` has and no menu bar shows: the context menu owns them.
-const NOT_IN_A_MENU: &[&str] = &["toggle-collapse"];
-
 fn commands_ts() -> String {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/state/commands.ts");
     std::fs::read_to_string(path).expect("src/state/commands.ts")
@@ -114,35 +111,51 @@ fn every_menu_item_is_a_command() {
 fn every_command_is_in_the_menu() {
     let menu: Vec<&str> = flat().iter().map(|i| i.id).collect();
     for id in command_ids() {
-        if NOT_IN_A_MENU.contains(&id.as_str()) {
-            continue;
-        }
         assert!(menu.contains(&id.as_str()), "command {id:?} has no menu item");
     }
 }
 
-/// The window bar is a second grouping of the same table (Left/Right per pane,
-/// the way `MenuBar.tsx` groups them), so every id it lists has to be an item of
-/// `MENUS` — otherwise it would show a command the platform bar cannot.
-#[test]
-fn the_window_menus_only_show_commands_the_table_has() {
-    let mut shown = 0;
-    for menu in WINDOW_MENUS {
-        for id in menu.ids {
-            if id.is_empty() {
-                continue;
-            }
-            assert!(item(id).is_some(), "the {} menu shows {id:?}, which is not in the table", menu.title);
-            shown += 1;
+/// `MENUS` in `src/ui/MenuBar.tsx`, as (title, ids) with `""` for a separator:
+/// the entries between `export const MENUS` and the `];` that closes it, where
+/// a line opening with `['Title', [` starts a menu and every other quoted word
+/// is a command id or `sep`.
+fn web_menus() -> Vec<(String, Vec<String>)> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/ui/MenuBar.tsx");
+    let source = std::fs::read_to_string(path).expect("src/ui/MenuBar.tsx");
+    let start = source.find("export const MENUS").expect("MenuBar.tsx has no MENUS table");
+    let table = &source[start..];
+    let table = &table[..table.find("\n];").expect("MENUS is not closed")];
+    let mut menus: Vec<(String, Vec<String>)> = Vec::new();
+    for line in table.lines().skip(1) {
+        let mut words = line.split('\'').skip(1).step_by(2).map(str::to_string);
+        if line.trim_start().starts_with("['") {
+            menus.push((words.next().unwrap(), Vec::new()));
         }
+        let Some((_, ids)) = menus.last_mut() else { continue };
+        ids.extend(words.map(|w| if w == "sep" { String::new() } else { w }));
     }
-    assert!(shown > 40, "only {shown} commands in the window bar");
+    menus
+}
 
-    // Left and Right are the same list; what differs is the pane they run on.
-    let sides: Vec<Option<usize>> = WINDOW_MENUS.iter().map(|m| m.side).collect();
-    assert_eq!(sides[0], Some(0));
-    assert_eq!(sides[1], Some(1));
-    assert_eq!(WINDOW_MENUS[0].ids, WINDOW_MENUS[1].ids);
+/// One grouping, in both builds: the same titles, holding the same commands in
+/// the same order, separators included.
+#[test]
+fn the_menus_are_grouped_as_on_the_web() {
+    let web = web_menus();
+    assert_eq!(web.len(), MENUS.len(), "MenuBar.tsx has {} menus", web.len());
+    for (menu, (title, ids)) in MENUS.iter().zip(&web) {
+        assert_eq!(menu.title, title);
+        let here: Vec<&str> = menu.items.iter().map(|i| i.id).collect();
+        assert_eq!(&here, ids, "the {title} menu differs from MenuBar.tsx");
+    }
+}
+
+/// No menu is long enough to need reading: the point of the grouping.
+#[test]
+fn no_menu_is_long() {
+    for menu in MENUS {
+        assert!(menu.items.len() <= 15, "the {} menu has {} rows", menu.title, menu.items.len());
+    }
 }
 
 #[test]

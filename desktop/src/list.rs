@@ -510,7 +510,7 @@ fn draw_row(app: &App, p: &egui::Painter, ui: &mut Ui, rect: Rect, side: Side, i
     }
 }
 
-/// The context menu the right button opens, `blockMenu` in `MenuBar.tsx`.
+/// The context menu the right button opens, `contextMenu` in `MenuBar.tsx`.
 pub fn context_menu(app: &mut App, ctx: &egui::Context) {
     let Some((side, pos)) = app.context_menu else { return };
     let tok = app.tokens;
@@ -526,7 +526,7 @@ pub fn context_menu(app: &mut App, ctx: &egui::Context) {
                         continue;
                     }
                     let enabled = commands::enabled(app, id, side);
-                    let label = commands::label(app, id, side);
+                    let label = commands::context_label(app, id, side);
                     let keys = crate::menutable::item(id).map(|i| fmt::accel(i.keys)).unwrap_or_default();
                     let button = egui::Button::new(label).shortcut_text(keys).min_size(vec2(240.0, 0.0));
                     if ui.add_enabled(enabled, button).clicked() {

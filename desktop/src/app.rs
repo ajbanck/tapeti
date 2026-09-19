@@ -447,15 +447,36 @@ impl App {
                     .on_hover_text("TZX version this tape will be saved as");
             }
             // Right to left, so the order here is the reverse of the web
-            // toolbar's: folder, save, insert, play, programs, info.
+            // toolbar's: folder, save | insert, play, emulator, programs, info | more.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0; // the web's .toolbar gap
                 let has = !self.store.tape(side).blocks.is_empty();
+                // What is per tape and has no button here: the overflow menu,
+                // `paneMenu` on the web.
+                let more = icons::button(ui, &icons::MORE, "More for this tape", true);
+                egui::Popup::menu(&more).show(|ui| {
+                    for id in menutable::PANE_MENU {
+                        if id.is_empty() {
+                            ui.separator();
+                            continue;
+                        }
+                        let Some(it) = menutable::item(id) else { continue };
+                        let button = egui::Button::new(it.label).shortcut_text(crate::fmt::accel(it.keys));
+                        if ui.add_enabled(commands::enabled(self, id, side), button).clicked() {
+                            run = Some(it.id);
+                            ui.close();
+                        }
+                    }
+                });
+                crate::widgets::vsep(ui, &tok);
                 if icons::button(ui, &icons::INFO, "Tape info…", has).clicked() {
                     run = Some("tape-info");
                 }
                 if icons::button(ui, &icons::LIST, "Programs…", has).clicked() {
                     run = Some("programs");
+                }
+                if icons::button(ui, &icons::LAUNCH, "Open tape in emulator", has).clicked() {
+                    run = Some("emu-tape");
                 }
                 let playing = self.player.playing();
                 let (icon, hover) = if playing {
@@ -477,6 +498,12 @@ impl App {
                 }
                 if icons::button(ui, &icons::FOLDER, "Open tape…", true).clicked() {
                     run = Some("open");
+                }
+                // `.playing-pill`, in the header of the pane that is playing.
+                if self.progress.playing && self.progress.side == Some(side) {
+                    ui.add_space(6.0);
+                    let time = RichText::new(crate::fmt::time(self.progress.elapsed)).size(12.0).monospace();
+                    ui.label(time.color(tok.accent));
                 }
             });
         });
@@ -603,13 +630,11 @@ impl App {
         self.bench_step(ctx);
         self.sync_menu();
 
-        // Where the platform takes a menu bar it is muda's; otherwise it is drawn
-        // here, from the same table.
+        // Where the platform takes a menu bar (macOS) it is muda's and the window
+        // has none; otherwise it is drawn here, from the same table.
         if self.menu.draws_in_window() {
             let active = self.store.active;
-            // One state per pane: the Left menu greys out on the left tape's
-            // blocks even while the right one is active.
-            let states = [commands::menu_state(self, 0), commands::menu_state(self, 1)];
+            let state = commands::menu_state(self, active);
             let mut fired = None;
             // `.menubar`: 44px of `--surface` ruled off from the panes.
             let tok = self.tokens;
@@ -621,7 +646,7 @@ impl App {
                     bottom: 9,
                 }))
                 .show(ui, |ui| {
-                    fired = self.menu.bar(ui, &states, active, &tok);
+                    fired = self.menu.bar(ui, &state, active, &tok);
                 });
             let bar = out.response.rect;
             ui.painter().hline(bar.x_range(), bar.bottom() - 0.5, egui::Stroke::new(1.0, tok.border));
@@ -931,7 +956,6 @@ mod tests {
     /// to.
     const NOT_HEADLESS: &[&str] = &[
         "open",
-        "open-other",
         "insert-file",
         "save",
         "save-as",

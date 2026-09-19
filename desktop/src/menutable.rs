@@ -1,7 +1,7 @@
 // The command table the native menu is built from.
 //
-// `menu.rs` builds the platform menu from it — muda on macOS and Windows, an egui
-// bar elsewhere — and `tests/menu.rs` checks it against the web app's table. The
+// `menu.rs` builds the menu bar from it — muda's on macOS, an egui bar in the
+// window elsewhere — and `tests/menu.rs` checks it against the web app's table. The
 // ids are the ids of `COMMANDS` in `src/state/commands.ts`, so the desktop app and
 // the browser one cannot drift apart.
 //
@@ -70,9 +70,6 @@ pub struct Item {
 }
 
 pub struct MenuDef {
-    /// Only the platform bar (muda, macOS) groups by these; the window bar has
-    /// its own titles in `WINDOW_MENUS`.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub title: &'static str,
     pub items: &'static [Item],
 }
@@ -89,15 +86,18 @@ const fn sep() -> Item {
     Item { id: "", label: "", keys: "", check: false, need: Need::Always }
 }
 
-use Need::{Always, Blocks, Clipboard, Cursor, Playing, Redo, Undo};
+use Need::{Always, Blocks, Clipboard, Collapsible, Cursor, Playing, Redo, Undo};
 
+/// The one grouping, on every platform and in the browser: `MENUS` in
+/// `src/ui/MenuBar.tsx` lists the same ids under the same titles, and
+/// `tests/menu.rs` fails if they drift. Every menu runs on the active pane; what
+/// is aimed at one pane in particular is a button in that pane's header.
 pub const MENUS: &[MenuDef] = &[
     MenuDef {
         title: "File",
         items: &[
             cmd("new", "New Tape", "CmdOrCtrl+N", Always),
             cmd("open", "Open…", "CmdOrCtrl+O", Always),
-            cmd("open-other", "Open in Other Pane…", "CmdOrCtrl+Shift+O", Always),
             cmd("insert-file", "Insert File at Cursor…", "", Always),
             sep(),
             cmd("save", "Save", "CmdOrCtrl+S", Blocks),
@@ -119,6 +119,7 @@ pub const MENUS: &[MenuDef] = &[
             cmd("delete", "Delete Block", "", Cursor),
             sep(),
             cmd("select-all", "Select All", "CmdOrCtrl+A", Blocks),
+            cmd("select-program", "Select Program", "CmdOrCtrl+Shift+A", Cursor),
         ],
     },
     MenuDef {
@@ -130,19 +131,34 @@ pub const MENUS: &[MenuDef] = &[
             sep(),
             cmd("move-up", "Move Up", "CmdOrCtrl+Up", Cursor),
             cmd("move-down", "Move Down", "CmdOrCtrl+Down", Cursor),
+            sep(),
             cmd("group", "Group Selection", "CmdOrCtrl+G", Cursor),
+            // The bars show one label for both directions; the context menu,
+            // which is built per click, says which (`commands::label`).
+            cmd("toggle-collapse", "Collapse or Expand Group/Loop", "", Collapsible),
             cmd("collapse-all", "Collapse All Groups", "", Always),
             cmd("expand-all", "Expand All Groups", "", Always),
             sep(),
-            cmd("select-program", "Select Program", "CmdOrCtrl+Shift+A", Cursor),
             cmd("extract", "Extract to Other Pane", "CmdOrCtrl+Shift+E", Cursor),
-            sep(),
-            cmd("find-match", "Find Match", "CmdOrCtrl+F", Cursor),
             cmd("set-timings", "Set Selection Timings to Current", "", Cursor),
         ],
     },
     MenuDef {
         title: "Tape",
+        items: &[
+            cmd("programs", "Programs…", "CmdOrCtrl+J", Blocks),
+            cmd("tape-info", "Tape Info…", "CmdOrCtrl+I", Blocks),
+            cmd("consistency", "Check Consistency…", "CmdOrCtrl+K", Blocks),
+            sep(),
+            cmd("compare", "Compare Tapes", "", Always),
+            cmd("find-match", "Find Match", "CmdOrCtrl+F", Cursor),
+            cmd("clear-compare", "Clear Compare Marks", "", Always),
+            sep(),
+            check("toggle-lock", "Lock Tapes", "CmdOrCtrl+L"),
+        ],
+    },
+    MenuDef {
+        title: "Play",
         items: &[
             cmd("play", "Play Tape", "", Blocks),
             cmd("play-cursor", "Play from Cursor", "CmdOrCtrl+P", Blocks),
@@ -153,111 +169,40 @@ pub const MENUS: &[MenuDef] = &[
             cmd("emu-cursor", "Open from Cursor in Emulator", "CmdOrCtrl+Shift+R", Cursor),
             cmd("emu-selection", "Open Selection in Emulator", "", Cursor),
             sep(),
-            cmd("programs", "Programs…", "CmdOrCtrl+J", Blocks),
-            cmd("tape-info", "Tape Info…", "CmdOrCtrl+I", Blocks),
-            cmd("consistency", "Check Consistency…", "CmdOrCtrl+K", Blocks),
-            cmd("compare", "Compare Tapes", "", Always),
-            cmd("clear-compare", "Clear Compare Marks", "", Always),
-            sep(),
-            cmd("switch-pane", "Switch Active Pane", "CmdOrCtrl+`", Always),
-            check("toggle-lock", "Toggle Lock", "CmdOrCtrl+L"),
+            cmd("emu-settings", "Emulator Settings…", "", Always),
         ],
     },
     MenuDef {
-        title: "Options",
+        title: "View",
         items: &[
-            check("opt-hex-bytes", "Flag and Checksum Bytes in Hex", ""),
             check("opt-zero-based", "Number Blocks from 0", ""),
+            check("opt-hex-bytes", "Flag and Checksum Bytes in Hex", ""),
             sep(),
-            cmd("emu-settings", "Emulator…", "", Always),
+            check("theme-light", "Theme: Light", ""),
+            check("theme-dark", "Theme: Dark", ""),
+            check("theme-system", "Theme: System", ""),
+            sep(),
+            cmd("switch-pane", "Switch Active Pane", "CmdOrCtrl+`", Always),
         ],
     },
     MenuDef { title: "Help", items: &[cmd("about", "About Tapeti…", "", Always)] },
 ];
 
-/// How the **window's** menu bar groups the same commands: by pane, the way
-/// `MenuBar.tsx` does — Left and Right each run on their own tape, which is what
-/// the two menus mean. The platform bar above keeps File/Edit/Tape, because that
-/// is what macOS expects of a menu bar and because an accelerator can only belong
-/// to one item: ⌘Z there is the active pane's, not the left one's.
-pub struct WindowMenu {
-    pub title: &'static str,
-    /// The pane its commands run on; `None` means whichever is active.
-    pub side: Option<usize>,
-    /// Command ids, `""` for a separator. Every one is an item of `MENUS`.
-    pub ids: &'static [&'static str],
-}
-
-/// The per-pane list both Left and Right are built from (`tapeMenu` in
-/// `MenuBar.tsx`).
-const TAPE_IDS: &[&str] = &[
+/// The pane header's overflow menu (`paneMenu` in `MenuBar.tsx`): what is per
+/// tape and has no button of its own there. `""` is a separator.
+#[allow(dead_code)] // `tests/menu.rs` includes this file and reads only `MENUS`
+pub const PANE_MENU: &[&str] = &[
     "new",
-    "open",
-    "open-other",
     "insert-file",
     "",
-    "save",
     "save-as",
     "save-tap",
     "export-wav",
     "",
     "play",
-    "play-cursor",
     "play-selection",
-    "stop",
     "",
-    "emu-tape",
-    "",
-    "programs",
-    "tape-info",
     "consistency",
-    "compare",
-    "clear-compare",
-    "",
-    "undo",
-    "redo",
-    "select-all",
-];
-
-pub const WINDOW_MENUS: &[WindowMenu] = &[
-    WindowMenu { title: "Left", side: Some(0), ids: TAPE_IDS },
-    WindowMenu { title: "Right", side: Some(1), ids: TAPE_IDS },
-    WindowMenu {
-        title: "Block",
-        side: None,
-        ids: &[
-            "insert",
-            "view-data",
-            "view-as-one",
-            "",
-            "cut",
-            "copy",
-            "paste",
-            "duplicate",
-            "delete",
-            "",
-            "move-up",
-            "move-down",
-            "group",
-            "collapse-all",
-            "expand-all",
-            "",
-            "select-program",
-            "extract",
-            "",
-            "emu-cursor",
-            "emu-selection",
-            "",
-            "find-match",
-            "set-timings",
-        ],
-    },
-    WindowMenu {
-        title: "Options",
-        side: None,
-        ids: &["opt-hex-bytes", "opt-zero-based", "", "switch-pane", "toggle-lock", "", "emu-settings"],
-    },
-    WindowMenu { title: "Help", side: None, ids: &["about"] },
 ];
 
 /// Flat index of every item, the order `menu.rs` addresses them in.

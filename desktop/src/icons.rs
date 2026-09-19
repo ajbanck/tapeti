@@ -181,6 +181,26 @@ pub const CASSETTE: Icon = Icon(&[
 /// The − and ↑ of the editor's list rows. The web writes them as characters;
 /// here they are paths, because egui's font set has no U+2191 and a missing
 /// glyph is a hollow box on the one platform that lacks it.
+/// An arrow leaving a box: open this somewhere else, which is the emulator.
+pub const LAUNCH: Icon = Icon(&[
+    Line(&[(14.0, 4.0), (20.0, 4.0), (20.0, 10.0)]),
+    Line(&[(20.0, 4.0), (11.0, 13.0)]),
+    Line(&[
+        (18.0, 14.0),
+        (18.0, 19.0),
+        (17.0, 20.0),
+        (5.0, 20.0),
+        (4.0, 19.0),
+        (4.0, 7.0),
+        (5.0, 6.0),
+        (10.0, 6.0),
+    ]),
+]);
+
+/// Three dots: the rest of a toolbar.
+pub const MORE: Icon =
+    Icon(&[Dot { c: (5.0, 12.0), r: 1.8 }, Dot { c: (12.0, 12.0), r: 1.8 }, Dot { c: (19.0, 12.0), r: 1.8 }]);
+
 pub const MINUS: Icon = Icon(&[Line(&[(6.0, 12.0), (18.0, 12.0)])]);
 pub const ARROW_UP: Icon =
     Icon(&[Line(&[(12.0, 19.0), (12.0, 5.0)]), Line(&[(6.0, 11.0), (12.0, 5.0), (18.0, 11.0)])]);

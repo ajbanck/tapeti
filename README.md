@@ -26,7 +26,11 @@ yourself, see [Building from source](#building-from-source).
 ## Features
 
 **Two tape windows** (Left / Right), each with a numbered block list, a per-block editor and
-Commit / Revert buttons. Drag the bar between the tapes to resize them
+Commit / Revert buttons. The **menus** (File, Edit, Block, Tape, Play, View) act on the active
+tape; the buttons in a tape's header act on that tape whichever is active — open, save, insert
+block, play, open in emulator, programs, tape info — and its "…" button holds the rest (new,
+insert file, save as, export WAV, play tape, check consistency). On macOS the menus are in the
+system menu bar, on Windows and Linux and in the browser at the top of the window. Drag the bar between the tapes to resize them
 (double-click for equal widths), and the bar above an editor to resize the editor.
 
 **File formats**: reads and writes TZX 1.20 (blocks 10–19, 20–28, 2A, 2B, 30–33, 35, 5A); unknown
@@ -90,13 +94,13 @@ for the details. A collapsed group shows the marks of the blocks inside it.
 WAV (8/16-bit, several sample rates) with either a square wave or MIC-emulation waveform. Loops,
 jumps, calls and selects are followed as an emulator would. While playing, the status bar shows
 elapsed/total time and a progress bar, and the block being played is marked in the list (click
-either the status bar or the "Playing" pill to stop).
+either the status bar or the time in the playing tape's header to stop).
 
-**Open in emulator** (Tape menu: whole tape; Block menu and context menu: from the cursor, or the
-selection): the desktop app writes those blocks to a temporary TZX and starts an emulator with it.
+**Open in emulator** (Play menu: whole tape, from the cursor, or the selection; the tape header's
+button: whole tape; context menu: from the block clicked): the desktop app writes those blocks to a temporary TZX and starts an emulator with it.
 By default it looks for [Fuse](https://fuse-emulator.sourceforge.net/): the Fuse app on macOS, and
 `fuse`, `fuse-gtk` or `fuse-sdl` on the PATH or in the usual install folders on Windows and Linux.
-Options → Emulator… picks another program (ZEsarUX, Spectaculator, a Flatpak via `flatpak` with
+Play → Emulator Settings… picks another program (ZEsarUX, Spectaculator, a Flatpak via `flatpak` with
 `run <app-id>` as arguments, …) and extra arguments; the tape file is always the last argument.
 If the exported part would break jumps, loops or calls, you are asked first. The browser build
 downloads the TZX instead.
@@ -107,17 +111,17 @@ the dialogs opened from it; the data window has its own, starting at Dec every t
 so switching either leaves the other alone. Neither is remembered between sessions, and a field
 that wants a number takes `$`/`0x` for hex and `#` for decimal whatever base it is showing.
 
-**Options** menu (remembered between sessions): *Flag and checksum bytes in hex* shows those byte
+**View** menu (remembered between sessions): *Flag and checksum bytes in hex* shows those byte
 values as `0xXX` on a screen that is on Dec, *Number blocks from 0* numbers the blocks in the
 list, data window, jump/call targets and consistency report the way the file format counts them,
-from 0. It is on by default; turn it off for 1-based numbers. The button at the right end of the
-menu bar cycles the theme between light, dark and follow-the-system.
+from 0. It is on by default; turn it off for 1-based numbers. *Theme* is light, dark or
+follow-the-system; the button at the right end of the in-window menu bar cycles through them.
 
 ### Files on the desktop
 
 Open and Save use native dialogs, **Save (Ctrl+S) writes back to the file you opened**, and `.tzx`
 / `.tap` files are associated with the app so they open with a double click (or by dropping them on
-the app icon in the macOS Dock). Tapes can also be opened from the Left / Right menus, dropped onto
+the app icon in the macOS Dock). Tapes can also be opened from the File menu or a tape's folder button, dropped onto
 a tape pane, or named on the command line — `tapeti left.tzx right.tzx` fills both panes. In the
 browser, Save downloads a copy, and tapes can be given in the URL:
 `?open=samples/Tapeti%20demo.tzx&right=other.tzx`.
@@ -139,8 +143,7 @@ place of Ctrl and Option in place of Alt**; Delete is the Backspace (⌫) key th
 | Insert (desktop: also Ctrl+Shift+N) | Insert block |
 | Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+D | Cut, copy, paste, duplicate |
 | Ctrl+Z, Ctrl+Shift+Z, Ctrl+A | Undo, redo, select all |
-| Ctrl+O, Ctrl+S | Open / save left tape |
-| Ctrl+Shift+O, Ctrl+Shift+S | Open / save right tape |
+| Ctrl+O, Ctrl+S, Ctrl+Shift+S | Open, save, save as TZX (the active tape) |
 | Ctrl+G, Ctrl+F | Group selection, find match |
 | Ctrl+J, Ctrl+Shift+A, Ctrl+Shift+E | Pick a program, select the program at the cursor, extract selection to the other pane |
 | Tab, Space | Switch active tape, play / stop from the cursor |

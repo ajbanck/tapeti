@@ -18,9 +18,11 @@ page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const rows = (pane) => page.$$eval(`.pane:${pane} .blocklist .row`, (r) => r.length);
 const expect = (cond, msg) => { if (!cond) { errors.push('ASSERT: ' + msg); console.log('FAIL', msg); } else console.log('ok  ', msg); };
-const clickMenu = async (menuIndex, label) => {
-  const titles = await page.$$('.menubar .menu .title');
-  await titles[menuIndex].click();
+const clickMenu = async (menu, label) => {
+  let title;
+  for (const t of await page.$$('.menubar .menu .title')) if ((await t.evaluate((e) => e.textContent)).trim() === menu) title = t;
+  if (!title) throw new Error('menu not found: ' + menu);
+  await title.click();
   await wait(120);
   for (const it of await page.$$('.menu .dropdown .item')) {
     const t = (await it.evaluate((e) => e.textContent)).trim();
@@ -104,12 +106,31 @@ await wait(250);
 await page.keyboard.press('Escape');
 await wait(150);
 
+// the menu bar is grouped by subject, not by pane; what is per pane hangs off the pane's header
+const menuTitles = await page.$$eval('.menubar .menu .title', (t) => t.map((e) => e.textContent.trim()));
+expect(menuTitles.join(' ') === 'File Edit Block Tape Play View Help', 'the menu bar reads File Edit Block Tape Play View Help');
+await page.click('.pane:last-child .toolbar button[title="More for this tape"]');
+await wait(150);
+expect((await page.$$('.pane:last-child .pane-more .dropdown .item')).length === 8, "the pane header's overflow menu opens");
+await page.screenshot({ path: `${OUT}/06-pane-menu.png` });
+await page.click('.pane:last-child .toolbar button[title="More for this tape"]');
+await wait(150);
+expect((await page.$$('.pane-more .dropdown')).length === 0, 'and closes again');
+const ctxRow = (await page.$$('.pane:first-child .blocklist .row'))[3];
+await ctxRow.click({ button: 'right' });
+await wait(150);
+expect((await page.$$('.ctxmenu .item')).length === 13, 'the right-click menu is the short list');
+await page.screenshot({ path: `${OUT}/07-context-menu.png` });
+await page.keyboard.press('Escape');
+await page.mouse.click(5, 5);
+await wait(150);
+
 // delete via menu, undo via menu
 const left = await page.$$('.pane:first-child .blocklist .row');
 await left[3].click();
-await clickMenu(2, 'Delete');
+await clickMenu('Edit', 'Delete');
 expect((await rows('first-child')) === 18, 'menu Delete removes a block');
-await clickMenu(0, 'Undo');
+await clickMenu('Edit', 'Undo');
 expect((await rows('first-child')) === 19, 'menu Undo restores it');
 
 // hex edit + commit + undo (block 3 is BASIC, so the window opens on the BASIC tab)
@@ -152,7 +173,7 @@ expect((await page.$eval('.modal.programs .proglist .t .name', (e) => e.textCont
 await page.click('.modal.programs .mfooter button.primary');
 await wait(150);
 expect((await page.$$('.pane:first-child .row.selected')).length === 19, 'picking the program selects all its blocks');
-await clickMenu(2, 'Extract to other pane');
+await clickMenu('Block', 'Extract to other pane');
 await wait(200);
 expect((await rows('last-child')) === 19, 'extract copies the selection into the right pane');
 expect((await page.$eval('.pane:last-child .fname', (e) => e.textContent)) === 'demo.tzx', 'the extracted tape is named after the program');
