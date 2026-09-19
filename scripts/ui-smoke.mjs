@@ -49,6 +49,15 @@ expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'Scr
 await page.screenshot({ path: `${OUT}/02-datawindow-screen.png` });
 await page.click('.datawin .tab[data-view=dump]');
 await wait(150);
+
+// the Dec/Hex switch belongs to the screen it is on
+const mainBase = () => page.$eval('.statusbar .cell', (e) => e.textContent.trim());
+const winBase = () => page.$eval('.datawin .basecell', (e) => e.textContent.trim());
+expect((await winBase()) === 'Dec', 'the data window opens on Dec');
+await page.click('.datawin .basecell');
+await wait(150);
+expect((await winBase()) === 'Hex', 'its own switch turns it to Hex');
+expect((await mainBase()) === 'Dec', 'and the main window stays on Dec');
 await page.keyboard.press('Escape');
 await wait(150);
 expect(!(await page.$('.datawin')), 'Escape closes the data window');

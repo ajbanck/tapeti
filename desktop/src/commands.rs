@@ -53,7 +53,6 @@ pub fn label(app: &App, id: &str, side: Side) -> String {
 
 pub fn checked(app: &App, id: &str) -> bool {
     match id {
-        "toggle-hex" => app.store.hex,
         "opt-hex-bytes" => app.store.settings.hex_bytes,
         "opt-zero-based" => app.store.settings.zero_based,
         "toggle-lock" => app.store.locked,
@@ -163,10 +162,6 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
         "switch-pane" => app.store.active = other(side),
         "toggle-lock" => app.store.toggle_lock(),
         // ---- options
-        "toggle-hex" => {
-            app.store.hex = !app.store.hex;
-            app.store.touch_view();
-        }
         "opt-hex-bytes" => {
             app.store.settings.hex_bytes = !app.store.settings.hex_bytes;
             app.store.settings.save();
@@ -178,9 +173,6 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
             app.store.touch_view();
         }
         // ---- help
-        "shortcuts" => {
-            app.store.dialog = Some(Dialog::message("Keyboard & mouse", shortcuts()));
-        }
         "about" => app.store.dialog = Some(Dialog::about()),
         _ => {
             app.store.set_status(format!("Unknown command {id}"));
@@ -250,61 +242,6 @@ pub const PLAIN_KEYS: &[(Key, &str)] = &[
     (Key::Enter, "view-data"),
     (Key::Tab, "switch-pane"),
 ];
-
-/// The list behind Help → Keyboard shortcuts, `SHORTCUTS` in `commands.ts`.
-pub fn shortcuts() -> Vec<String> {
-    let k = crate::fmt::key;
-    let modk = if crate::fmt::IS_MAC { "⌘" } else { "Ctrl" };
-    let alt = if crate::fmt::IS_MAC { "Option" } else { "Alt" };
-    let ctrl = if crate::fmt::IS_MAC { "Control" } else { "Ctrl" };
-    vec![
-        format!("Click: make block current. Shift+click: select range. {modk}+click: toggle selection."),
-        "Right click: context menu. Double click: view data, or collapse/expand a group or loop.".into(),
-        format!("Drag & drop blocks to move them within or between tapes; hold {alt} or {ctrl} to copy."),
-        "Drop a TZX/TAP file on a tape to open it; hold Shift to insert it at the cursor.".into(),
-        format!(
-            "{}: delete current block or selection. Insert or {}: insert block.",
-            if crate::fmt::IS_MAC { "Delete (⌫)" } else { "Delete / Backspace" },
-            k("Mod+Shift+N")
-        ),
-        format!(
-            "↑ ↓: move cursor. {} {}: move block. Enter: view data. Escape: close window.",
-            k("Mod+↑"),
-            k("Mod+↓")
-        ),
-        format!(
-            "{}, {}, {}, {}: cut, copy, paste, duplicate. {}, {}: undo, redo. {}: select all.",
-            k("Mod+X"),
-            k("Mod+C"),
-            k("Mod+V"),
-            k("Mod+D"),
-            k("Mod+Z"),
-            k("Mod+Shift+Z"),
-            k("Mod+A")
-        ),
-        format!(
-            "{}, {}: open / save the active tape. {}: open in the other pane. {}: group selection. {}: find match.",
-            k("Mod+O"),
-            k("Mod+S"),
-            k("Mod+Shift+O"),
-            k("Mod+G"),
-            k("Mod+F")
-        ),
-        format!(
-            "{}: pick a program (game) on a collection tape. {}: select the program at the cursor. {}: extract the selection to the other pane.",
-            k("Mod+J"),
-            k("Mod+Shift+A"),
-            k("Mod+Shift+E")
-        ),
-        format!("{}: switch active tape. Space: play/stop tape from the cursor.", k("Tab")),
-        format!(
-            "{}, {}: open the tape / the tape from the cursor in the emulator (Options → Emulator…).",
-            k("Mod+R"),
-            k("Mod+Shift+R")
-        ),
-        "Data window: click a byte and type hex digits to edit; Tab switches to ASCII editing; arrows move.".into(),
-    ]
-}
 
 #[cfg(test)]
 mod tests {
@@ -380,7 +317,7 @@ mod tests {
     #[test]
     fn options_toggle_and_report_their_check_marks() {
         let mut app = app();
-        for id in ["toggle-hex", "opt-hex-bytes", "opt-zero-based", "toggle-lock"] {
+        for id in ["opt-hex-bytes", "opt-zero-based", "toggle-lock"] {
             let before = checked(&app, id);
             assert!(run(&mut app, id, 0), "{id} did not run");
             assert_ne!(checked(&app, id), before, "{id} did not toggle");
@@ -427,8 +364,7 @@ mod tests {
         assert_eq!(app.store.tape(0).blocks.len(), before + 1);
     }
 
-    /// The shortcut table the Help dialog shows, and the accelerators the
-    /// non-macOS window handles, both come out of the one table.
+    /// The accelerators the non-macOS window handles come out of the one table.
     #[test]
     fn accelerators_parse_for_every_item_that_declares_one() {
         for item in menutable::flat() {
@@ -442,6 +378,5 @@ mod tests {
                 item.id
             );
         }
-        assert!(shortcuts().len() > 8);
     }
 }

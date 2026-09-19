@@ -2,7 +2,7 @@
 // context menu (MenuBar.tsx) and the keyboard shortcuts (App.tsx) all resolve to an entry here,
 // so labels, enabled state and behaviour live in a single place. Ids match the item ids in menu.rs.
 import {
-  Side, tapes, active, dialog, hex, hexBytes, zeroBased, locked, setOption, toggleLock, undo, redo, selectAll,
+  Side, tapes, active, dialog, hexBytes, zeroBased, locked, setOption, toggleLock, undo, redo, selectAll,
   deleteUnit, copyUnit, cutUnit, paste, duplicateUnit, moveUnit, groupSelection, toggleCollapse, collapseAll,
   runCompareTapes, runFindMatch, clearCompare, clipboard,
 } from './store';
@@ -101,11 +101,9 @@ export const COMMANDS = {
   'switch-pane': { label: 'Switch active pane', key: 'Tab', run: (s) => (active.value = other(s)) },
   'toggle-lock': { label: 'Toggle lock', checked: () => locked.value, run: () => toggleLock() },
   // ---- options
-  'toggle-hex': { label: 'Hex for all numbers', checked: () => hex.value, run: () => (hex.value = !hex.value) },
   'opt-hex-bytes': { label: 'Flag and checksum bytes in hex', checked: () => hexBytes.value, run: () => setOption('hexBytes', !hexBytes.value) },
   'opt-zero-based': { label: 'Number blocks from 0', checked: () => zeroBased.value, run: () => setOption('zeroBased', !zeroBased.value) },
   // ---- help
-  'shortcuts': { label: 'Keyboard shortcuts…', run: () => (dialog.value = { kind: 'message', title: 'Keyboard & mouse', lines: SHORTCUTS }) },
   'about': { label: 'About Tapeti…', run: () => (dialog.value = { kind: 'about' }) },
 } satisfies Record<string, Command>;
 
@@ -162,23 +160,4 @@ export const KEY_COMMANDS: { key: string; mod: boolean; shift?: boolean; id: Com
   { key: 'Insert', mod: false, id: 'insert' },
   { key: 'Enter', mod: false, id: 'view-data' },
   { key: 'Tab', mod: false, id: 'switch-pane' },
-];
-
-const k = (spec: string) => fmtKey(spec);
-const MOD = isMac ? '⌘' : 'Ctrl';
-const ALT = isMac ? 'Option' : 'Alt';
-const CTRL = isMac ? 'Control' : 'Ctrl';
-
-const SHORTCUTS = [
-  `Click: make block current. Shift+click: select range. ${MOD}+click: toggle selection.`,
-  'Right click: context menu. Double click: view data, or collapse/expand a group or loop.',
-  `Drag & drop blocks to move them within or between tapes; hold ${ALT} or ${CTRL} to copy.`,
-  'Drop a TZX/TAP file on a tape to open it; hold Shift to insert it at the cursor.',
-  `${isMac ? 'Delete (⌫)' : 'Delete / Backspace'}: delete current block or selection. Insert: insert block.`,
-  `↑ ↓: move cursor. ${k('Mod+↑')} ${k('Mod+↓')}: move block. Enter: view data. Escape: close window.`,
-  `${k('Mod+X')}, ${k('Mod+C')}, ${k('Mod+V')}, ${k('Mod+D')}: cut, copy, paste, duplicate. ${k('Mod+Z')}, ${k('Mod+Shift+Z')}: undo, redo. ${k('Mod+A')}: select all.`,
-  `${k('Mod+O')}, ${k('Mod+S')}: open / save left tape. ${k('Mod+Shift+O')}, ${k('Mod+Shift+S')}: open / save right tape. ${k('Mod+G')}: group selection. ${k('Mod+F')}: find match.`,
-  `${k('Mod+J')}: pick a program (game) on a collection tape. ${k('Mod+Shift+A')}: select the program at the cursor. ${k('Mod+Shift+E')}: extract the selection to the other pane.`,
-  'Tab: switch active tape. Space: play/stop tape from the cursor.',
-  'Data window: click a byte and type hex digits to edit; Tab switches to ASCII editing; arrows move.',
 ];

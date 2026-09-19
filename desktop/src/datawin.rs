@@ -51,6 +51,9 @@ pub struct DataWin {
     pub side: Side,
     pub uids: Vec<Uid>,
     work: BitData,
+    /// This window's own Dec/Hex switch. The main window's says nothing about
+    /// it, and it starts at Dec every time a data window is opened.
+    hex: bool,
     base: i64,
     view: ViewAs,
     flip: bool,
@@ -118,6 +121,7 @@ impl DataWin {
             side,
             uids,
             work,
+            hex: false,
             base,
             view,
             flip: false,
@@ -198,10 +202,12 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let tok = app.tokens;
-    let hex = app.store.hex;
     let locked = app.store.locked;
     let zero = app.store.settings.zero_based;
     let mut dw = app.datawin.take().unwrap();
+    // Read once, so a click on the switch below shows in the next frame rather
+    // than halfway down this one.
+    let hex = dw.hex;
     let mut close = false;
     let mut commit = false;
     let mut pick_file: Option<bool> = None;
@@ -242,6 +248,13 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     w::num(ui, "dw-base", &mut dw.base, 0, 0xffff, hex, 70.0, true);
                     ui.label("Base address");
+                    // This window's switch, the status bar's cell put where the
+                    // numbers it applies to are.
+                    let label = if hex { "Hex" } else { "Dec" };
+                    let icon = Some(&crate::icons::HASH);
+                    if crate::statusbar::cell(ui, icon, "", label, hex, "Number base in this window", &tok) {
+                        dw.hex = !hex;
+                    }
                 });
             });
             let view = dw.view_bytes();
@@ -947,4 +960,31 @@ fn disassembly(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, hex: bool
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tapeti_core::types::Block;
+
+    /// The Dec/Hex switch belongs to the screen it is on: a data window opens on
+    /// Dec whatever the main window is showing, and switching it there leaves
+    /// the main window alone. It is not remembered either — the next data window
+    /// is a new one, on Dec again.
+    #[test]
+    fn the_data_window_has_a_switch_of_its_own() {
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data: vec![0, 1, 2] })];
+        let uid = blocks[0].uid;
+        let mut store = crate::state::Store::new(crate::settings::Settings::default());
+        store.hex = true;
+
+        let mut dw = DataWin::new(&blocks, 0, vec![uid]);
+        assert!(!dw.hex, "a data window opens on Dec, whatever the main window shows");
+        dw.hex = true;
+        assert!(store.hex, "and the main window keeps its own");
+
+        store.hex = false;
+        assert!(dw.hex, "which does not reach back into the window either");
+        assert!(!DataWin::new(&blocks, 0, vec![uid]).hex, "the next window starts on Dec again");
+    }
 }

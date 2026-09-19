@@ -10,15 +10,17 @@ interface NumInputProps {
   disabled?: boolean;
   width?: number;
   title?: string;
+  /** The switch of the screen the field is on; the main window's by default. */
+  hex?: boolean;
 }
 
-/** Numeric text input honouring the Dec/Hex switch; keeps invalid text locally. */
-export function NumInput({ value, onChange, min = 0, max = 0xffffffff, disabled, width, title }: NumInputProps) {
-  const [text, setText] = useState(fmtNum(value));
+/** Numeric text input honouring its screen's Dec/Hex switch; keeps invalid text locally. */
+export function NumInput({ value, onChange, min = 0, max = 0xffffffff, disabled, width, title, hex: ownHex }: NumInputProps) {
+  const h = ownHex ?? hex.value;
+  const [text, setText] = useState(fmtNum(value, h));
   const [bad, setBad] = useState(false);
-  const h = hex.value;
   useEffect(() => {
-    setText(fmtNum(value));
+    setText(fmtNum(value, h));
     setBad(false);
   }, [value, h]);
   return (
@@ -32,7 +34,7 @@ export function NumInput({ value, onChange, min = 0, max = 0xffffffff, disabled,
       onInput={(e) => {
         const s = (e.target as HTMLInputElement).value;
         setText(s);
-        const v = parseNum(s);
+        const v = parseNum(s, h);
         if (Number.isNaN(v) || v < min || v > max) setBad(true);
         else {
           setBad(false);
@@ -41,7 +43,7 @@ export function NumInput({ value, onChange, min = 0, max = 0xffffffff, disabled,
       }}
       onBlur={() => {
         if (bad) {
-          setText(fmtNum(value));
+          setText(fmtNum(value, h));
           setBad(false);
         }
       }}

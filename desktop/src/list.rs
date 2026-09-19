@@ -668,14 +668,16 @@ mod tests {
         assert!(!rows[1].info, "a data block is not");
     }
 
-    /// Block numbers follow the "number blocks from 0" option, everywhere.
+    /// Block numbers follow the "number blocks from 0" option, everywhere. It is
+    /// on by default, so this starts from 0 and turns it off.
     #[test]
     fn the_zero_based_option_renumbers_the_rows() {
         let mut app = app_with(&[0x10, 0x11]);
-        assert_eq!(app.rows[0].rows[0].no, "1");
-        app.store.settings.zero_based = true;
+        assert!(app.store.settings.zero_based, "blocks are numbered from 0 by default");
+        assert_eq!(app.rows[0].rows[0].no, "0");
+        app.store.settings.zero_based = false;
         app.store.touch_view();
         refresh(&mut app);
-        assert_eq!(app.rows[0].rows[0].no, "0");
+        assert_eq!(app.rows[0].rows[0].no, "1");
     }
 }

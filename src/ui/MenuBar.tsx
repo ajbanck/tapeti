@@ -95,7 +95,7 @@ export function blockMenu(side: Side): MenuItem[] {
 }
 
 export function optionsMenu(): MenuItem[] {
-  return items(active.value, ['toggle-hex', 'opt-hex-bytes', 'opt-zero-based']);
+  return items(active.value, ['opt-hex-bytes', 'opt-zero-based']);
 }
 
 export function MenuBar() {
@@ -111,7 +111,7 @@ export function MenuBar() {
     ['Right', tapeMenu(1)],
     ['Block', blockMenu(active.value)],
     ['Options', optionsMenu()],
-    ['Help', items(active.value, ['shortcuts', 'about'])],
+    ['Help', items(active.value, ['about'])],
   ];
   return (
     <div class="menubar" onClick={(e) => e.stopPropagation()}>

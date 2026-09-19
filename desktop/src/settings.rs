@@ -62,7 +62,10 @@ impl Default for Settings {
             path: None,
             theme: Theme::System,
             hex_bytes: false,
-            zero_based: false,
+            // Blocks are numbered from 0 unless the option is turned off: the
+            // block number is an index into the tape, and that is where the
+            // file format, the jump targets and every other tool start.
+            zero_based: true,
             emulator_program: String::new(),
             emulator_args: String::new(),
             editor_height: 340.0,
@@ -113,7 +116,8 @@ impl Settings {
             s.theme = Theme::from_name(v);
         }
         s.hex_bytes = get("tapeti.hexBytes") == Some("1");
-        s.zero_based = get("tapeti.zeroBased") == Some("1");
+        // On by default, so an absent key is not "off".
+        s.zero_based = get("tapeti.zeroBased") != Some("0");
         if let Some(v) = get("tapeti.emulator.program") {
             s.emulator_program = v.to_string();
         }

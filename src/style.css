@@ -303,6 +303,12 @@ textarea.wide { width: 100%; }
 .datawin .controls .c.grow { flex: 1; }
 .datawin .controls .c { display: flex; align-items: center; gap: 8px; }
 .datawin .controls label { color: var(--muted); font-size: 12px; }
+/* The window's own Dec/Hex switch, the status bar's cell in the data window. */
+.datawin .controls .c.basecell { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; color: var(--muted); gap: 6px; transition: background .12s; }
+.datawin .controls .c.basecell:hover { background: var(--surface-3); color: var(--text); }
+.datawin .controls .c.basecell b { color: var(--text); font-weight: 600; font-size: 12px; }
+.datawin .controls .c.basecell.on { border-color: var(--accent-soft-2); background: var(--accent-soft); color: var(--accent); }
+.datawin .controls .c.basecell.on b { color: var(--accent); }
 .datawin .controls input[type=text] { width: 80px; }
 .datawin .view { flex: 1; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; font: var(--mono); position: relative; outline: none; }
 .datawin .view:focus-within { border-color: var(--accent); box-shadow: var(--focus); }
