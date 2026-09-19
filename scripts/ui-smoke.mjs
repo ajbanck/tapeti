@@ -159,6 +159,21 @@ expect((await page.$eval('.pane:last-child .fname', (e) => e.textContent)) === '
 expect((await rows('first-child')) === 19, 'the source tape is untouched');
 await page.screenshot({ path: `${OUT}/04-extract.png` });
 
+// deleting the last block leaves a new tape, not a named one with nothing on it
+const rightRows = await page.$$('.pane:last-child .blocklist .row');
+await rightRows[0].click();
+await page.keyboard.down('Shift');
+await (await page.$$('.pane:last-child .blocklist .row')).at(-1).click();
+await page.keyboard.up('Shift');
+await page.keyboard.press('Delete');
+await wait(200);
+expect((await rows('last-child')) === 0, 'the whole tape is deleted');
+expect((await page.$eval('.pane:last-child .fname', (e) => e.textContent)) === 'new', 'an emptied pane is a new tape');
+expect(!(await page.$('.pane:last-child .dirty-dot')), 'with nothing to save');
+await page.keyboard.down('Meta'); await page.keyboard.press('z'); await page.keyboard.up('Meta');
+await wait(200);
+expect((await rows('last-child')) === 19 && (await page.$eval('.pane:last-child .fname', (e) => e.textContent)) === 'demo.tzx', 'undo brings the tape and its name back');
+
 // dark theme render
 await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
 await wait(150);

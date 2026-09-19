@@ -26,6 +26,11 @@ interface Snapshot {
   blocks: Block[];
   cursor: number;
   selected: Set<number>;
+  /** What the tape was called, and what it was saved against, when the snapshot was taken:
+   * emptying a tape resets its identity, and undo has to bring that back with the blocks. */
+  name: string;
+  loadedVersion: { major: number; minor: number } | null;
+  saved: Block[];
 }
 
 export function emptyTape(name = 'new'): TapeState {
@@ -167,7 +172,16 @@ export function patch(side: Side, p: Partial<TapeState>) {
 
 /** Record that the current blocks are what is on disk (called after a successful save). */
 export function markSaved(side: Side, p: Partial<TapeState> = {}) {
-  patch(side, { ...p, dirty: false, saved: tapes[side].value.blocks });
+  const t = tapes[side].value;
+  // A snapshot remembers the tape's identity, so that emptying it and undoing
+  // that puts the whole thing back. A save re-bases that identity over the
+  // history too: the file on disk is these blocks under this name, so undoing
+  // past a save is dirty again and does not take the name back with it.
+  const id = { saved: t.blocks, name: p.name ?? t.name, loadedVersion: p.loadedVersion ?? t.loadedVersion };
+  patch(side, {
+    ...p, ...id, dirty: false,
+    undo: t.undo.map((s) => ({ ...s, ...id })), redo: t.redo.map((s) => ({ ...s, ...id })),
+  });
 }
 
 export function toggleLock() {
@@ -182,19 +196,29 @@ export function commit(side: Side, fn: (blocks: Block[]) => { blocks: Block[]; c
     return false;
   }
   const t = tapes[side].value;
-  const snap: Snapshot = { blocks: t.blocks, cursor: t.cursor, selected: t.selected };
+  const snap = snapshot(t);
   const r = fn(t.blocks.slice());
   const cursor = r.cursor ?? Math.min(t.cursor, r.blocks.length - 1);
+  // A tape with nothing left on it is a new tape, not a file with no blocks: the
+  // name on the pane would go on promising the one that was loaded, and saving
+  // it would write an empty file. Undo puts the name back with the blocks.
+  const emptied = r.blocks.length === 0 && t.blocks.length > 0;
   patch(side, {
     blocks: r.blocks,
     cursor,
     selected: r.selected ?? new Set([...t.selected].filter((u) => r.blocks.some((b) => b.uid === u))),
-    dirty: true,
+    dirty: !emptied,
     undo: [...t.undo.slice(-100), snap],
     redo: [],
     compare: new Map(),
+    ...(emptied ? { name: 'new', loadedVersion: null, saved: r.blocks, collapsed: new Set<number>() } : {}),
   });
+  if (emptied) setStatus('Nothing left on the tape: the pane is a new tape again');
   return true;
+}
+
+function snapshot(t: TapeState): Snapshot {
+  return { blocks: t.blocks, cursor: t.cursor, selected: t.selected, name: t.name, loadedVersion: t.loadedVersion, saved: t.saved };
 }
 
 export function undo(side: Side) {
@@ -202,17 +226,25 @@ export function undo(side: Side) {
   const snap = t.undo[t.undo.length - 1];
   if (!snap) return;
   patch(side, {
-    blocks: snap.blocks, cursor: snap.cursor, selected: snap.selected, dirty: snap.blocks !== t.saved,
-    undo: t.undo.slice(0, -1), redo: [...t.redo, { blocks: t.blocks, cursor: t.cursor, selected: t.selected }],
+    ...restored(snap),
+    undo: t.undo.slice(0, -1), redo: [...t.redo, snapshot(t)],
   });
+}
+
+/** The tape fields a snapshot puts back; `dirty` is what it was when the snapshot was taken. */
+function restored(snap: Snapshot): Partial<TapeState> {
+  return {
+    blocks: snap.blocks, cursor: snap.cursor, selected: snap.selected, name: snap.name,
+    loadedVersion: snap.loadedVersion, saved: snap.saved, dirty: snap.blocks !== snap.saved,
+  };
 }
 export function redo(side: Side) {
   const t = tapes[side].value;
   const snap = t.redo[t.redo.length - 1];
   if (!snap) return;
   patch(side, {
-    blocks: snap.blocks, cursor: snap.cursor, selected: snap.selected, dirty: snap.blocks !== t.saved,
-    redo: t.redo.slice(0, -1), undo: [...t.undo, { blocks: t.blocks, cursor: t.cursor, selected: t.selected }],
+    ...restored(snap),
+    redo: t.redo.slice(0, -1), undo: [...t.undo, snapshot(t)],
   });
 }
 
