@@ -779,7 +779,15 @@ mod tests {
             tapeti_core::types::Body::Standard { pause: 1000, data: (0..=255u8).collect() },
         );
         app.store.set_cursor(0, 0, SelectMode::Single);
-        for view in [ViewAs::Dump, ViewAs::Screen, ViewAs::Basic, ViewAs::Vars, ViewAs::Text, ViewAs::Dis] {
+        for view in [
+            ViewAs::Dump,
+            ViewAs::Header,
+            ViewAs::Screen,
+            ViewAs::Basic,
+            ViewAs::Vars,
+            ViewAs::Text,
+            ViewAs::Dis,
+        ] {
             app.open_data_window(0, vec![uid]);
             app.datawin.as_mut().unwrap().set_view(view);
             draw(&ctx, &mut app);

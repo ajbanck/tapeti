@@ -3,6 +3,7 @@ import { dataWindow, tapes, Side, replaceBlock, locked, fmtNum, parseNum, setSta
 import { downloadBytes, pickFile } from '../state/files';
 import { Block } from '../tzx/types';
 import { detectContent } from '../tzx/content';
+import { decodeHeader } from '../tzx/describe';
 import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, totalBits } from '../tzx/bits';
 import { renderScreen, hasFlash, SCREEN_SIZE } from '../spectrum/screen';
 import { listBasic, listVariables, basicToText, BasicOptions } from '../spectrum/basic';
@@ -12,7 +13,7 @@ import { NumInput, Check } from './fields';
 import { Icon } from './icons';
 import { Modal } from './Dialogs';
 
-type ViewAs = 'dump' | 'screen' | 'basic' | 'vars' | 'text' | 'dis';
+type ViewAs = 'dump' | 'header' | 'screen' | 'basic' | 'vars' | 'text' | 'dis';
 
 export function DataWindow() {
   const req = dataWindow.value;
@@ -41,7 +42,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   }, [block.uid]);
   const [work, setWork] = useState<BitData>(() => joinBits(blocks.map(bitDataOf)));
   const [base, setBase] = useState(single ? guess.base : 0x8000);
-  const [viewAs, setViewAs] = useState<ViewAs>(single && guess.kind === 'screen' ? 'screen' : single && guess.kind === 'basic' ? 'basic' : 'dump');
+  const [viewAs, setViewAs] = useState<ViewAs>(single && guess.kind === 'header' ? 'header' : single && guess.kind === 'screen' ? 'screen' : single && guess.kind === 'basic' ? 'basic' : 'dump');
   const [flip, setFlip] = useState(false);
   const [reverse, setReverse] = useState(false);
   const [hideFlag, setHideFlag] = useState(single && guess.skipFlag);
@@ -122,7 +123,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     }>
       <div class="controls">
         <div class="c tabs" role="tablist">
-          {([['dump', 'Dump'], ['screen', 'Screen'], ['basic', 'BASIC'], ['vars', 'Variables'], ['text', 'Text'], ['dis', 'Disassembly']] as [ViewAs, string][]).map(([k, label]) => (
+          {([['dump', 'Dump'], ['header', 'Header'], ['screen', 'Screen'], ['basic', 'BASIC'], ['vars', 'Variables'], ['text', 'Text'], ['dis', 'Disassembly']] as [ViewAs, string][]).map(([k, label]) => (
             <button key={k} class={'tab' + (viewAs === k ? ' active' : '')} role="tab" data-view={k} onClick={() => setViewAs(k)}>{label}</button>
           ))}
         </div>
@@ -145,6 +146,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
       </div>
 
       {viewAs === 'dump' && <Dump data={view} startAddr={startAddr} editable={editable} setByte={setByte} h={h} />}
+      {viewAs === 'header' && <HeaderView data={work.data} h={h} />}
       {viewAs === 'screen' && <Screen data={view} offset={16384 - startAddr} />}
       {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} />}
       {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} h={h} />}
@@ -461,6 +463,39 @@ function TextView({ data }: { data: Uint8Array }) {
       </div>
       <div class="view"><pre>{text}</pre></div>
     </>
+  );
+}
+
+// ---- Header --------------------------------------------------------------------
+
+/**
+ * The 17 bytes of a standard ROM header, read out. The block editor edits the
+ * same fields; this is the data window's view of them, so a header opens on
+ * something better than its own hex dump.
+ *
+ * It reads the block's own bytes rather than the modified view: a header is the
+ * flag, 17 bytes and the checksum, and "hide flag byte" is on by default for
+ * exactly this content.
+ */
+function HeaderView({ data, h }: { data: Uint8Array; h: boolean }) {
+  const hdr = useMemo(() => decodeHeader(data), [data]);
+  if (!hdr) {
+    return <div class="view"><div class="hdrview note">Not a standard header: that is 19 bytes beginning with flag 0.</div></div>;
+  }
+  const rows: [string, string][] = [
+    ['Type', `${hdr.typeName} (${fmtNum(hdr.type, h)})`],
+    ['Name', hdr.name],
+    ['Length', `${fmtNum(hdr.length, h)} bytes`],
+    [hdr.type === 0 ? 'Autostart line' : hdr.type === 3 ? 'Start address' : 'Variable name',
+      fmtNum(hdr.param1, h) + (hdr.type === 0 && hdr.param1 >= 32768 ? ' (no autostart)' : '')],
+    [hdr.type === 0 ? 'Program length' : 'Param 2', fmtNum(hdr.param2, h)],
+  ];
+  return (
+    <div class="view">
+      <div class="hdrview">
+        {rows.map(([k, v]) => <div class="row" key={k}><span class="k">{k}</span><span class="v">{v}</span></div>)}
+      </div>
+    </div>
   );
 }
 
