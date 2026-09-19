@@ -15,7 +15,7 @@ use tapeti_core::bits::{
     add_bits, drop_bits, flip_bytes, join_bits, shift_left_bits, shift_right_bits, total_bits, BitData,
 };
 use tapeti_core::content::detect_content;
-use tapeti_core::describe::decode_header;
+use tapeti_core::describe::{decode_header, encode_header, HeaderInfo, HEADER_TYPE_NAMES};
 use tapeti_core::spectrum::basic::{basic_to_text, list_basic, list_variables, BasicOptions};
 use tapeti_core::spectrum::charset::{dump_char, zx_char};
 use tapeti_core::spectrum::screen::{has_flash, render_screen, ScreenOptions, SCREEN_SIZE};
@@ -61,6 +61,8 @@ pub struct DataWin {
     view: ViewAs,
     flip: bool,
     reverse: bool,
+    /// The base address "Reverse order" moved out of the way, to put back.
+    base_before_reverse: Option<i64>,
     hide_flag: bool,
     hide_cs: bool,
     n: i64,
@@ -130,6 +132,7 @@ impl DataWin {
             view,
             flip: false,
             reverse: false,
+            base_before_reverse: None,
             hide_flag: single && guess.skip_flag,
             hide_cs: single && guess.skip_checksum,
             n: 1,
@@ -156,6 +159,13 @@ impl DataWin {
             from: base,
             rom_labels: true,
         }
+    }
+
+    /// The bytes as edited so far, before OK writes them back. Test-only: the
+    /// window itself hands the views `view_bytes`.
+    #[cfg(test)]
+    pub fn work_data(&self) -> &[u8] {
+        &self.work.data
     }
 
     /// Which view is showing. The tests walk all six; the window itself sets it
@@ -189,6 +199,47 @@ impl DataWin {
             d.reverse();
         }
         d
+    }
+
+    /// Write back a byte the view shows. The view is the raw data with the
+    /// modifiers applied, so index and value travel the other way: reverse
+    /// mirrors the index, "hide flag byte" shifts it past byte 0 ("hide
+    /// checksum byte" only shortens the end, so it does not move anything), and
+    /// flip is its own inverse on the value.
+    fn set_view_byte(&mut self, i: usize, v: u8, view_len: usize) {
+        let mirrored = if self.reverse { view_len.checked_sub(i + 1) } else { Some(i) };
+        let Some(j) = mirrored else { return };
+        let j = j + usize::from(self.hide_flag && !self.work.data.is_empty());
+        let v = if self.flip { flip_bytes(&[v])[0] } else { v };
+        if let Some(b) = self.work.data.get_mut(j) {
+            *b = v;
+            self.dirty = true;
+        }
+    }
+
+    /// Reversed, a screen reads from its last byte down, so the base address is
+    /// the end of screen memory rather than the start. Put the old base back
+    /// when the tick comes off, or the picture sits above screen memory and the
+    /// view goes blank — but leave a base the user has set since alone.
+    fn toggle_reverse(&mut self, screen: bool) {
+        if !screen {
+            return;
+        }
+        if self.reverse {
+            self.base_before_reverse = Some(self.base);
+            self.base = 0x5aff;
+        } else if self.base == 0x5aff {
+            if let Some(base) = self.base_before_reverse.take() {
+                self.base = base;
+            }
+        }
+    }
+
+    /// Write a header back as the block's 19 bytes: flag, the 17 fields and a
+    /// fresh checksum, the way the block editor does it.
+    fn set_header(&mut self, h: &HeaderInfo) {
+        self.work.data = encode_header(h);
+        self.dirty = true;
     }
 
     fn start_addr(&self, len: usize) -> i64 {
@@ -262,7 +313,13 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 });
             });
             let view = dw.view_bytes();
-            let editable = dw.single() && !locked && !dw.modifiers_on();
+            // Typing over a byte works through the modifiers: the index travels
+            // back (see `set_view_byte`). Drop/Add/Shift and the last-byte mask
+            // change the length and the bit alignment of the raw stream, whose
+            // ends and bit order the modifiers have moved, so those stay off
+            // while any modifier is on.
+            let editable = dw.single() && !locked;
+            let structural = editable && !dw.modifiers_on();
             ui.horizontal(|ui| {
                 let used = if dw.work.used_bits != 8 {
                     format!(" ({} bits used in last)", fmt::num(i64::from(dw.work.used_bits), hex))
@@ -271,19 +328,19 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 };
                 w::note(ui, &tok, format!("Raw length {} bytes{used}", fmt::num(dw.work.data.len() as i64, hex)));
                 w::note(ui, &tok, format!("Length {} bytes", fmt::num(view.len() as i64, hex)));
-                if dw.modifiers_on() {
-                    w::chip(ui, "read-only while modifiers are on", tok.warn);
-                } else if !dw.single() {
+                if !dw.single() {
                     w::chip(ui, "read-only: multiple blocks", tok.warn);
                 } else if locked {
                     w::chip(ui, "locked", tok.warn);
+                } else if dw.modifiers_on() {
+                    w::chip(ui, "Drop/Add/Shift need the modifiers off", tok.warn);
                 }
             });
             ui.horizontal(|ui| {
                 w::check(ui, "Flip bytes (RR L)", &mut dw.flip, true);
                 let screen = dw.view == ViewAs::Screen;
-                if w::check(ui, "Reverse order (DEC IX)", &mut dw.reverse, true) && dw.reverse && screen {
-                    dw.base = 0x5aff;
+                if w::check(ui, "Reverse order (DEC IX)", &mut dw.reverse, true) {
+                    dw.toggle_reverse(screen);
                 }
                 let single = dw.single();
                 w::check(ui, "Hide flag byte", &mut dw.hide_flag, single);
@@ -298,7 +355,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 // The block's own bytes, not the modified view: a header is the
                 // flag, 17 bytes and the checksum, and "hide flag byte" is on by
                 // default for exactly this content.
-                ViewAs::Header => header_view(ui, &dw.work.data, hex, &tok),
+                ViewAs::Header => header_view(&mut dw, ui, hex, &tok, editable),
                 ViewAs::Screen => screen(&mut dw, ui, &view, 16384 - start, &tok, body_h),
                 ViewAs::Basic => basic(&mut dw, ui, &view, start, false, &tok, body_h),
                 ViewAs::Vars => basic(&mut dw, ui, &view, start, true, &tok, body_h),
@@ -310,14 +367,14 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
             ui.separator();
             let n = dw.n.max(1) as usize;
             ui.horizontal(|ui| {
-                bit_buttons(&mut dw, ui, n, editable, 1);
+                bit_buttons(&mut dw, ui, n, structural, 1);
                 ui.label("bit(s)");
                 ui.add_space(16.0);
                 ui.label("Last byte mask");
                 for i in 0..8u8 {
                     let mut on = i < dw.work.used_bits;
                     if ui
-                        .add_enabled(editable, egui::Checkbox::without_text(&mut on))
+                        .add_enabled(structural, egui::Checkbox::without_text(&mut on))
                         .on_hover_text(format!("bit {}", 7 - i))
                         .changed()
                     {
@@ -327,7 +384,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 }
             });
             ui.horizontal(|ui| {
-                bit_buttons(&mut dw, ui, n, editable, 8);
+                bit_buttons(&mut dw, ui, n, structural, 8);
                 ui.label("byte(s)");
                 ui.add_space(16.0);
                 ui.label("N");
@@ -630,13 +687,14 @@ fn keys(dw: &mut DataWin, ui: &mut Ui, data: &[u8], editable: bool) {
             egui::Event::Text(t) if editable && !data.is_empty() => {
                 let Some(c) = t.chars().next() else { continue };
                 if dw.ascii {
-                    set_byte(dw, dw.cur, c as u8);
+                    dw.set_view_byte(dw.cur, c as u8, data.len());
                     move_by(dw, 1);
                 } else if let Some(d) = c.to_digit(16) {
-                    let old = dw.work.data.get(dw.cur).copied().unwrap_or(0);
+                    // The nibble joins the byte as shown, not as stored.
+                    let old = data.get(dw.cur).copied().unwrap_or(0);
                     let nv =
                         if dw.nibble == 0 { ((d as u8) << 4) | (old & 0x0f) } else { (old & 0xf0) | d as u8 };
-                    set_byte(dw, dw.cur, nv);
+                    dw.set_view_byte(dw.cur, nv, data.len());
                     if dw.nibble == 0 {
                         dw.nibble = 1;
                     } else {
@@ -647,13 +705,6 @@ fn keys(dw: &mut DataWin, ui: &mut Ui, data: &[u8], editable: bool) {
             }
             _ => {}
         }
-    }
-}
-
-fn set_byte(dw: &mut DataWin, i: usize, v: u8) {
-    if let Some(b) = dw.work.data.get_mut(i) {
-        *b = v;
-        dw.dirty = true;
     }
 }
 
@@ -899,33 +950,52 @@ fn text_view(dw: &mut DataWin, ui: &mut Ui, data: &[u8], h: f32) {
 /// The 17 bytes of a standard ROM header, read out. `editor.rs` edits the same
 /// fields; this is the data window's view of them, so a header opens on
 /// something better than its own hex dump.
-fn header_view(ui: &mut Ui, data: &[u8], hex: bool, tok: &Tokens) {
-    let Some(h) = decode_header(data) else {
+/// The 17 bytes of a standard ROM header, in the fields they stand for. The same
+/// form as the block editor's (`editor::header_editor`): the data window's copy
+/// of it, writing the same re-encoded 19 bytes back, checksum and all.
+fn header_view(dw: &mut DataWin, ui: &mut Ui, hex: bool, tok: &Tokens, editable: bool) {
+    let Some(hdr) = decode_header(&dw.work.data) else {
         ui.add_space(8.0);
         w::note(ui, tok, "Not a standard header: that is 19 bytes beginning with flag 0.");
         return;
     };
+    let mut h = hdr;
+    // The padding of the name is not the name: off for editing, back on in
+    // `encode_header`, as in the block editor.
+    h.name = h.name.trim_end().to_string();
+    let mut changed = false;
+    ui.add_space(8.0);
+    w::field(ui, "Type", tok, |ui| {
+        let opts: Vec<(u8, String)> =
+            HEADER_TYPE_NAMES.iter().enumerate().map(|(i, n)| (i as u8, (*n).to_string())).collect();
+        changed |= w::combo(ui, "dw-hdrtype", &mut h.kind, &opts, 150.0, editable);
+    });
+    w::field(ui, "Name", tok, |ui| {
+        let before = h.name.clone();
+        w::text(ui, &mut h.name, 10, 110.0, editable);
+        changed |= h.name != before;
+    });
+    w::field(ui, "Length", tok, |ui| {
+        changed |= w::num_u16(ui, "dw-hdrlen", &mut h.length, hex, editable);
+        w::note(ui, tok, "bytes");
+    });
     let p1 = match h.kind {
         0 => "Autostart line",
         3 => "Start address",
         _ => "Variable name",
     };
-    let autostart = if h.kind == 0 && h.param1 >= 32768 { " (no autostart)" } else { "" };
-    let rows: [(&str, String); 5] = [
-        ("Type", format!("{} ({})", h.type_name, fmt::num(i64::from(h.kind), hex))),
-        ("Name", h.name.clone()),
-        ("Length", format!("{} bytes", fmt::num(i64::from(h.length), hex))),
-        (p1, format!("{}{autostart}", fmt::num(i64::from(h.param1), hex))),
-        (if h.kind == 0 { "Program length" } else { "Param 2" }, fmt::num(i64::from(h.param2), hex)),
-    ];
-    ui.add_space(8.0);
-    egui::Grid::new("header").num_columns(2).spacing(vec2(24.0, 8.0)).show(ui, |ui| {
-        for (k, v) in rows {
-            ui.label(RichText::new(k).size(12.0).color(tok.muted));
-            ui.label(RichText::new(v).size(12.0).color(tok.text));
-            ui.end_row();
+    w::field(ui, p1, tok, |ui| {
+        changed |= w::num_u16(ui, "dw-hdrp1", &mut h.param1, hex, editable);
+        if h.kind == 0 && h.param1 >= 32768 {
+            w::note(ui, tok, "no autostart");
         }
     });
+    let p2 = if h.kind == 0 { "Program length" } else { "Param 2" };
+    w::field(ui, p2, tok, |ui| changed |= w::num_u16(ui, "dw-hdrp2", &mut h.param2, hex, editable));
+    if changed {
+        h.type_name = HEADER_TYPE_NAMES[usize::from(h.kind.min(3))].to_string();
+        dw.set_header(&h);
+    }
 }
 
 // ---- disassembly ------------------------------------------------------------------
@@ -1030,6 +1100,97 @@ mod tests {
         let other = vec![Block::new(Body::Standard { pause: 1000, data: vec![0xff, 1, 2, 3] })];
         let uid = other[0].uid;
         assert_eq!(DataWin::new(&other, 0, vec![uid]).view, ViewAs::Dump);
+    }
+
+    /// A data block opens with "hide flag byte" and "hide checksum byte" ticked:
+    /// they are what the block is made of. That must not take the dump's typing
+    /// with it — the byte the view shows is written back through the modifiers,
+    /// so editing the first byte on screen edits the first body byte.
+    #[test]
+    fn the_dump_stays_editable_while_the_modifiers_are_on() {
+        let data = vec![0xff, 0x11, 0x22, 0x33, 0xaa];
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data })];
+        let uid = blocks[0].uid;
+        let mut dw = DataWin::new(&blocks, 0, vec![uid]);
+        assert!(dw.hide_flag && dw.hide_cs, "a standard block hides its flag and checksum");
+
+        let view = dw.view_bytes();
+        assert_eq!(view, vec![0x11, 0x22, 0x33]);
+        dw.set_view_byte(0, 0x99, view.len());
+        assert!(dw.dirty);
+        assert_eq!(dw.work.data, vec![0xff, 0x99, 0x22, 0x33, 0xaa], "the flag and checksum stay put");
+
+        // Reverse mirrors the index, flip undoes itself on the value.
+        dw.reverse = true;
+        dw.flip = true;
+        let view = dw.view_bytes();
+        dw.set_view_byte(0, 0x80, view.len());
+        assert_eq!(dw.work.data, vec![0xff, 0x99, 0x22, 0x01, 0xaa]);
+
+        // Past the end of the view nothing is written.
+        dw.set_view_byte(9, 0x55, view.len());
+        assert_eq!(dw.work.data, vec![0xff, 0x99, 0x22, 0x01, 0xaa]);
+    }
+
+    /// Ticking "Reverse order" on a screen moves the base to the end of screen
+    /// memory, where a backwards picture starts. Unticking it must move the base
+    /// back: left at 0x5AFF the picture sits 6911 bytes above the screen and the
+    /// view is blank.
+    #[test]
+    fn unticking_reverse_order_puts_a_screen_back_where_it_was() {
+        let mut data = vec![0xffu8];
+        data.extend(std::iter::repeat_n(0, 6912));
+        data.push(0);
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data })];
+        let uid = blocks[0].uid;
+        let mut dw = DataWin::new(&blocks, 0, vec![uid]);
+        dw.view = ViewAs::Screen;
+        let base = dw.base;
+
+        dw.reverse = true;
+        dw.toggle_reverse(true);
+        assert_eq!(dw.base, 0x5aff, "reversed, the picture starts at the end of screen memory");
+        assert_eq!(dw.start_addr(dw.view_bytes().len()), 0x4000, "and still lands on the screen");
+
+        dw.reverse = false;
+        dw.toggle_reverse(true);
+        assert_eq!(dw.base, base, "unticked, the base is the one the block had");
+
+        // A base set while reversed is the user's, and stays.
+        dw.reverse = true;
+        dw.toggle_reverse(true);
+        dw.base = 0x8000;
+        dw.reverse = false;
+        dw.toggle_reverse(true);
+        assert_eq!(dw.base, 0x8000);
+    }
+
+    /// The header view edits, it does not only read out: the fields the block
+    /// editor offers on the main screen are the same fields here, and they go
+    /// back as the block's 19 bytes with a fresh checksum.
+    #[test]
+    fn the_header_view_writes_its_fields_back() {
+        let header = HeaderInfo {
+            kind: 3,
+            type_name: "Bytes".into(),
+            name: "demo.bin".into(),
+            length: 23,
+            param1: 32768,
+            param2: 0,
+        };
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data: encode_header(&header) })];
+        let uid = blocks[0].uid;
+        let mut dw = DataWin::new(&blocks, 0, vec![uid]);
+        assert_eq!(dw.view, ViewAs::Header);
+        assert!(!dw.dirty);
+
+        dw.set_header(&HeaderInfo { name: "renamed".into(), param1: 40000, ..header });
+        assert!(dw.dirty, "an edit in the header view is an edit to commit");
+        let back = decode_header(dw.work_data()).expect("still a header");
+        assert_eq!((back.name.trim_end().to_string(), back.param1), ("renamed".to_string(), 40000));
+        assert_eq!(dw.work_data().len(), 19, "flag, 17 bytes and the checksum");
+        let sum = dw.work_data()[1..18].iter().fold(0u8, |a, b| a ^ b);
+        assert_eq!(dw.work_data()[18], sum, "the checksum was recomputed");
     }
 
     /// The Dec/Hex switch belongs to the screen it is on: a data window opens on

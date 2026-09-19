@@ -1,15 +1,16 @@
 import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
+import { ComponentChildren } from 'preact';
 import { dataWindow, tapes, Side, replaceBlock, locked, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
 import { downloadBytes, pickFile } from '../state/files';
 import { Block } from '../tzx/types';
 import { detectContent } from '../tzx/content';
-import { decodeHeader } from '../tzx/describe';
+import { decodeHeader, encodeHeader, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
 import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, totalBits } from '../tzx/bits';
 import { renderScreen, hasFlash, SCREEN_SIZE } from '../spectrum/screen';
 import { listBasic, listVariables, basicToText, BasicOptions } from '../spectrum/basic';
 import { disassemble, DisLine } from '../spectrum/z80dis';
 import { zxChar, dumpChar } from '../spectrum/charset';
-import { NumInput, Check } from './fields';
+import { NumInput, TextInput, Check } from './fields';
 import { Icon } from './icons';
 import { Modal } from './Dialogs';
 
@@ -47,6 +48,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [reverse, setReverse] = useState(false);
   const [hideFlag, setHideFlag] = useState(single && guess.skipFlag);
   const [hideCs, setHideCs] = useState(single && guess.skipChecksum);
+  const [baseBeforeReverse, setBaseBeforeReverse] = useState<number | null>(null);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
   // This window's own Dec/Hex switch: the main window's says nothing about it,
@@ -54,7 +56,12 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [h, setH] = useState(false);
   const isLocked = locked.value;
   const modifiers = flip || reverse || hideFlag || hideCs;
-  const editable = single && !isLocked && !modifiers;
+  // Typing over a byte works through the modifiers: the index travels back
+  // (see setByte). Drop/Add/Shift and the last-byte mask change the length and
+  // the bit alignment of the raw stream, whose ends and bit order the modifiers
+  // have moved, so those stay off while any modifier is on.
+  const editable = single && !isLocked;
+  const structural = editable && !modifiers;
 
   const view = useMemo(() => {
     let d = work.data;
@@ -70,11 +77,38 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     setWork(fn(work));
     setDirty(true);
   };
+  /**
+   * Write back a byte the view shows. The view is the raw data with the
+   * modifiers applied, so index and value travel the other way: reverse mirrors
+   * the index, "hide flag byte" shifts it past byte 0 ("hide checksum byte"
+   * only shortens the end, so it does not move anything), and flip is its own
+   * inverse on the value.
+   */
   const setByte = (i: number, v: number) => {
+    const j = (reverse ? view.length - 1 - i : i) + (hideFlag && work.data.length > 0 ? 1 : 0);
+    if (j < 0 || j >= work.data.length) return;
     const d = new Uint8Array(work.data);
-    d[i] = v;
+    d[j] = flip ? flipBytes(new Uint8Array([v]))[0] : v;
     setWork({ ...work, data: d });
     setDirty(true);
+  };
+
+  /**
+   * Reversed, a screen reads from its last byte down, so the base address is the
+   * end of screen memory rather than the start. Put the old base back when the
+   * tick comes off, or the picture sits above screen memory and the view goes
+   * blank — but leave a base the user has set since alone.
+   */
+  const toggleReverse = (on: boolean) => {
+    setReverse(on);
+    if (viewAs !== 'screen') return;
+    if (on) {
+      setBaseBeforeReverse(base);
+      setBase(0x5aff);
+    } else if (base === 0x5aff && baseBeforeReverse !== null) {
+      setBase(baseBeforeReverse);
+      setBaseBeforeReverse(null);
+    }
   };
 
   const close = () => (dataWindow.value = null);
@@ -136,17 +170,17 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
       <div class="controls secondary">
         <div class="c stat">Raw length {fmtNum(work.data.length, h)} bytes{hasUsedBits && work.usedBits !== 8 ? ` (${fmtNum(work.usedBits, h)} bits used in last)` : ''}</div>
         <div class="c stat">Length {fmtNum(view.length, h)} bytes</div>
-        {(modifiers || !single || isLocked) && <div class="c"><span class="chip">{modifiers ? 'read-only while modifiers are on' : !single ? 'read-only: multiple blocks' : 'locked'}</span></div>}
+        {(!single || isLocked || modifiers) && <div class="c"><span class="chip">{!single ? 'read-only: multiple blocks' : isLocked ? 'locked' : 'Drop/Add/Shift need the modifiers off'}</span></div>}
       </div>
       <div class="controls secondary">
         <div class="c"><Check label="Flip bytes (RR L)" checked={flip} onChange={setFlip} /></div>
-        <div class="c"><Check label="Reverse order (DEC IX)" checked={reverse} onChange={(v) => { setReverse(v); if (v && viewAs === 'screen') setBase(0x5aff); }} /></div>
+        <div class="c"><Check label="Reverse order (DEC IX)" checked={reverse} onChange={toggleReverse} /></div>
         <div class="c"><Check label="Hide flag byte" checked={hideFlag} onChange={setHideFlag} disabled={!single} /></div>
         <div class="c"><Check label="Hide checksum byte" checked={hideCs} onChange={setHideCs} disabled={!single} /></div>
       </div>
 
       {viewAs === 'dump' && <Dump data={view} startAddr={startAddr} editable={editable} setByte={setByte} h={h} />}
-      {viewAs === 'header' && <HeaderView data={work.data} h={h} />}
+      {viewAs === 'header' && <HeaderView data={work.data} h={h} editable={editable} onChange={(d) => { setWork({ ...work, data: d }); setDirty(true); }} />}
       {viewAs === 'screen' && <Screen data={view} offset={16384 - startAddr} />}
       {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} />}
       {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} h={h} />}
@@ -155,25 +189,25 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
 
       <div class="editrow">
         <span class="label" />
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => dropBits(d, n))}>Drop</button>
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => addBits(d, n))}>Add</button>
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => shiftLeftBits(d, n))}>Shift left</button>
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => shiftRightBits(d, n))}>Shift right</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => dropBits(d, n))}>Drop</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => addBits(d, n))}>Add</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => shiftLeftBits(d, n))}>Shift left</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => shiftRightBits(d, n))}>Shift right</button>
         <span>bit(s)</span>
         <span style={{ width: 20 }} />
         <span class="mask">
           <span>Last byte mask</span>
           {mask.map((on, i) => (
-            <input key={i} type="checkbox" checked={on} disabled={!editable || !hasUsedBits} title={`bit ${7 - i}`} onChange={() => setBits((d) => ({ ...d, usedBits: i + 1 }))} />
+            <input key={i} type="checkbox" checked={on} disabled={!structural || !hasUsedBits} title={`bit ${7 - i}`} onChange={() => setBits((d) => ({ ...d, usedBits: i + 1 }))} />
           ))}
         </span>
       </div>
       <div class="editrow">
         <span class="label" />
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => dropBits(d, n * 8))}>Drop</button>
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => addBits(d, n * 8))}>Add</button>
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => shiftLeftBits(d, n * 8))}>Shift left</button>
-        <button class="small" disabled={!editable} onClick={() => setBits((d) => shiftRightBits(d, n * 8))}>Shift right</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => dropBits(d, n * 8))}>Drop</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => addBits(d, n * 8))}>Add</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => shiftLeftBits(d, n * 8))}>Shift left</button>
+        <button class="small" disabled={!structural} onClick={() => setBits((d) => shiftRightBits(d, n * 8))}>Shift right</button>
         <span>byte(s)</span>
         <span style={{ width: 20 }} />
         <label>N</label><NumInput value={n} min={1} max={0xffffff} width={70} hex={h} onChange={setN} />
@@ -469,26 +503,35 @@ function TextView({ data }: { data: Uint8Array }) {
 // ---- Header --------------------------------------------------------------------
 
 /**
- * The 17 bytes of a standard ROM header, read out. The block editor edits the
- * same fields; this is the data window's view of them, so a header opens on
- * something better than its own hex dump.
+ * The 17 bytes of a standard ROM header, in the fields they stand for, so a
+ * header opens on something better than its own hex dump. The same form as the
+ * block editor's: this is the data window's copy of it, and it writes the same
+ * re-encoded 19 bytes back, checksum and all.
  *
  * It reads the block's own bytes rather than the modified view: a header is the
  * flag, 17 bytes and the checksum, and "hide flag byte" is on by default for
  * exactly this content.
  */
-function HeaderView({ data, h }: { data: Uint8Array; h: boolean }) {
+function HeaderView({ data, h, editable, onChange }: { data: Uint8Array; h: boolean; editable: boolean; onChange: (d: Uint8Array) => void }) {
   const hdr = useMemo(() => decodeHeader(data), [data]);
   if (!hdr) {
     return <div class="view"><div class="hdrview note">Not a standard header: that is 19 bytes beginning with flag 0.</div></div>;
   }
-  const rows: [string, string][] = [
-    ['Type', `${hdr.typeName} (${fmtNum(hdr.type, h)})`],
-    ['Name', hdr.name],
-    ['Length', `${fmtNum(hdr.length, h)} bytes`],
+  const upd = (p: Partial<HeaderInfo>) => onChange(encodeHeader({ ...hdr, ...p }));
+  // The name is padded to 10 bytes and the padding is not the name: it comes off
+  // for editing (no room to type under maxLength otherwise) and encodeHeader
+  // puts it back.
+  const rows: [string, ComponentChildren][] = [
+    ['Type', <select value={hdr.type} disabled={!editable} onChange={(e) => upd({ type: Number((e.target as HTMLSelectElement).value) })}>
+      {HEADER_TYPE_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
+    </select>],
+    ['Name', <TextInput value={hdr.name.replace(/ +$/, '')} maxLength={10} width={110} disabled={!editable} onChange={(v) => upd({ name: v })} />],
+    ['Length', <><NumInput value={hdr.length} max={0xffff} width={90} hex={h} disabled={!editable} onChange={(v) => upd({ length: v })} /> <span class="note">bytes</span></>],
     [hdr.type === 0 ? 'Autostart line' : hdr.type === 3 ? 'Start address' : 'Variable name',
-      fmtNum(hdr.param1, h) + (hdr.type === 0 && hdr.param1 >= 32768 ? ' (no autostart)' : '')],
-    [hdr.type === 0 ? 'Program length' : 'Param 2', fmtNum(hdr.param2, h)],
+      <><NumInput value={hdr.param1} max={0xffff} width={90} hex={h} disabled={!editable} onChange={(v) => upd({ param1: v })} />
+        {hdr.type === 0 && hdr.param1 >= 32768 ? <span class="note"> no autostart</span> : null}</>],
+    [hdr.type === 0 ? 'Program length' : 'Param 2',
+      <NumInput value={hdr.param2} max={0xffff} width={90} hex={h} disabled={!editable} onChange={(v) => upd({ param2: v })} />],
   ];
   return (
     <div class="view">

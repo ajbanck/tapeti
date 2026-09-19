@@ -306,9 +306,9 @@ textarea.wide { width: 100%; }
 /* The header view: the 17 bytes of a ROM header read out, label beside value. */
 .datawin .hdrview { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 .datawin .hdrview.note { color: var(--muted); }
-.datawin .hdrview .row { display: flex; gap: 16px; }
+.datawin .hdrview .row { display: flex; gap: 16px; align-items: center; min-height: 26px; }
 .datawin .hdrview .k { color: var(--muted); width: 130px; flex: none; }
-.datawin .hdrview .v { color: var(--text); white-space: pre; }
+.datawin .hdrview .v { color: var(--text); white-space: pre; display: flex; align-items: center; gap: 6px; }
 /* The window's own Dec/Hex switch, the status bar's cell in the data window. */
 .datawin .controls .c.basecell { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; color: var(--muted); gap: 6px; transition: background .12s; }
 .datawin .controls .c.basecell:hover { background: var(--surface-3); color: var(--text); }

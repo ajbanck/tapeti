@@ -795,6 +795,37 @@ mod tests {
         }
     }
 
+    /// Typing in the dump, through the frame that the window runs: a standard
+    /// block opens with "hide flag byte" and "hide checksum byte" ticked, and
+    /// the two keys must still land — on the first body byte, not on the flag.
+    /// The window used to turn read-only the moment any modifier was on, which
+    /// is every ordinary tape block.
+    #[test]
+    fn typing_in_the_dump_edits_the_byte_the_view_shows() {
+        let data = vec![0xff, 0x11, 0x22, 0x33, 0xaa];
+        let blocks = vec![Block::new(tapeti_core::types::Body::Standard { pause: 1000, data })];
+        let uid = blocks[0].uid;
+        let (ctx, mut app) = app_with(blocks);
+        app.store.set_cursor(0, 0, SelectMode::Single);
+        app.open_data_window(0, vec![uid]);
+        app.datawin.as_mut().unwrap().set_view(crate::datawin::ViewAs::Dump);
+        draw(&ctx, &mut app);
+
+        for key in ["9", "9"] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                events: vec![egui::Event::Text(key.into())],
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| app.frame(ui)).drop_without_applying_deltas();
+        }
+        assert_eq!(
+            app.datawin.as_ref().unwrap().work_data(),
+            [0xff, 0x99, 0x22, 0x33, 0xaa],
+            "the typed byte went to the flag byte, or nowhere at all"
+        );
+    }
+
     #[test]
     fn draws_a_collapsed_group_and_a_context_menu() {
         let ids = [0x21u8, 0x10, 0x22, 0x20];
