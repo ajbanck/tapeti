@@ -58,15 +58,18 @@ signal level, text, message, archive info, hardware type (full hardware list), c
 **Data window** (Enter, double-click or View data):
 
 - Hex dump with in-place hex and ASCII editing, search pattern with `?` wildcards.
-- Header view: the 17 bytes of a ROM header read out — type, name, length and both parameters,
-  labelled for the type. A header block opens on it.
+- Header view: the 17 bytes of a ROM header in the fields they stand for — type, name, length and
+  both parameters, labelled for the type, and editable there as in the block editor. A header
+  block opens on it.
 - View as Screen (with FLASH animation, hide attributes, Save to SCR / PNG).
 - BASIC listing with hidden-number detection, "Show numbers", Speccy 32-column formatting and 128k
   tokens; variables area listing.
 - Text view with Spectrum character set and tokens.
 - Z80 disassembly (all prefixes, undocumented forms) with ROM routine labels.
 - Base address, flip bytes (RR), reverse order (DEC IX), hide flag / checksum byte modifiers.
-- Bit and byte level Drop / Add / Shift left / Shift right and last-byte mask.
+  Typing in the dump works through them — the byte lands where the view shows it.
+- Bit and byte level Drop / Add / Shift left / Shift right and last-byte mask. These act on the
+  raw block data, so they wait until the modifiers are off.
 - Append file, replace from file, save block data to file. "View selected as one" joins the
   selected blocks bit-exactly.
 

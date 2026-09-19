@@ -647,6 +647,10 @@ impl Form<'_> {
         let Some(hdr) = decode_header(data) else { return };
         let (hex, dis, tok) = (self.hex, self.disabled, self.tok);
         let mut h = hdr.clone();
+        // A header name is padded to 10 bytes; the padding is not the name, and
+        // an edit has no room under the 10-character limit while it is there.
+        // `encode_header` pads it again on the way back.
+        h.name = h.name.trim_end().to_string();
         ui.add_space(6.0);
         w::note(ui, &tok, "Header");
         let mut changed = false;

@@ -47,6 +47,18 @@ await page.waitForSelector('.datawin');
 await wait(300);
 expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'Screen', 'data window opens on Screen tab');
 await page.screenshot({ path: `${OUT}/02-datawindow-screen.png` });
+
+// Reverse order moves the base to the end of screen memory; unticking it must
+// move the base back, or the picture sits above the screen and the view is blank
+const check = async (label) => page.evaluateHandle((l) => [...document.querySelectorAll('.datawin label')].find((x) => x.textContent.trim() === l).querySelector('input'), label);
+const screenNote = () => page.$eval('.datawin .screenwrap .note', (e) => e.textContent.trim());
+const wholePicture = await screenNote();
+const rev = await check('Reverse order (DEC IX)');
+await rev.click(); await wait(200);
+expect((await screenNote()) === wholePicture, 'reversed, the picture is still on the screen');
+await rev.click(); await wait(200);
+expect((await screenNote()) === wholePicture, 'unticking Reverse order brings the picture back');
+
 await page.click('.datawin .tab[data-view=dump]');
 await wait(150);
 
@@ -69,7 +81,26 @@ await page.keyboard.press('Enter');
 await page.waitForSelector('.datawin');
 await wait(250);
 expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'Header', 'header block opens on the Header tab');
-expect((await page.$$eval('.datawin .hdrview .row .v', (r) => r.map((e) => e.textContent))).join('|').includes('demo'), 'the header view names the file');
+await page.screenshot({ path: `${OUT}/05-datawindow-header.png` });
+const hdrName = () => page.$eval('.datawin .hdrview .row .v input[type=text]', (e) => e.value.trim());
+expect((await hdrName()).startsWith('demo'), 'the header view names the file');
+// the same fields the block editor has, and they edit here too
+await page.click('.datawin .hdrview .row .v input[type=text]');
+await page.keyboard.press('End');
+for (let i = 0; i < 10; i++) await page.keyboard.press('Backspace');
+await page.keyboard.type('renamed');
+await wait(150);
+expect((await hdrName()) === 'renamed', 'the header view edits the name');
+await page.click('.datawin .mfooter button.primary');
+await wait(200);
+const editorName = () => page.evaluate(() => { const l = [...document.querySelectorAll('.pane:first-child .editor .grid label')].find((x) => x.textContent.trim() === 'Name'); return l && l.nextElementSibling ? l.nextElementSibling.value : null; });
+expect((await editorName()) === 'renamed', 'committing writes the header back into the block');
+await page.keyboard.down('Meta'); await page.keyboard.press('z'); await page.keyboard.up('Meta');
+await wait(150);
+expect((await editorName()).startsWith('demo'), 'and undo puts the old name back');
+await page.keyboard.press('Enter');
+await page.waitForSelector('.datawin');
+await wait(250);
 await page.keyboard.press('Escape');
 await wait(150);
 
@@ -89,11 +120,19 @@ await page.waitForSelector('.datawin');
 expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'BASIC', 'BASIC block opens on BASIC tab');
 await page.click('.datawin .tab[data-view=dump]');
 await wait(150);
+// a standard block hides its flag and checksum by default; the dump is editable
+// anyway, and the byte typed lands where the view shows it
+const cell = (n) => page.$$eval('.datawin .dump .hexb', (e, i) => e[i].textContent, n);
+await (await page.$('.datawin .dump .hexb')).click();
+await page.keyboard.type('2a');
+await wait(150);
+expect((await cell(0)) === '2A', 'typing edits a byte while the flag and checksum are hidden');
 for (const label of ['Hide flag byte', 'Hide checksum byte']) {
   const el = await page.evaluateHandle((l) => [...document.querySelectorAll('.datawin label')].find((x) => x.textContent.trim() === l).querySelector('input'), label);
   if (await el.evaluate((e) => e.checked)) await el.click();
 }
 await wait(150);
+expect((await cell(0)) === 'FF' && (await cell(1)) === '2A', 'that byte was the first body byte, not the flag');
 await (await page.$('.datawin .dump .hexb')).click();
 await page.keyboard.type('41');
 await wait(150);
