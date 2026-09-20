@@ -447,7 +447,8 @@ pub fn list_variables(data: &[u8], start: usize, end: usize) -> Vec<VariableEntr
                 let dim_list: Vec<usize> = (0..dims).map(|i| word(p + 4 + i * 2)).collect();
                 let is_char = kind == 0b110;
                 let elem_start = p + 4 + dims * 2;
-                let total: usize = dim_list.iter().product();
+                // Garbage read as dimensions multiplies up past anything a usize holds.
+                let total: usize = dim_list.iter().fold(1usize, |n, d| n.saturating_mul(*d));
                 let preview = if is_char {
                     let mut s = String::new();
                     for i in 0..total.min(64) {

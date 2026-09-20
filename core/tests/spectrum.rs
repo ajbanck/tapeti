@@ -184,10 +184,22 @@ fn disassembles_the_tricky_prefixes() {
     assert_eq!(lines[0].bytes, vec![0x18, 0xfe]);
 
     // Decimal mode spells everything in decimal.
-    let dec = disassemble(&[0x21, 0x34, 0x12], 0, 0x8000, 1, DisOptions { hex: false, rom_labels: true });
+    let dec = disassemble(
+        &[0x21, 0x34, 0x12],
+        0,
+        0x8000,
+        1,
+        DisOptions { hex: false, rom_labels: true, ..DisOptions::default() },
+    );
     assert_eq!(dec[0].text, "LD HL,4660");
     // Without labels, nothing is annotated.
-    let bare = disassemble(&[0xc7], 0, 0x8000, 1, DisOptions { hex: true, rom_labels: false });
+    let bare = disassemble(
+        &[0xc7],
+        0,
+        0x8000,
+        1,
+        DisOptions { hex: true, rom_labels: false, ..DisOptions::default() },
+    );
     assert_eq!(bare[0].text, "RST 0x00");
     // Running off the end stops rather than inventing instructions.
     assert_eq!(disassemble(&[], 0, 0, 10, DisOptions::default()).len(), 0);
@@ -256,4 +268,137 @@ fn an_empty_program_is_a_program() {
 
     let program = edit_basic(&[], 0, 0, "10 PRINT \"hi\"\n20 GO TO 10", SourceOptions::default()).unwrap();
     assert_eq!(program.len(), 4 + 6 + 4 + 10);
+}
+
+// ---- the disassembler past the port ---------------------------------------
+
+fn listing(code: &[u8], base: u32, opts: DisOptions, symbols: &str) -> Vec<String> {
+    use tapeti_core::spectrum::romnames::Symbols;
+    use tapeti_core::spectrum::z80dis::disassemble_with;
+    disassemble_with(code, 0, base, 1000, opts, &Symbols::parse(symbols).0)
+        .into_iter()
+        .map(|l| l.text)
+        .collect()
+}
+
+const FULL: DisOptions = DisOptions { hex: true, rom_labels: true, sysvars: true, literals: true };
+
+/// Behind RST 08 is a report code, behind RST 28 the calculator's literals up to
+/// end-calc; read as instructions they put everything after them out of step.
+#[test]
+fn restarts_carry_their_literals() {
+    let code = [
+        0xef, // RST 28
+        0xa1, // stk-one
+        0x34, 0x40, 0xb0, 0x00, 0x0a, // stk-data: the small integer 10
+        0x0f, // addition
+        0x33, 0x02, // jump +2, from the byte that says so
+        0x31, // duplicate
+        0x86, // series-06 ... cut short here by:
+        0x38, // (a constant, as far as the calculator knows)
+    ];
+    let lines = listing(&code[..11], 0x8000, FULL, "");
+    assert_eq!(
+        lines,
+        [
+            "RST 0x28  ; FP-CALC",
+            "DEFB 0xA1  ; stk-one",
+            "DEFB 0x34,0x40,0xB0,0x00,0x0A  ; stk-data 10",
+            "DEFB 0x0F  ; addition",
+            "DEFB 0x33,0x02  ; jump to 0x800B",
+            "DEFB 0x31  ; duplicate",
+        ]
+    );
+    // end-calc hands back to code, and a report code is one byte.
+    let lines = listing(&[0xef, 0x38, 0xcf, 0x1a, 0xc9, 0xcf, 0x77], 0x8000, FULL, "");
+    assert_eq!(
+        lines,
+        [
+            "RST 0x28  ; FP-CALC",
+            "DEFB 0x38  ; end-calc",
+            "RST 0x08  ; ERROR-1",
+            "DEFB 0x1A  ; R Tape loading error",
+            "RET",
+            "RST 0x08  ; ERROR-1",
+            "DEFB 0x77  ; not a report",
+        ]
+    );
+    // A series is followed by that many packed constants: a half, then a tenth-ish.
+    let lines = listing(&[0xef, 0x82, 0x30, 0x00, 0xf1, 0x4c, 0xcc, 0xcc, 0xcc, 0x38], 0x8000, FULL, "");
+    assert_eq!(lines[1], "DEFB 0x82  ; series-02");
+    assert_eq!(lines[2], "DEFB 0x30,0x00  ; 0.5");
+    assert!(lines[3].starts_with("DEFB 0xF1,0x4C,0xCC,0xCC,0xCC  ; "), "{}", lines[3]);
+    assert_eq!(lines[4], "DEFB 0x38  ; end-calc");
+    // Off, they are the instructions they look like.
+    assert_eq!(
+        listing(&[0xcf, 0x1a], 0x8000, DisOptions::default(), ""),
+        ["RST 0x08  ; ERROR-1", "LD A,(DE)"]
+    );
+}
+
+#[test]
+fn operands_name_system_variables_and_the_users_symbols() {
+    let code = [
+        0x2a, 0x4b, 0x5c, //       LD HL,(5C4B)
+        0xfd, 0xcb, 0x01, 0x6e, // BIT 5,(IY+1)
+        0xfd, 0x36, 0x3e, 0x00, // LD (IY+0x3E),0
+        0xdd, 0x36, 0x01, 0x00, // LD (IX+1),0: not IY, not a variable
+        0xcd, 0x10, 0x80, //       CALL 8010
+        0x21, 0x00, 0x90, //       LD HL,9000
+        0x18, 0xfe, //             JR to itself
+    ];
+    let lines = listing(&code, 0x8000, FULL, "$8010 DRAW_IT\n$9000 TABLE\n$8015 LOOP");
+    assert_eq!(
+        lines,
+        [
+            "LD HL,(0x5C4B)  ; VARS",
+            "BIT 5,(IY+0x01)  ; FLAGS",
+            "LD (IY+0x3E),0x00  ; FRAMES",
+            "LD (IX+0x01),0x00",
+            "CALL 0x8010  ; DRAW_IT",
+            "LD HL,0x9000  ; TABLE",
+            "LOOP:",
+            "JR 0x8015  ; LOOP",
+        ]
+    );
+    // A name of the user's wins over the ROM's.
+    assert_eq!(listing(&[0xcd, 0x56, 0x05], 0x8000, FULL, "$0556 LOADER"), ["CALL 0x0556  ; LOADER"]);
+    assert_eq!(listing(&[0xcd, 0x56, 0x05], 0x8000, FULL, ""), ["CALL 0x0556  ; LD-BYTES"]);
+}
+
+/// The snapshot loader's tape routine ends its entry point on RST 08 and the
+/// report it wants: with the literals read, the routine behind it lines up.
+#[test]
+fn the_snapshot_loader_reads_in_step() {
+    use tapeti_core::snapshot::{snapshot_to_blocks, LoaderOptions, Snapshot};
+    let mut snap = Snapshot::default();
+    snap.pages[5] = Some(vec![0; 16384]);
+    let opts = LoaderOptions { name: "x", speed: 2, border: 1, compress_all: false, screen: None };
+    let blocks = snapshot_to_blocks(&snap, &opts).unwrap();
+    let program = blocks[2].body.data().unwrap();
+    // The 512 bytes of loader end the block, before its checksum; the routine is at BF55.
+    let loader = &program[program.len() - 1 - 512..program.len() - 1];
+    let lines = listing(&loader[0x155..], 0xbf55, FULL, "$BF5B LD_BYTES");
+    assert_eq!(
+        lines[..6],
+        [
+            "CALL 0xBF5B  ; LD_BYTES",
+            "RET C",
+            "RST 0x08  ; ERROR-1",
+            "DEFB 0x1A  ; R Tape loading error",
+            "LD_BYTES:",
+            "INC D"
+        ]
+    );
+}
+
+/// Bytes that are no variables at all must list as something, not overflow: the
+/// dimensions of a "number array" of noise multiply up past a usize.
+#[test]
+fn variables_of_noise_do_not_overflow() {
+    let mut noise = vec![0x41, 0xff, 0xff, 0x0c];
+    noise.extend(std::iter::repeat_n(0xff, 24));
+    let listed = list_variables(&noise, 0, noise.len());
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].kind, "number array");
 }

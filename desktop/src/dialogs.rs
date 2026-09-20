@@ -10,7 +10,9 @@ use egui::{Align, Layout, RichText, Ui};
 
 use tapeti_core::audio::{playback_order, FlowOptions, RenderOptions, TSTATES_PER_SEC};
 use tapeti_core::consistency::{check_consistency, Severity};
-use tapeti_core::describe::{describe_block, empty_program};
+use tapeti_core::describe::{
+    default_load_address, describe_block, empty_program, header_name, MAX_FILE_BYTES,
+};
 use tapeti_core::programs::detect_programs;
 use tapeti_core::snapshot::{LoaderOptions, Snapshot, DEFAULT_SPEED, SPEED_BPS};
 use tapeti_core::spectrum::screen::{render_screen, ScreenOptions, SCREEN_SIZE};
@@ -79,6 +81,16 @@ pub struct SnapshotState {
     tex: Option<(bool, egui::TextureHandle)>,
 }
 
+pub struct DataFileState {
+    pub side: Side,
+    pub file: String,
+    pub bytes: Vec<u8>,
+    /// The ten characters of the header.
+    pub name: String,
+    pub address: i64,
+    pub with_header: bool,
+}
+
 pub enum Dialog {
     Message { title: String, lines: Vec<String> },
     Confirm { title: String, lines: Vec<String>, then: Then },
@@ -90,9 +102,20 @@ pub enum Dialog {
     Programs(ProgramsState),
     Emulator(EmulatorState),
     Snapshot(Box<SnapshotState>),
+    DataFile(DataFileState),
 }
 
 impl Dialog {
+    pub fn data_file(side: Side, file: &str, bytes: Vec<u8>) -> Dialog {
+        Dialog::DataFile(DataFileState {
+            side,
+            file: file.to_string(),
+            name: header_name(file),
+            address: i64::from(default_load_address(bytes.len())),
+            bytes,
+            with_header: true,
+        })
+    }
     pub fn snapshot(side: Side, name: &str, snap: Snapshot, insert_at_cursor: bool) -> Dialog {
         Dialog::Snapshot(Box::new(SnapshotState {
             side,
@@ -170,6 +193,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         Dialog::Programs(_) => ("Programs".into(), 460.0),
         Dialog::Emulator(_) => ("Emulator".into(), 560.0),
         Dialog::Snapshot(_) => ("Import snapshot".into(), 520.0),
+        Dialog::DataFile(_) => ("Insert file as data".into(), 440.0),
     };
 
     let response = egui::Modal::new(egui::Id::new("tapeti-dialog"))
@@ -200,6 +224,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 Dialog::Programs(s) => programs_body(ui, app, s, &tok),
                 Dialog::Emulator(s) => emulator_body(ui, app, s, &tok),
                 Dialog::Snapshot(s) => snapshot_body(ui, app, s, &tok),
+                Dialog::DataFile(s) => data_file_body(ui, app, s, &tok),
             };
             // The ✕ wins over the body, which reports `Keep` on every frame in
             // which nothing was clicked in it. Assigning both to one variable is
@@ -496,6 +521,54 @@ fn export_wav(app: &mut App, s: &WavState, order: &[u32]) {
         let saved = files::file_name(&path);
         app.store.set_status(format!("Saved {saved}"));
     }
+}
+
+/// A file that is no tape was inserted: it becomes a data block, with the header
+/// `SAVE "name" CODE` would have put in front.
+fn data_file_body(ui: &mut Ui, app: &mut App, s: &mut DataFileState, tok: &Tokens) -> Outcome {
+    let hex = app.store.hex;
+    let too_big = s.bytes.len() > MAX_FILE_BYTES;
+    egui::Grid::new("datafile-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        ui.label("File");
+        ui.label(format!("{} ({} bytes)", s.file, fmt::num(s.bytes.len() as i64, hex)));
+        ui.end_row();
+
+        ui.label("");
+        w::check(ui, "With a header in front", &mut s.with_header, true);
+        ui.end_row();
+
+        ui.label("Name");
+        ui.add_enabled(
+            s.with_header,
+            egui::TextEdit::singleline(&mut s.name).char_limit(10).desired_width(120.0),
+        );
+        ui.end_row();
+
+        ui.label("Start address");
+        w::num(ui, "datafile-address", &mut s.address, 0, 0xffff, hex, 80.0, s.with_header);
+        ui.end_row();
+    });
+    if too_big {
+        let most = fmt::num(MAX_FILE_BYTES as i64, hex);
+        ui.label(RichText::new(format!("A data block holds {most} bytes at most.")).color(tok.danger));
+    } else {
+        w::note(ui, tok, "Goes in at the cursor as a Bytes header and a standard speed data block: flag FF, the file, checksum.");
+    }
+
+    let mut go = false;
+    let outcome = footer(ui, |ui| {
+        let cancel = ui.button("Cancel").clicked();
+        go = ui.add_enabled(!too_big, egui::Button::new("Insert")).clicked();
+        if cancel {
+            return Outcome::Close;
+        }
+        Outcome::Keep
+    });
+    if go {
+        files::insert_data_file(&mut app.store, s.side, &s.name, &s.bytes, s.address as u16, s.with_header);
+        return Outcome::Close;
+    }
+    outcome
 }
 
 const SPEED_NAMES: [&str; 4] = ["Normal", "High", "Turbo", "Ludicrous"];

@@ -112,8 +112,12 @@ export type Dialog =
   | { kind: 'programs'; side: Side }
   | { kind: 'confirm'; title: string; lines: string[]; onOk: () => void }
   | { kind: 'emulator' }
+  | { kind: 'datafile'; side: Side; name: string; bytes: Uint8Array }
   | { kind: 'snapshot'; side: Side; name: string; bytes: Uint8Array; format: SnapshotKind; info: SnapshotInfo; insertAtCursor: boolean };
 export const dialog = signal<Dialog | null>(null);
+
+/** The disassembler's symbol table, as typed. Kept for the session, so closing a data window does not lose it. */
+export const disSymbols = signal('');
 
 export function showMessage(title: string, lines: string[] | string) {
   dialog.value = { kind: 'message', title, lines: Array.isArray(lines) ? lines : [lines] };

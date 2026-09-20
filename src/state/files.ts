@@ -3,7 +3,8 @@
 import { Side, tapes, active, dialog, emptyTape, markSaved, insertBlocks, setStatus, showMessage, blockNo } from './store';
 import { parseTape, isTzx } from '../tzx/parser';
 import { serializeTzx, serializeTap, saveVersion } from '../tzx/writer';
-import { ParsedTape } from '../tzx/types';
+import { Block, ParsedTape, StandardBlock, createBlock } from '../tzx/types';
+import { checksum, encodeHeader } from '../tzx/describe';
 import { snapshotKind, snapshotInfo, snapshotToTape, SnapshotKind, SnapshotOptions, SNAPSHOT_SPEEDS } from '../tzx/snapshot';
 import { platform, OpenedFile, TAPE_FILTERS, filtersForName, FileFilter, fileToOpened } from '../platform';
 
@@ -14,6 +15,13 @@ export function newTape(side: Side) {
 
 export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtCursor = false) {
   const format = snapshotKind(name);
+  // Inserting something that is no tape: it goes in as a data block, once the
+  // dialog has said where it loads. (Opening still reads anything as a TAP,
+  // which is what a tape with an odd extension needs.)
+  if (insertAtCursor && !format && !isTzx(bytes) && !/\.tap$/i.test(name)) {
+    dialog.value = { kind: 'datafile', side, name, bytes };
+    return;
+  }
   let parsed;
   try {
     if (format) {
@@ -29,6 +37,41 @@ export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtC
   if (parsed.warnings.length) showMessage(`Warnings while loading ${name}`, parsed.warnings);
   loadParsed(side, name, parsed, insertAtCursor, isTzx(bytes));
   setStatus(`Loaded ${name}: ${parsed.blocks.length} blocks, TZX v${parsed.major}.${String(parsed.minor).padStart(2, '0')}`);
+}
+
+/** The most a standard block's payload can be: its 16 bit length counts flag and checksum too. */
+export const MAX_FILE_BYTES = 0xffff - 2;
+
+/** The ten characters a header has for a name, from a file's: its stem, in ASCII. `header_name` in the core. */
+export function headerName(file: string): string {
+  const base = file.split(/[\\/]/).pop() ?? file;
+  const stem = base.includes('.') ? base.slice(0, base.lastIndexOf('.')) : base;
+  const name = stem.replace(/[^ -~]/g, '').slice(0, 10);
+  return name.trim() ? name : 'file';
+}
+
+/**
+ * The data file dialog's OK: the file as the blocks SAVE "name" CODE would make, at
+ * the cursor. `file_blocks` in the core.
+ */
+export function insertDataFile(side: Side, name: string, bytes: Uint8Array, address: number, withHeader: boolean) {
+  if (bytes.length > MAX_FILE_BYTES) {
+    showMessage('Cannot insert file', `A data block holds ${MAX_FILE_BYTES} bytes at most; this file has ${bytes.length}`);
+    return;
+  }
+  const data = new Uint8Array(bytes.length + 2);
+  data[0] = 0xff;
+  data.set(bytes, 1);
+  data[data.length - 1] = checksum(data, 0, data.length - 1);
+  const blocks: Block[] = [{ ...(createBlock(0x10) as StandardBlock), data }];
+  if (withHeader) {
+    const header = encodeHeader({ type: 3, typeName: 'Bytes', name, length: bytes.length, param1: address, param2: 32768 });
+    blocks.unshift({ ...(createBlock(0x10) as StandardBlock), data: header });
+  }
+  const t = tapes[side].value;
+  insertBlocks(side, t.cursor < 0 ? t.blocks.length : t.cursor, blocks);
+  active.value = side;
+  setStatus(`Inserted ${bytes.length} bytes as "${name.trimEnd()}"`);
 }
 
 /** The snapshot import dialog's OK: build the tape that loads the snapshot. */
@@ -113,7 +156,9 @@ export async function openFiles(side: Side, files: FileList | File[], insertAtCu
 /** Show the platform's open dialog and load the chosen tapes. */
 export async function pickAndOpen(side: Side, insertAtCursor = false) {
   const p = await platform();
-  const files = await p.openFiles({ filters: TAPE_FILTERS, multiple: insertAtCursor });
+  // Inserting takes any file: what is no tape goes in as a data block.
+  const filters = insertAtCursor ? [...TAPE_FILTERS, { name: 'Any file (inserted as a data block)', extensions: ['*'] }] : TAPE_FILTERS;
+  const files = await p.openFiles({ filters, multiple: insertAtCursor });
   openTapeFiles(side, files, insertAtCursor);
 }
 

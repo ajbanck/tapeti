@@ -342,6 +342,12 @@ textarea.wide { width: 100%; }
 .datawin .editrow .label { width: 46px; color: var(--muted); font-size: 12px; }
 .datawin .mask { display: flex; gap: 2px; align-items: center; }
 .datawin .mask span { color: var(--muted); font-size: 12px; margin-right: 6px; }
+.datawin .controls .c.crypt { gap: 6px; }
+.datawin .dis-split { flex: 1; min-height: 0; display: flex; gap: 8px; }
+.datawin .dis-split > .view { flex: 1; }
+.datawin .symbols { width: 260px; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.datawin .symbols textarea { flex: 1; resize: none; padding: 8px; color: var(--text); white-space: pre; }
+.dis .lbl.name { color: var(--accent); }
 .datawin textarea.basic-source { resize: none; padding: 10px; color: var(--text); white-space: pre; tab-size: 4; }
 .datawin .basic-errors { max-height: 84px; overflow: auto; margin-top: 6px; }
 .datawin .basic-errors .error { cursor: pointer; padding: 1px 0; }

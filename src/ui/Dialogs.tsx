@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
 import { Dialog, dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum, fmtTime, unitIndices, hex, blockNo, zeroBased } from '../state/store';
-import { downloadBytes, importSnapshot, pickFile } from '../state/files';
+import { downloadBytes, importSnapshot, insertDataFile, headerName, MAX_FILE_BYTES, pickFile } from '../state/files';
 import { SNAPSHOT_SPEEDS, SNAPSHOT_SPEED_NAMES, SNAPSHOT_MACHINES, DEFAULT_SNAPSHOT_SPEED, SCREEN_BYTES } from '../tzx/snapshot';
 import { renderScreen } from '../spectrum/screen';
+import { NumInput } from './fields';
 import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block, StandardBlock } from '../tzx/types';
 import { checkConsistency } from '../tzx/consistency';
 import { tapeDuration, renderWav, playbackOrder, blockDuration, TSTATES_PER_SEC } from '../tzx/audio';
@@ -69,6 +70,8 @@ export function Dialogs() {
       return <EmulatorDialog />;
     case 'snapshot':
       return <SnapshotImport d={d} />;
+    case 'datafile':
+      return <DataFileInsert d={d} />;
   }
   return null;
 }
@@ -256,6 +259,35 @@ function WavExport({ side }: { side: Side }) {
         </div>
       </div>
       <p class="note">About {fmtTime(secs)} of audio, {fmtNum(Math.round(secs * rate * bits / 8 / 1024))} KB.</p>
+    </Modal>
+  );
+}
+
+/** A file that is no tape was inserted: it becomes a data block, with the header SAVE "name" CODE would have put in front. */
+function DataFileInsert({ d }: { d: Extract<Dialog, { kind: 'datafile' }> }) {
+  const [name, setName] = useState(headerName(d.name));
+  const [address, setAddress] = useState(d.bytes.length === 6912 ? 16384 : 32768);
+  const [withHeader, setWithHeader] = useState(true);
+  const tooBig = d.bytes.length > MAX_FILE_BYTES;
+  const go = () => {
+    close();
+    insertDataFile(d.side, name, d.bytes, address, withHeader);
+  };
+  return (
+    <Modal title="Insert file as data" onClose={close} width={440} cls="datafile" footer={<><button class="primary" disabled={tooBig} onClick={go}>Insert</button><button onClick={close}>Cancel</button></>}>
+      <div class="grid" style={{ gridTemplateColumns: 'auto 1fr' }}>
+        <label>File</label>
+        <div>{d.name} ({fmtNum(d.bytes.length)} bytes)</div>
+        <label></label>
+        <label><input type="checkbox" checked={withHeader} onChange={(e) => setWithHeader((e.target as HTMLInputElement).checked)} /> With a header in front</label>
+        <label>Name</label>
+        <input type="text" maxLength={10} value={name} disabled={!withHeader} style={{ width: 130 }} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+        <label>Start address</label>
+        <NumInput value={address} max={0xffff} width={90} disabled={!withHeader} onChange={setAddress} />
+      </div>
+      {tooBig
+        ? <p class="error">A data block holds {fmtNum(MAX_FILE_BYTES)} bytes at most.</p>
+        : <p class="note">Goes in at the cursor as a Bytes header and a standard speed data block: flag FF, the file, checksum.</p>}
     </Modal>
   );
 }

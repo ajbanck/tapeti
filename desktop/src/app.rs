@@ -785,6 +785,8 @@ mod tests {
             Dialog::programs(0),
             Dialog::emulator(true, Some(Then::EmulatorGo(0, Scope::Tape)), &Settings::default()),
             Dialog::snapshot(0, "game.sna", crate::files::tests::snapshot(), false),
+            Dialog::data_file(0, "title.scr", vec![0; 6912]),
+            Dialog::data_file(0, "huge.bin", vec![0; 70_000]),
         ];
         for d in dialogs {
             app.store.dialog = Some(d);
@@ -817,6 +819,12 @@ mod tests {
             app.open_data_window(0, vec![uid]);
             app.datawin.as_mut().unwrap().set_view(view);
             draw(&ctx, &mut app);
+            // And with the symbol strip open, a table in it (one line of it bad),
+            // and the bytes decrypted.
+            app.store.symbols = "$8000 START\n32770 NEXT\nnot a symbol".into();
+            app.datawin.as_mut().unwrap().show_everything();
+            draw(&ctx, &mut app);
+            assert!(app.store.symbols.starts_with("$8000"), "the table goes back to the store");
             app.datawin = None;
         }
     }

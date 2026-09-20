@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
-import { dataWindow, tapes, Side, commit, locked, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
+import { dataWindow, tapes, Side, commit, locked, disSymbols, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
 import { downloadBytes, pickFile } from '../state/files';
 import { Block, isUnknown } from '../tzx/types';
 import { detectContent } from '../tzx/content';
 import { decodeHeader, encodeHeader, checksum, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
-import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, totalBits } from '../tzx/bits';
+import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, decryptBytes, encryptBytes, CRYPT_PRESETS, totalBits } from '../tzx/bits';
 import { renderScreen, hasFlash, SCREEN_SIZE } from '../spectrum/screen';
 import { listBasic, listVariables, basicToText, basicSource, editBasic, BasicOptions, SourceError } from '../spectrum/basic';
-import { disassemble, disassemblyText, DisLine } from '../spectrum/z80dis';
+import { disassemble, disassemblyText, checkSymbols, DisLine } from '../spectrum/z80dis';
 import { zxChar, dumpChar } from '../spectrum/charset';
 import { NumInput, TextInput, Check } from './fields';
 import { Icon } from './icons';
@@ -49,6 +49,10 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [hideFlag, setHideFlag] = useState(single && guess.skipFlag);
   const [hideCs, setHideCs] = useState(single && guess.skipChecksum);
   const [baseBeforeReverse, setBaseBeforeReverse] = useState<number | null>(null);
+  // What the loader does to each byte on its way to memory: (byte XOR x) + y.
+  const [decrypt, setDecrypt] = useState(false);
+  const [cryptXor, setCryptXor] = useState(CRYPT_PRESETS[0].xor);
+  const [cryptAdd, setCryptAdd] = useState(CRYPT_PRESETS[0].add);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
   // Set once the BASIC view has rewritten the program: where VARS now is in the
@@ -58,7 +62,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   // and it starts at Dec every time a data window is opened.
   const [h, setH] = useState(false);
   const isLocked = locked.value;
-  const modifiers = flip || reverse || hideFlag || hideCs;
+  const modifiers = flip || reverse || hideFlag || hideCs || decrypt;
   // Typing over a byte works through the modifiers: the index travels back
   // (see setByte). Drop/Add/Shift and the last-byte mask change the length and
   // the bit alignment of the raw stream, whose ends and bit order the modifiers
@@ -71,9 +75,11 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     if (hideFlag && d.length > 0) d = d.subarray(1);
     if (hideCs && d.length > 0) d = d.subarray(0, d.length - 1);
     if (flip) d = flipBytes(d);
+    // After the bit order, as the loader has it: the byte is whole before it is decrypted.
+    if (decrypt) d = decryptBytes(d, cryptXor, cryptAdd);
     if (reverse) d = d.slice().reverse();
     return d;
-  }, [work, flip, reverse, hideFlag, hideCs]);
+  }, [work, flip, reverse, hideFlag, hideCs, decrypt, cryptXor, cryptAdd]);
   const startAddr = reverse ? base - view.length + 1 : base;
 
   const setBits = (fn: (d: BitData) => BitData) => {
@@ -84,14 +90,15 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
    * Write back a byte the view shows. The view is the raw data with the
    * modifiers applied, so index and value travel the other way: reverse mirrors
    * the index, "hide flag byte" shifts it past byte 0 ("hide checksum byte"
-   * only shortens the end, so it does not move anything), and flip is its own
-   * inverse on the value.
+   * only shortens the end, so it does not move anything), decryption is undone
+   * by encrypting, and flip is its own inverse on the value.
    */
   const setByte = (i: number, v: number) => {
     const j = (reverse ? view.length - 1 - i : i) + (hideFlag && work.data.length > 0 ? 1 : 0);
     if (j < 0 || j >= work.data.length) return;
     const d = new Uint8Array(work.data);
-    d[j] = flip ? flipBytes(new Uint8Array([v]))[0] : v;
+    const stored = decrypt ? encryptBytes(new Uint8Array([v]), cryptXor, cryptAdd)[0] : v;
+    d[j] = flip ? flipBytes(new Uint8Array([stored]))[0] : stored;
     setWork({ ...work, data: d });
     setDirty(true);
   };
@@ -218,12 +225,22 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
         <div class="c"><Check label="Reverse order (DEC IX)" checked={reverse} onChange={toggleReverse} /></div>
         <div class="c"><Check label="Hide flag byte" checked={hideFlag} onChange={setHideFlag} disabled={!single} /></div>
         <div class="c"><Check label="Hide checksum byte" checked={hideCs} onChange={setHideCs} disabled={!single} /></div>
+        <div class="c crypt" title="What an encrypting loader (SpeedLock and others) does to each byte on its way to memory: LD A,x: XOR L: ADD A,y">
+          <Check label="Decrypt: XOR" checked={decrypt} onChange={setDecrypt} />
+          <NumInput value={cryptXor} max={0xff} hex={h} width={52} onChange={setCryptXor} />
+          <label>ADD</label>
+          <NumInput value={cryptAdd} max={0xff} hex={h} width={52} onChange={setCryptAdd} />
+          <select value={CRYPT_PRESETS.findIndex((p) => p.xor === cryptXor && p.add === cryptAdd)} onChange={(e) => { const p = CRYPT_PRESETS[Number((e.target as HTMLSelectElement).value)]; if (p) { setCryptXor(p.xor); setCryptAdd(p.add); setDecrypt(true); } }}>
+            <option value={-1}>Custom</option>
+            {CRYPT_PRESETS.map((p, i) => <option key={i} value={i}>{p.name}</option>)}
+          </select>
+        </div>
       </div>
 
       {viewAs === 'dump' && <Dump data={view} startAddr={startAddr} editable={editable} setByte={setByte} h={h} />}
       {viewAs === 'header' && <HeaderView data={work.data} h={h} editable={editable} onChange={(d) => { setWork({ ...work, data: d }); setDirty(true); }} />}
       {viewAs === 'screen' && <Screen data={view} offset={16384 - startAddr} />}
-      {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} fileStem={fileStem} apply={editable && !flip && !reverse ? applyProgram : null} />}
+      {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} fileStem={fileStem} apply={editable && !flip && !reverse && !decrypt ? applyProgram : null} />}
       {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} h={h} fileStem={fileStem} apply={null} />}
       {viewAs === 'text' && <TextView data={view} />}
       {viewAs === 'dis' && <Dis data={view} startAddr={startAddr} h={h} fileStem={fileStem} />}
@@ -530,7 +547,7 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
         <span class="note">{vars ? `${variables.length} variable(s)` : `${lines.length} line(s)`}</span>
         <span style={{ flex: 1 }} />
         {!vars && source === null && <>
-          <button class="small" disabled={!apply} title={apply ? 'Edit the program as text' : 'Needs an unlocked single block, with Flip and Reverse off'} onClick={() => { setErrors([]); setSource(basicSource(data, from, to, sourceOpts)); }}>Edit</button>
+          <button class="small" disabled={!apply} title={apply ? 'Edit the program as text' : 'Needs an unlocked single block, with Flip, Reverse and Decrypt off'} onClick={() => { setErrors([]); setSource(basicSource(data, from, to, sourceOpts)); }}>Edit</button>
           <button class="small" onClick={save}>Save listing</button>
         </>}
         {!vars && source !== null && <>
@@ -656,35 +673,65 @@ function HeaderView({ data, h, editable, onChange }: { data: Uint8Array; h: bool
 function Dis({ data, startAddr, h, fileStem }: { data: Uint8Array; startAddr: number; h: boolean; fileStem: string }) {
   const [from, setFrom] = useState(startAddr);
   const [labels, setLabels] = useState(true);
+  const [sysvars, setSysvars] = useState(true);
+  const [literals, setLiterals] = useState(true);
+  const [editSymbols, setEditSymbols] = useState(false);
   useEffect(() => setFrom(startAddr), [startAddr]);
-  const lines: DisLine[] = useMemo(() => disassemble(data, Math.max(0, from - startAddr), from, 1e6, { hex: h, romLabels: labels }), [data, from, startAddr, h, labels]);
+  const symbols = disSymbols.value;
+  const opts = { hex: h, romLabels: labels, sysvars, literals, symbols };
+  const lines: DisLine[] = useMemo(() => disassemble(data, Math.max(0, from - startAddr), from, 1e6, opts), [data, from, startAddr, h, labels, sysvars, literals, symbols]);
+  const badSymbols = useMemo(() => (symbols.trim() ? checkSymbols(symbols) : []), [symbols]);
   const v = useVirtual(lines.length, 18);
   const rows = [];
   for (let r = v.first; r < v.last; r++) {
     const l = lines[r];
     const [ins, lbl] = l.text.split('  ; ');
+    // A name of the user's, on a line of its own at the address it is for.
+    const isName = l.bytes.length === 0;
     rows.push(
       <div class="line" key={r}>
-        <span class="addr">{l.addr.toString(16).toUpperCase().padStart(4, '0')}</span>
-        <span class="bytes">{l.bytes.map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}</span>
-        <span>{ins}</span>
-        {lbl && <span class="lbl">  ; {lbl}</span>}
+        <span class="addr">{isName ? '' : l.addr.toString(16).toUpperCase().padStart(4, '0')}</span>
+        {isName ? <span class="lbl name">{ins}</span> : <>
+          <span class="bytes">{l.bytes.map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}</span>
+          <span>{ins}</span>
+          {lbl && <span class="lbl">  ; {lbl}</span>}
+        </>}
       </div>,
     );
   }
+  const loadSymbols = async () => {
+    const f = await pickFile();
+    if (f) disSymbols.value = new TextDecoder().decode(f.bytes).replace(/\r\n?/g, '\n');
+  };
   return (
     <>
       <div class="row-flex">
         <label>From address</label><NumInput value={from} max={0xffff} hex={h} onChange={setFrom} width={70} />
         <Check label="ROM labels" checked={labels} onChange={setLabels} />
-        <span class="note">{lines.length} instruction(s)</span>
+        <Check label="System variables" checked={sysvars} onChange={setSysvars} />
+        <Check label="RST 08 / RST 28 data" checked={literals} onChange={setLiterals} />
+        <span class="note">{lines.length} line(s)</span>
         <span style={{ flex: 1 }} />
-        <button class="small" onClick={() => downloadBytes(new TextEncoder().encode(disassemblyText(data, Math.max(0, from - startAddr), from, 1e6, { hex: h, romLabels: labels }) + '\n'), fileStem + '.dis.txt', 'text/plain')}>Save listing</button>
+        <button class={'small' + (editSymbols ? ' primary' : '')} onClick={() => setEditSymbols(!editSymbols)}>Symbols</button>
+        <button class="small" onClick={() => downloadBytes(new TextEncoder().encode(disassemblyText(data, Math.max(0, from - startAddr), from, 1e6, opts) + '\n'), fileStem + '.dis.txt', 'text/plain')}>Save listing</button>
       </div>
-      <div class="view dis" ref={v.ref} onScroll={v.onScroll}>
-        <div style={{ height: v.totalH, position: 'relative' }}>
-          <div style={{ position: 'absolute', top: v.offsetH, left: 0, right: 0 }}>{rows}</div>
+      <div class="dis-split">
+        <div class="view dis" ref={v.ref} onScroll={v.onScroll}>
+          <div style={{ height: v.totalH, position: 'relative' }}>
+            <div style={{ position: 'absolute', top: v.offsetH, left: 0, right: 0 }}>{rows}</div>
+          </div>
         </div>
+        {editSymbols && (
+          <div class="symbols">
+            <textarea class="view" spellcheck={false} placeholder={'$8000 START\n49152 TABLE ; a comment'} value={symbols} onInput={(e) => (disSymbols.value = (e.target as HTMLTextAreaElement).value)} />
+            <div class="row-flex">
+              <button class="small" onClick={loadSymbols}>Load</button>
+              <button class="small" disabled={!symbols.trim()} onClick={() => downloadBytes(new TextEncoder().encode(symbols.replace(/\n*$/, '\n')), fileStem.replace(/-block\d+$/, '') + '.sym', 'text/plain')}>Save</button>
+              {badSymbols.length > 0 && <span class="error">Not "address name": line {badSymbols.join(', ')}</span>}
+            </div>
+            <div class="note">An address and a name per line; $ or 0x for hexadecimal, ; for a comment. Kept until the app closes.</div>
+          </div>
+        )}
       </div>
     </>
   );

@@ -280,6 +280,9 @@ pub struct Store {
     pub tape_compare: TapeCompareMode,
     /// false = plain square wave, true = the Spectrum MIC response.
     pub audio_mic: bool,
+    /// The disassembler's symbol table, as typed. Kept for the session, so
+    /// closing a data window does not lose it.
+    pub symbols: String,
     pub clipboard: Vec<Block>,
     pub settings: Settings,
     pub dialog: Option<Dialog>,
@@ -299,6 +302,7 @@ impl Store {
             block_compare: BlockCompareMode::Data,
             tape_compare: TapeCompareMode::DataBlocks,
             audio_mic: true,
+            symbols: String::new(),
             clipboard: Vec::new(),
             settings,
             dialog: None,

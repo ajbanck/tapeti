@@ -50,7 +50,9 @@ paged-in ROMs (Interface 1, Multiface) cannot be put back. The desktop app lists
 "Open With" for snapshots but leaves the double click to your emulator. The method and the loader
 are [Taper](#credits)'s.
 
-**Block operations**: insert any block type (or an empty BASIC program, header and data), cut / copy / paste / duplicate / delete, move up and
+**Block operations**: insert any block type (or an empty BASIC program, header and data), insert
+a file — a tape or snapshot goes in as its blocks, anything else (a `.scr`, a binary) as the Bytes
+header and data block `SAVE "name" CODE` would have made, after asking for the name and address — cut / copy / paste / duplicate / delete, move up and
 down, drag & drop within and between tapes (hold Alt or Ctrl to copy), group the selection,
 collapse and expand groups and loops (a collapsed group acts as one block), multi-select with
 Shift-click and Ctrl-click (⌘-click on macOS), undo / redo per tape, lock switch to prevent
@@ -92,9 +94,19 @@ signal level, text, message, archive info, hardware type (full hardware list), c
   `.BAS` escapes are read too). A new program starts from Insert block → BASIC program.
 - Text view with Spectrum character set and tokens.
 - Z80 disassembly (all prefixes, undocumented forms) with ROM routine labels; Save listing writes
-  it out as text.
+  it out as text. It reads what follows `RST 08` and `RST 28` as the ROM does — a report code, and
+  the calculator's literals up to `end-calc`, jumps, `stk-data` constants and `series` included —
+  so a listing stays in step through ROM calls; names the system variables among the operands,
+  `(IY+d)` too; and takes **symbols** of your own: an address and a name per line (`$8000 START`,
+  decimal or `$`/`0x` hex, `;` for a comment — Taper's `.SYM` files), shown on a line of their own
+  where they are and beside every operand that points at one. The table can be loaded and saved,
+  and stays until the app closes.
 - Base address, flip bytes (RR), reverse order (DEC IX), hide flag / checksum byte modifiers.
   Typing in the dump works through them — the byte lands where the view shows it.
+- **Decrypt**: shows the bytes as an encrypting loader leaves them in memory, `(byte XOR x) + y`
+  (`LD A,x: XOR L: ADD A,y`), with SpeedLock 2/3 (98, 0B) and 4–7 (C1, 11) as presets. It is a
+  modifier like the others, in every view — a SpeedLock loading screen is a picture again — and
+  a byte typed through it goes back to the tape encrypted.
 - Bit and byte level Drop / Add / Shift left / Shift right and last-byte mask. These act on the
   raw block data, so they wait until the modifiers are off.
 - Append file, replace from file, save block data to file. "View selected as one" joins the

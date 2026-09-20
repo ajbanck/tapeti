@@ -290,3 +290,44 @@ fn finds_groups_and_programs() {
     assert_eq!(tape_title(&[]), None);
     assert!(detect_programs(&[]).is_empty());
 }
+
+#[test]
+fn decrypting_is_undone_by_encrypting() {
+    use tapeti_core::bits::{decrypt_bytes, encrypt_bytes, CRYPT_PRESETS};
+    let all: Vec<u8> = (0..=255).collect();
+    for (_, xor, add) in CRYPT_PRESETS {
+        assert_eq!(encrypt_bytes(&decrypt_bytes(&all, xor, add), xor, add), all);
+    }
+    // LD A,98: XOR L: ADD A,0B with L = 00 and L = FF
+    assert_eq!(decrypt_bytes(&[0x00, 0xff], 0x98, 0x0b), [0xa3, 0x72]);
+}
+
+#[test]
+fn a_file_becomes_a_header_and_its_data() {
+    use tapeti_core::content::{detect_content, ContentKind};
+    use tapeti_core::describe::{
+        checksum, decode_header, default_load_address, file_blocks, header_name, MAX_FILE_BYTES,
+    };
+    use tapeti_core::types::Block;
+
+    assert_eq!((default_load_address(6912), default_load_address(100)), (16384, 32768));
+    assert_eq!(header_name("/art/Loading Screen.scr"), "Loading Sc");
+    assert_eq!(header_name(".bin"), "file");
+
+    let screen = vec![0x38u8; 6912];
+    let blocks: Vec<Block> =
+        file_blocks("picture", &screen, 16384, true).unwrap().into_iter().map(Block::new).collect();
+    let header = decode_header(blocks[0].body.data().unwrap()).unwrap();
+    assert_eq!(
+        (header.kind, header.length, header.param1, header.name.trim_end()),
+        (3, 6912, 16384, "picture")
+    );
+    let data = blocks[1].body.data().unwrap();
+    assert_eq!((data[0], data.len(), checksum(data)), (0xff, 6914, 0));
+    assert_eq!(detect_content(&blocks, 1).kind, ContentKind::Screen);
+    assert!(tapeti_core::consistency::check_consistency(&blocks, 0).is_empty());
+
+    assert_eq!(file_blocks("x", &[1, 2, 3], 32768, false).unwrap().len(), 1);
+    assert!(file_blocks("x", &vec![0; MAX_FILE_BYTES], 32768, true).is_ok());
+    assert!(file_blocks("x", &vec![0; MAX_FILE_BYTES + 1], 32768, true).is_err());
+}

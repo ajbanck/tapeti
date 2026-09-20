@@ -68,6 +68,65 @@ pub fn empty_program() -> [crate::types::Body; 2] {
     ]
 }
 
+/// The most a standard block's payload can be: its 16 bit length counts the flag
+/// and the checksum too.
+pub const MAX_FILE_BYTES: usize = 0xffff - 2;
+
+/// Where a file of this length most likely belongs: a screen in screen memory,
+/// anything else where code usually goes.
+pub fn default_load_address(len: usize) -> u16 {
+    if len == 6912 {
+        16384
+    } else {
+        32768
+    }
+}
+
+/// The ten characters a header has for a name, from a file's: its stem, in ASCII.
+pub fn header_name(file: &str) -> String {
+    let base = file.rsplit(['/', '\\']).next().unwrap_or(file);
+    let stem = base.rsplit_once('.').map_or(base, |(s, _)| s);
+    let name: String = stem.chars().filter(|c| (' '..='~').contains(c)).take(10).collect();
+    if name.trim().is_empty() {
+        "file".to_string()
+    } else {
+        name
+    }
+}
+
+/// A file as the tape blocks `SAVE "name" CODE address,length` would make: a
+/// Bytes header, if wanted, and the data with its flag and checksum.
+pub fn file_blocks(
+    name: &str,
+    bytes: &[u8],
+    address: u16,
+    with_header: bool,
+) -> Result<Vec<crate::types::Body>, String> {
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "A data block holds {MAX_FILE_BYTES} bytes at most; this file has {}",
+            bytes.len()
+        ));
+    }
+    let mut out = Vec::new();
+    if with_header {
+        let header = HeaderInfo {
+            kind: 3,
+            type_name: HEADER_TYPE_NAMES[3].to_string(),
+            name: name.to_string(),
+            length: bytes.len() as u16,
+            param1: address,
+            param2: 32768,
+        };
+        out.push(crate::types::Body::Standard { pause: 1000, data: encode_header(&header) });
+    }
+    let mut data = vec![0xff];
+    data.extend_from_slice(bytes);
+    data.push(checksum(&data));
+    out.push(crate::types::Body::Standard { pause: 1000, data });
+    Ok(out)
+}
+
 /// XOR of the bytes, as the ROM loader computes it.
 pub fn checksum(data: &[u8]) -> u8 {
     data.iter().fold(0, |c, b| c ^ b)

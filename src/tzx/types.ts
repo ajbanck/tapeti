@@ -308,6 +308,12 @@ export interface DisLine {
 export interface DisOptions {
   hex?: boolean;
   romLabels?: boolean;
+  /** Name the system variables among the operands, (IY+d) too. */
+  sysvars?: boolean;
+  /** Read what follows RST 08 and RST 28 as a report code and calculator literals. */
+  literals?: boolean;
+  /** The user's names for addresses: "address name" per line, $ or 0x for hex. */
+  symbols?: string;
 }
 
 /** What a parse returns: the blocks, the file's TZX version and any complaints. */

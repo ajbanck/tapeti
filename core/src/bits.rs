@@ -70,3 +70,24 @@ pub fn join_bits(parts: &[BitData]) -> BitData {
 pub fn flip_bytes(d: &[u8]) -> Vec<u8> {
     d.iter().map(|b| b.reverse_bits()).collect()
 }
+
+/// The usual turbo loader encryption, SpeedLock's among them: what ends up in
+/// memory is `(loaded byte XOR x) + y`.
+///
+/// ```text
+/// LD   A,x
+/// XOR  L            ; the byte just loaded
+/// ADD  A,y
+/// LD   (IX+0),A
+/// ```
+pub fn decrypt_bytes(d: &[u8], xor: u8, add: u8) -> Vec<u8> {
+    d.iter().map(|b| (b ^ xor).wrapping_add(add)).collect()
+}
+
+/// The other way: the bytes a tape must hold for the loader to store these.
+pub fn encrypt_bytes(d: &[u8], xor: u8, add: u8) -> Vec<u8> {
+    d.iter().map(|b| b.wrapping_sub(add) ^ xor).collect()
+}
+
+/// The values the SpeedLock versions use unless a game changes them.
+pub const CRYPT_PRESETS: [(&str, u8, u8); 2] = [("SpeedLock 2/3", 0x98, 0x0b), ("SpeedLock 4-7", 0xc1, 0x11)];

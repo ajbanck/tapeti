@@ -3,6 +3,7 @@
 
 pub mod basic;
 pub mod charset;
+pub mod romnames;
 pub mod screen;
 pub mod source;
 pub mod z80dis;

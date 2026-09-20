@@ -11,7 +11,10 @@ use crate::audio::{
     block_duration, decode_csw_rle, emit_block, encode_wav, playback_order, playback_timeline, render_length,
     render_tape, tape_duration, FlowOptions, RecordingSink, RenderOptions,
 };
-use crate::bits::{add_bits, drop_bits, flip_bytes, join_bits, shift_left_bits, shift_right_bits, BitData};
+use crate::bits::{
+    add_bits, decrypt_bytes, drop_bits, encrypt_bytes, flip_bytes, join_bits, shift_left_bits,
+    shift_right_bits, BitData,
+};
 use crate::compare::{blocks_equal, compare_tapes, find_matches, BlockCompareMode, TapeCompareMode};
 use crate::consistency::check_consistency;
 use crate::content::{basic_score, content_labels, detect_content};
@@ -25,9 +28,10 @@ use crate::spectrum::basic::{
     basic_to_text, decode_number, format_number, list_basic, list_variables, BasicOptions,
 };
 use crate::spectrum::charset::char_table;
+use crate::spectrum::romnames::Symbols;
 use crate::spectrum::screen::{has_flash, render_screen, ScreenOptions};
 use crate::spectrum::source::{basic_source_text, edit_basic, SourceOptions};
-use crate::spectrum::z80dis::{dis_to_text, disassemble, DisOptions};
+use crate::spectrum::z80dis::{dis_to_text, disassemble_with, DisLine, DisOptions};
 use crate::types::Block;
 use crate::wire::{
     decode_basic_edit, decode_basic_lines, decode_bit_data, decode_blocks, decode_blocks_and_order,
@@ -491,6 +495,20 @@ pub unsafe extern "C" fn core_flip_bytes(ptr: *const u8, len: usize) -> *mut u8 
     finish(encode_bytes(&flip_bytes(slice(ptr, len))))
 }
 
+/// A loader's `(byte XOR x) + y` over every byte, or with `encrypt` the inverse.
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn core_crypt(ptr: *const u8, len: usize, xor: u32, add: u32, encrypt: u32) -> *mut u8 {
+    let (data, xor, add) = (slice(ptr, len), xor as u8, add as u8);
+    finish(encode_bytes(&if encrypt != 0 {
+        encrypt_bytes(data, xor, add)
+    } else {
+        decrypt_bytes(data, xor, add)
+    }))
+}
+
 /// Read a 'POKEs' custom info block.
 ///
 /// # Safety
@@ -672,9 +690,10 @@ pub unsafe extern "C" fn core_disassembly_text(
     count: u32,
     flags: u32,
 ) -> *mut u8 {
-    let opts = DisOptions { hex: flags & 1 != 0, rom_labels: flags & 2 != 0 };
-    let lines = disassemble(slice(ptr, len), offset as usize, base, count as usize, opts);
-    finish(encode_opt_string(Some(&dis_to_text(&lines))))
+    finish(match disassembly(ptr, len, offset, base, count, flags) {
+        Ok(lines) => encode_opt_string(Some(&dis_to_text(&lines))),
+        Err(message) => encode_error(&message),
+    })
 }
 
 /// List the variables area.
@@ -686,7 +705,34 @@ pub unsafe extern "C" fn core_list_variables(ptr: *const u8, len: usize, start: 
     finish(encode_variables(&list_variables(slice(ptr, len), start as usize, end as usize)))
 }
 
-/// Disassemble `count` instructions. `flags`: 1 hex, 2 ROM labels.
+/// What both disassembly calls take. `flags`: 1 hex, 2 ROM labels, 4 system
+/// variables, 8 the literals behind RST 08 and RST 28, 16 the buffer is the data
+/// and the user's symbols (both `bytes`) rather than the data alone.
+unsafe fn disassembly(
+    ptr: *const u8,
+    len: usize,
+    offset: u32,
+    base: u32,
+    count: u32,
+    flags: u32,
+) -> Result<Vec<DisLine>, String> {
+    let opts = DisOptions {
+        hex: flags & 1 != 0,
+        rom_labels: flags & 2 != 0,
+        sysvars: flags & 4 != 0,
+        literals: flags & 8 != 0,
+    };
+    let input = slice(ptr, len);
+    let (data, symbols) = if flags & 16 != 0 {
+        let (data, text) = decode_basic_edit(input).map_err(|e| e.0)?;
+        (data, Symbols::parse(&text).0)
+    } else {
+        (input.to_vec(), Symbols::default())
+    };
+    Ok(disassemble_with(&data, offset as usize, base, count as usize, opts, &symbols))
+}
+
+/// Disassemble `count` instructions; see [`disassembly`] for `flags`.
 ///
 /// # Safety
 /// `ptr` must point at `len` readable bytes.
@@ -699,9 +745,20 @@ pub unsafe extern "C" fn core_disassemble(
     count: u32,
     flags: u32,
 ) -> *mut u8 {
-    let opts = DisOptions { hex: flags & 1 != 0, rom_labels: flags & 2 != 0 };
-    let lines = disassemble(slice(ptr, len), offset as usize, base, count as usize, opts);
-    finish(encode_dis_lines(&lines))
+    finish(match disassembly(ptr, len, offset, base, count, flags) {
+        Ok(lines) => encode_dis_lines(&lines),
+        Err(message) => encode_error(&message),
+    })
+}
+
+/// The lines of a symbol table that could not be read, from 1.
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes of text.
+#[no_mangle]
+pub unsafe extern "C" fn core_check_symbols(ptr: *const u8, len: usize) -> *mut u8 {
+    let text = String::from_utf8_lossy(slice(ptr, len));
+    finish(encode_u32s(&Symbols::parse(&text).1))
 }
 
 /// Decode a 5-byte Sinclair floating point number.

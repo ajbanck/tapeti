@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tapeti_core::describe::file_blocks;
 use tapeti_core::parser::{is_tzx, parse_tape};
 use tapeti_core::snapshot::{parse_snapshot, snapshot_to_blocks, LoaderOptions, SnapshotKind, SPEED_BPS};
 use tapeti_core::writer::{save_version, serialize_tap, serialize_tzx, Version};
@@ -47,6 +48,14 @@ pub fn load_bytes(
     insert_at_cursor: bool,
     path: Option<PathBuf>,
 ) {
+    // Inserting something that is no tape: it goes in as a data block, once the
+    // dialog has said where it loads. (Opening still reads anything as a TAP,
+    // which is what a tape with an odd extension needs.)
+    let is_tap = name.rsplit('.').next().is_some_and(|e| e.eq_ignore_ascii_case("tap"));
+    if insert_at_cursor && !is_tzx(bytes) && !is_tap && SnapshotKind::from_name(name).is_none() {
+        store.dialog = Some(crate::dialogs::Dialog::data_file(side, name, bytes.to_vec()));
+        return;
+    }
     if let Some(kind) = SnapshotKind::from_name(name) {
         // A snapshot becomes a tape only once the dialog has its answers.
         match parse_snapshot(bytes, kind) {
@@ -80,6 +89,29 @@ pub fn load_bytes(
     }
     store.active = side;
     store.set_status(format!("Loaded {name}: {count} blocks, TZX v{major}.{minor:02}"));
+}
+
+/// The data file dialog's OK: the file as a header and its data, at the cursor.
+pub fn insert_data_file(
+    store: &mut Store,
+    side: Side,
+    name: &str,
+    bytes: &[u8],
+    address: u16,
+    with_header: bool,
+) {
+    let bodies = match file_blocks(name, bytes, address, with_header) {
+        Ok(b) => b,
+        Err(e) => {
+            store.message("Cannot insert file", vec![e]);
+            return;
+        }
+    };
+    let t = store.tape(side);
+    let at = if t.cursor < 0 { t.blocks.len() } else { t.cursor as usize };
+    store.insert_blocks(side, at, bodies.into_iter().map(tapeti_core::types::Block::new).collect());
+    store.active = side;
+    store.set_status(format!("Inserted {} bytes as \"{}\"", bytes.len(), name.trim_end()));
 }
 
 /// The snapshot import dialog's OK: build the tape that loads the snapshot.
@@ -269,6 +301,27 @@ pub mod tests {
         // Inserting goes to the cursor of the tape that is there.
         import_snapshot(&mut store, 0, &s.snap, &opts, true);
         assert_eq!(store.tape(0).blocks.len(), 12);
+    }
+
+    #[test]
+    fn inserting_a_file_that_is_no_tape_asks_where_it_loads() {
+        let mut store = Store::new(Settings::default());
+        let screen = vec![0x38u8; 6912];
+        load_bytes(&mut store, 0, "Title.scr", &screen, true, None);
+        let Some(Dialog::DataFile(s)) = store.dialog.take() else { panic!("no data file dialog") };
+        assert_eq!((s.name.as_str(), s.address, s.with_header), ("Title", 16384, true));
+        insert_data_file(&mut store, 0, &s.name, &s.bytes, s.address as u16, s.with_header);
+        let t = store.tape(0);
+        assert_eq!(t.blocks.iter().map(|b| b.body.data().unwrap().len()).collect::<Vec<_>>(), [19, 6914]);
+        assert!(t.dirty());
+
+        // A TAP by name and a TZX by signature are still tapes, and opening (not
+        // inserting) reads anything as one, as it always did.
+        load_bytes(&mut store, 0, "x.tap", &[2, 0, 0xff, 0xff], true, None);
+        assert!(store.dialog.is_none());
+        load_bytes(&mut store, 1, "odd.bin", &[2, 0, 0xff, 0xff], false, None);
+        assert!(store.dialog.is_none());
+        assert_eq!(store.tape(1).blocks.len(), 1);
     }
 
     #[test]

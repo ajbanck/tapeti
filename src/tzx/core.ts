@@ -52,6 +52,7 @@ interface CoreExports {
   core_find_matches(ptr: number, len: number, skip: number, mode: number): number;
   core_bits(ptr: number, len: number, op: number, n: number): number;
   core_flip_bytes(ptr: number, len: number): number;
+  core_crypt(ptr: number, len: number, xor: number, add: number, encrypt: number): number;
   core_decode_pokes(ptr: number, len: number): number;
   core_encode_pokes(ptr: number, len: number): number;
   core_pokes_to_text(ptr: number, len: number, hex: number): number;
@@ -64,6 +65,7 @@ interface CoreExports {
   core_basic_source(ptr: number, len: number, start: number, end: number, flags: number): number;
   core_edit_basic(ptr: number, len: number, start: number, end: number, flags: number): number;
   core_disassembly_text(ptr: number, len: number, offset: number, base: number, count: number, flags: number): number;
+  core_check_symbols(ptr: number, len: number): number;
   core_list_variables(ptr: number, len: number, start: number, end: number): number;
   core_disassemble(ptr: number, len: number, offset: number, base: number, count: number, flags: number): number;
   core_decode_number(ptr: number, len: number, offset: number): number;
@@ -292,6 +294,11 @@ export function bitsCore(op: BitOp, parts: BitData[], n = 0): BitData {
   return decodeBitData(call('core_bits', encodeBitData(parts), BIT_OPS.indexOf(op), n));
 }
 
+/** A loader's `(byte XOR x) + y` over every byte, or the inverse. */
+export function cryptCore(data: Uint8Array, xor: number, add: number, encrypt: boolean): Uint8Array {
+  return decodeBytes(call('core_crypt', data, xor & 0xff, add & 0xff, encrypt ? 1 : 0));
+}
+
 export function flipBytesCore(data: Uint8Array): Uint8Array {
   return decodeBytes(call('core_flip_bytes', data));
 }
@@ -359,17 +366,28 @@ export function editBasicCore(
 }
 
 export function disassemblyTextCore(data: Uint8Array, offset: number, base: number, count: number, opts: DisOptions): string {
-  const flags = ((opts.hex ?? true) ? 1 : 0) | ((opts.romLabels !== false) ? 2 : 0);
-  return decodeOptString(call('core_disassembly_text', data, offset, base, count, flags)) ?? '';
+  const [buf, flags] = disassemblyRequest(data, opts);
+  return decodeOptString(call('core_disassembly_text', buf, offset, base, count, flags)) ?? '';
 }
 
 export function listVariablesCore(data: Uint8Array, start: number, end: number): VariableEntry[] {
   return decodeVariables(call('core_list_variables', data, start, end));
 }
 
+/** The buffer and flags both disassembly calls take; with symbols the buffer carries them too. */
+function disassemblyRequest(data: Uint8Array, opts: DisOptions): [Uint8Array, number] {
+  const flags = ((opts.hex ?? true) ? 1 : 0) | ((opts.romLabels !== false) ? 2 : 0) | (opts.sysvars ? 4 : 0) | (opts.literals ? 8 : 0);
+  return opts.symbols?.trim() ? [encodeBasicEdit(data, opts.symbols), flags | 16] : [data, flags];
+}
+
 export function disassembleCore(data: Uint8Array, offset: number, base: number, count: number, opts: DisOptions): DisLine[] {
-  const flags = ((opts.hex ?? true) ? 1 : 0) | ((opts.romLabels !== false) ? 2 : 0);
-  return decodeDisLines(call('core_disassemble', data, offset, base, count, flags));
+  const [buf, flags] = disassemblyRequest(data, opts);
+  return decodeDisLines(call('core_disassemble', buf, offset, base, count, flags));
+}
+
+/** The lines of a symbol table that could not be read, from 1. */
+export function checkSymbolsCore(text: string): number[] {
+  return decodeU32s(call('core_check_symbols', new TextEncoder().encode(text)));
 }
 
 export function decodeNumberCore(data: Uint8Array, offset: number): number {

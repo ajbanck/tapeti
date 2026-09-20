@@ -12,15 +12,17 @@ use std::time::Instant;
 use egui::{vec2, Align2, FontId, Rect, RichText, Sense, TextEdit, Ui};
 
 use tapeti_core::bits::{
-    add_bits, drop_bits, flip_bytes, join_bits, shift_left_bits, shift_right_bits, total_bits, BitData,
+    add_bits, decrypt_bytes, drop_bits, encrypt_bytes, flip_bytes, join_bits, shift_left_bits,
+    shift_right_bits, total_bits, BitData, CRYPT_PRESETS,
 };
 use tapeti_core::content::detect_content;
 use tapeti_core::describe::{checksum, decode_header, encode_header, HeaderInfo, HEADER_TYPE_NAMES};
 use tapeti_core::spectrum::basic::{basic_to_text, list_basic, list_variables, BasicOptions};
 use tapeti_core::spectrum::charset::{dump_char, zx_char};
+use tapeti_core::spectrum::romnames::Symbols;
 use tapeti_core::spectrum::screen::{has_flash, render_screen, ScreenOptions, SCREEN_SIZE};
 use tapeti_core::spectrum::source::{basic_source_text, edit_basic, SourceError, SourceOptions};
-use tapeti_core::spectrum::z80dis::{dis_to_text, disassemble, DisOptions};
+use tapeti_core::spectrum::z80dis::{dis_to_text, disassemble_with, DisOptions};
 use tapeti_core::types::{Block, Body, Uid};
 
 use crate::app::App;
@@ -66,6 +68,10 @@ pub struct DataWin {
     base_before_reverse: Option<i64>,
     hide_flag: bool,
     hide_cs: bool,
+    /// What the loader does to each byte on its way to memory: (byte XOR x) + y.
+    decrypt: bool,
+    crypt_xor: i64,
+    crypt_add: i64,
     n: i64,
     dirty: bool,
 
@@ -108,6 +114,9 @@ pub struct DataWin {
     // disassembly
     from: i64,
     rom_labels: bool,
+    sysvars: bool,
+    literals: bool,
+    edit_symbols: bool,
 }
 
 fn bit_data_of(b: &Block) -> BitData {
@@ -146,6 +155,9 @@ impl DataWin {
             base_before_reverse: None,
             hide_flag: single && guess.skip_flag,
             hide_cs: single && guess.skip_checksum,
+            decrypt: false,
+            crypt_xor: i64::from(CRYPT_PRESETS[0].1),
+            crypt_add: i64::from(CRYPT_PRESETS[0].2),
             n: 1,
             dirty: false,
 
@@ -175,6 +187,9 @@ impl DataWin {
             expand_tokens: true,
             from: base,
             rom_labels: true,
+            sysvars: true,
+            literals: true,
+            edit_symbols: false,
         }
     }
 
@@ -197,7 +212,7 @@ impl DataWin {
     }
 
     fn modifiers_on(&self) -> bool {
-        self.flip || self.reverse || self.hide_flag || self.hide_cs
+        self.flip || self.reverse || self.hide_flag || self.hide_cs || self.decrypt
     }
 
     /// The BASIC view's Apply: the text becomes the program between two offsets
@@ -230,6 +245,14 @@ impl DataWin {
         self.source_errors.clear();
     }
 
+    /// Open the disassembly view's symbol strip and tick Decrypt. Test-only, so a
+    /// headless frame draws them.
+    #[cfg(test)]
+    pub fn show_everything(&mut self) {
+        self.edit_symbols = true;
+        self.decrypt = true;
+    }
+
     /// Edit the program as the BASIC view would, from PROG to VARS, and press
     /// Apply. Test-only; what comes back is what Apply would have complained of.
     #[cfg(test)]
@@ -255,6 +278,11 @@ impl DataWin {
         if self.flip {
             d = flip_bytes(&d);
         }
+        // After the bit order, as the loader has it: the byte is whole before it
+        // is decrypted.
+        if self.decrypt {
+            d = decrypt_bytes(&d, self.crypt_xor as u8, self.crypt_add as u8);
+        }
         if self.reverse {
             d.reverse();
         }
@@ -270,6 +298,8 @@ impl DataWin {
         let mirrored = if self.reverse { view_len.checked_sub(i + 1) } else { Some(i) };
         let Some(j) = mirrored else { return };
         let j = j + usize::from(self.hide_flag && !self.work.data.is_empty());
+        let v =
+            if self.decrypt { encrypt_bytes(&[v], self.crypt_xor as u8, self.crypt_add as u8)[0] } else { v };
         let v = if self.flip { flip_bytes(&[v])[0] } else { v };
         if let Some(b) = self.work.data.get_mut(j) {
             *b = v;
@@ -325,6 +355,8 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         format!("{}-block{}", files::stem(&t.name), fmt::block_no(t.cursor.max(0) as usize, zero))
     };
     let mut dw = app.datawin.take().unwrap();
+    // The store's while the window draws, and back again below.
+    let mut symbols = std::mem::take(&mut app.store.symbols);
     // Read once, so a click on the switch below shows in the next frame rather
     // than halfway down this one.
     let hex = dw.hex;
@@ -403,6 +435,26 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 let single = dw.single();
                 w::check(ui, "Hide flag byte", &mut dw.hide_flag, single);
                 w::check(ui, "Hide checksum byte", &mut dw.hide_cs, single);
+                ui.separator();
+                let hint = "What an encrypting loader (SpeedLock and others) does to each byte on its way \
+                            to memory: LD A,x: XOR L: ADD A,y";
+                w::check(ui, "Decrypt: XOR", &mut dw.decrypt, true);
+                w::num(ui, "dw-crypt-xor", &mut dw.crypt_xor, 0, 0xff, hex, 46.0, true);
+                ui.label("ADD").on_hover_text(hint);
+                w::num(ui, "dw-crypt-add", &mut dw.crypt_add, 0, 0xff, hex, 46.0, true);
+                let mut preset = CRYPT_PRESETS
+                    .iter()
+                    .position(|(_, x, a)| i64::from(*x) == dw.crypt_xor && i64::from(*a) == dw.crypt_add)
+                    .unwrap_or(usize::MAX);
+                let mut names = vec![(usize::MAX, "Custom".to_string())];
+                names.extend(CRYPT_PRESETS.iter().enumerate().map(|(n, p)| (n, p.0.to_string())));
+                if w::combo(ui, "dw-crypt-preset", &mut preset, &names, 120.0, true) {
+                    if let Some((_, x, a)) = CRYPT_PRESETS.get(preset) {
+                        dw.crypt_xor = i64::from(*x);
+                        dw.crypt_add = i64::from(*a);
+                        dw.decrypt = true;
+                    }
+                }
             });
             ui.separator();
 
@@ -416,12 +468,12 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 ViewAs::Header => header_view(&mut dw, ui, hex, &tok, editable),
                 ViewAs::Screen => screen(&mut dw, ui, &view, 16384 - start, &tok, body_h),
                 ViewAs::Basic => {
-                    let can_edit = editable && !dw.flip && !dw.reverse;
+                    let can_edit = editable && !dw.flip && !dw.reverse && !dw.decrypt;
                     basic(&mut dw, ui, &view, start, false, &tok, body_h, can_edit.then_some(stem.as_str()))
                 }
                 ViewAs::Vars => basic(&mut dw, ui, &view, start, true, &tok, body_h, None),
                 ViewAs::Text => text_view(&mut dw, ui, &view, body_h),
-                ViewAs::Dis => disassembly(&mut dw, ui, &view, start, hex, &tok, body_h, &stem),
+                ViewAs::Dis => disassembly(&mut dw, ui, &view, start, hex, &tok, body_h, &stem, &mut symbols),
             }
 
             // ---- bit and byte editing
@@ -517,6 +569,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
             app.store.set_status(format!("Saved {saved}"));
         }
     }
+    app.store.symbols = symbols;
     if commit {
         apply(app, &dw);
         close = true;
@@ -1010,7 +1063,7 @@ fn basic(
                     }
                 }
             } else {
-                let hint = "Needs an unlocked single block, with Flip and Reverse off";
+                let hint = "Needs an unlocked single block, with Flip, Reverse and Decrypt off";
                 if ui
                     .add_enabled(stem.is_some(), egui::Button::new("Edit"))
                     .on_disabled_hover_text(hint)
@@ -1195,6 +1248,7 @@ fn disassembly(
     tok: &Tokens,
     h: f32,
     stem: &str,
+    symbols: &mut String,
 ) {
     if dw.from == 0 {
         dw.from = start;
@@ -1204,24 +1258,67 @@ fn disassembly(
         ui.label("From address");
         w::num(ui, "dw-from", &mut dw.from, 0, 0xffff, false, 70.0, true);
         w::check(ui, "ROM labels", &mut dw.rom_labels, true);
+        w::check(ui, "System variables", &mut dw.sysvars, true);
+        w::check(ui, "RST 08 / RST 28 data", &mut dw.literals, true);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             save = ui.button("Save listing").clicked();
+            if ui.selectable_label(dw.edit_symbols, "Symbols").clicked() {
+                dw.edit_symbols = !dw.edit_symbols;
+            }
         });
     });
     let offset = (dw.from - start).max(0) as usize;
-    let lines = disassemble(
+    let (table, bad) = Symbols::parse(symbols);
+    let lines = disassemble_with(
         data,
         offset.min(data.len()),
         dw.from.max(0) as u32,
         1_000_000,
-        DisOptions { hex, rom_labels: dw.rom_labels },
+        DisOptions { hex, rom_labels: dw.rom_labels, sysvars: dw.sysvars, literals: dw.literals },
+        &table,
     );
     if save {
         let text = format!("{}\n", dis_to_text(&lines));
         files::save_bytes(&format!("{stem}.dis.txt"), ("Text", &["txt"]), text.as_bytes());
     }
-    w::note(ui, tok, format!("{} instruction(s)", lines.len()));
-    egui::ScrollArea::vertical().id_salt("dis").max_height(h - 50.0).auto_shrink([false, false]).show_rows(
+    w::note(ui, tok, format!("{} line(s)", lines.len()));
+    if dw.edit_symbols {
+        // Its own strip under the options: an address and a name per line.
+        ui.horizontal(|ui| {
+            egui::ScrollArea::vertical().id_salt("symbols").max_height(96.0).show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(symbols)
+                        .id_salt("symbols-text")
+                        .hint_text("$8000 START\n49152 TABLE ; a comment")
+                        .desired_width(360.0)
+                        .desired_rows(5)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Load").clicked() {
+                        if let Some((_, bytes)) = files::pick_any_file() {
+                            *symbols = String::from_utf8_lossy(&bytes).replace("\r\n", "\n").replace('\r', "\n");
+                        }
+                    }
+                    if ui.add_enabled(!symbols.trim().is_empty(), egui::Button::new("Save")).clicked() {
+                        let name = format!("{}.sym", stem.rsplit_once("-block").map_or(stem, |(tape, _)| tape));
+                        let text = format!("{}\n", symbols.trim_end());
+                        files::save_bytes(&name, ("Symbol table", &["sym", "txt"]), text.as_bytes());
+                    }
+                });
+                if bad.is_empty() {
+                    w::note(ui, tok, "An address and a name per line; $ or 0x for hexadecimal,\n; for a comment. Kept until the app closes.");
+                } else {
+                    let list: Vec<String> = bad.iter().map(u32::to_string).collect();
+                    ui.label(RichText::new(format!("Not \"address name\": line {}", list.join(", "))).color(tok.danger));
+                }
+            });
+        });
+    }
+    let list_h = h - 50.0 - if dw.edit_symbols { 104.0 } else { 0.0 };
+    egui::ScrollArea::vertical().id_salt("dis").max_height(list_h).auto_shrink([false, false]).show_rows(
         ui,
         DUMP_ROW_H,
         lines.len(),
@@ -1236,6 +1333,17 @@ fn disassembly(
                 let l = &lines[r];
                 let mono = FontId::monospace(12.0);
                 let y = rect.center().y;
+                // A name of the user's, on a line of its own at the address it is for.
+                if l.bytes.is_empty() {
+                    painter.text(
+                        egui::pos2(rect.left() + 56.0, y),
+                        Align2::LEFT_CENTER,
+                        &l.text,
+                        mono,
+                        tok.accent,
+                    );
+                    continue;
+                }
                 painter.text(
                     egui::pos2(rect.left() + 4.0, y),
                     Align2::LEFT_CENTER,
@@ -1255,7 +1363,7 @@ fn disassembly(
                     Some((a, b)) => (a, Some(b)),
                     None => (l.text.as_str(), None),
                 };
-                painter.text(
+                let drawn = painter.text(
                     egui::pos2(rect.left() + 160.0, y),
                     Align2::LEFT_CENTER,
                     ins,
@@ -1263,8 +1371,9 @@ fn disassembly(
                     tok.text,
                 );
                 if let Some(lbl) = label {
+                    // In its column, or past a DEFB that is longer than one.
                     painter.text(
-                        egui::pos2(rect.left() + 320.0, y),
+                        egui::pos2((rect.left() + 320.0).max(drawn.right() + 14.0), y),
                         Align2::LEFT_CENTER,
                         format!("; {lbl}"),
                         mono,
@@ -1332,6 +1441,35 @@ mod tests {
         // Past the end of the view nothing is written.
         dw.set_view_byte(9, 0x55, view.len());
         assert_eq!(dw.work.data, vec![0xff, 0x99, 0x22, 0x01, 0xaa]);
+    }
+
+    /// Decrypt is a modifier like the others: the view shows what the loader would
+    /// put in memory, and a byte typed there goes back to the tape encrypted.
+    #[test]
+    fn typing_through_decrypt_stores_the_encrypted_byte() {
+        let blocks = vec![Block::new(Body::PureData {
+            zero: 855,
+            one: 1710,
+            used_bits: 8,
+            pause: 0,
+            data: vec![0x00, 0xff, 0x12],
+        })];
+        let uid = blocks[0].uid;
+        let mut dw = DataWin::new(&blocks, 0, vec![uid]);
+        (dw.hide_flag, dw.hide_cs) = (false, false);
+        dw.decrypt = true; // SpeedLock 2/3: XOR 98, ADD 0B
+        assert_eq!(dw.view_bytes(), vec![0xa3, 0x72, 0x95]);
+        assert!(dw.modifiers_on());
+
+        dw.set_view_byte(2, 0x3e, 3);
+        assert_eq!(dw.view_bytes(), vec![0xa3, 0x72, 0x3e], "the view shows what was typed");
+        assert_eq!(dw.work.data, vec![0x00, 0xff, (0x3eu8.wrapping_sub(0x0b)) ^ 0x98]);
+
+        // With the bit order flipped too, decryption comes after it, as in the loader.
+        dw.flip = true;
+        let shown = dw.view_bytes();
+        dw.set_view_byte(0, shown[0], 3);
+        assert_eq!(dw.work.data[0], 0x00, "writing back what is shown changes nothing");
     }
 
     /// Ticking "Reverse order" on a screen moves the base to the end of screen

@@ -1,6 +1,18 @@
 //! Table-free Z80 disassembler following the x/y/z/p/q decoding scheme, the
 //! port of `src/spectrum/z80dis.ts`. Handles CB, ED, DD, FD, DDCB and FDCB
 //! prefixes including undocumented forms.
+//!
+//! Past the port: the bytes behind `RST 08` and `RST 28` are read as what they
+//! are (a report code, the calculator's literals) rather than as instructions,
+//! which is what keeps a listing in step through ROM calls; operands that are
+//! system variables say so, `(IY+d)` included; and addresses can carry names of
+//! the user's own. The tables are in `romnames.rs`, the idea is TAPER's.
+
+use super::basic::{decode_number, format_number};
+use super::romnames::{
+    error_report, literal_name, series_count, sysvar_name, Symbols, LIT_DEC_JR_NZ, LIT_END_CALC, LIT_JUMP,
+    LIT_JUMP_TRUE, LIT_STK_DATA, SYSVAR_IY,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DisLine {
@@ -165,12 +177,30 @@ pub fn rom_label(addr: u32) -> Option<&'static str> {
 pub struct DisOptions {
     pub hex: bool,
     pub rom_labels: bool,
+    /// Name the system variables among the operands, `(IY+d)` too: the ROM keeps
+    /// IY on ERR-NR, and so does most code that calls it.
+    pub sysvars: bool,
+    /// Read what follows `RST 08` and `RST 28` as the ROM does: a report code,
+    /// and calculator literals up to `end-calc`.
+    pub literals: bool,
 }
 
 impl Default for DisOptions {
     fn default() -> Self {
-        DisOptions { hex: true, rom_labels: true }
+        DisOptions { hex: true, rom_labels: true, sysvars: false, literals: false }
     }
+}
+
+/// What the bytes at the cursor are, which after a restart is not code.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    Code,
+    /// The byte behind `RST 08`.
+    Report,
+    /// Behind `RST 28`, with this many packed constants still owed to a `series`.
+    Calculator {
+        constants: usize,
+    },
 }
 
 fn h8(v: u32, hex: bool) -> String {
@@ -199,6 +229,9 @@ struct Cursor<'a> {
     data: &'a [u8],
     p: usize,
     bytes: Vec<u8>,
+    /// The last 16 bit operand and index displacement read, for naming them.
+    last16: Option<u32>,
+    last_disp: Option<i32>,
 }
 
 impl Cursor<'_> {
@@ -211,29 +244,102 @@ impl Cursor<'_> {
 
     fn rd16(&mut self) -> u32 {
         let lo = u32::from(self.rd());
-        lo | u32::from(self.rd()) << 8
+        let v = lo | u32::from(self.rd()) << 8;
+        self.last16 = Some(v);
+        v
     }
 
     fn read_disp(&mut self) -> i32 {
         let d = i32::from(self.rd());
-        if d >= 128 {
-            d - 256
-        } else {
-            d
+        let d = if d >= 128 { d - 256 } else { d };
+        self.last_disp = Some(d);
+        d
+    }
+
+    /// A constant as `stk-data` packs it: the exponent in six bits (or, when
+    /// those are 0, in a byte of its own), less 50h, and one to four bytes of
+    /// mantissa as the top two bits say.
+    fn packed_constant(&mut self) -> f64 {
+        let first = self.rd();
+        let exponent = if first & 0x3f == 0 { self.rd() } else { first & 0x3f };
+        let mut five = [exponent.wrapping_add(0x50), 0, 0, 0, 0];
+        for slot in five.iter_mut().skip(1).take(usize::from(first >> 6) + 1) {
+            *slot = self.rd();
         }
+        decode_number(&five, 0)
     }
 }
 
 /// Disassemble `count` instructions from `data` starting at byte `offset`, with
 /// address base `base`.
 pub fn disassemble(data: &[u8], offset: usize, base: u32, count: usize, opts: DisOptions) -> Vec<DisLine> {
+    disassemble_with(data, offset, base, count, opts, &Symbols::default())
+}
+
+/// The bytes of a line as a DEFB, with what they mean behind it.
+fn defb(bytes: &[u8], hex: bool, meaning: &str) -> String {
+    let list: Vec<String> = bytes.iter().map(|b| h8(u32::from(*b), hex)).collect();
+    format!("DEFB {}  ; {meaning}", list.join(","))
+}
+
+/// As [`disassemble`], with the user's names for addresses: a line of its own
+/// where one is, and beside the operands that point at one.
+pub fn disassemble_with(
+    data: &[u8],
+    offset: usize,
+    base: u32,
+    count: usize,
+    opts: DisOptions,
+    symbols: &Symbols,
+) -> Vec<DisLine> {
     let hex = opts.hex;
     let mut out: Vec<DisLine> = Vec::new();
     let mut p = offset;
+    let mut reading = Reading::Code;
     while out.len() < count && p < data.len() {
         let start = p;
-        let mut c = Cursor { data, p, bytes: Vec::new() };
+        let mut c = Cursor { data, p, bytes: Vec::new(), last16: None, last_disp: None };
         let addr = base.wrapping_add((start - offset) as u32);
+        if let Some(name) = symbols.get(addr & 0xffff) {
+            out.push(DisLine { addr, bytes: Vec::new(), text: format!("{name}:"), target: None });
+        }
+        if reading != Reading::Code {
+            let mut target = None;
+            let text = match reading {
+                Reading::Report => {
+                    reading = Reading::Code;
+                    let code = c.rd();
+                    defb(&c.bytes, hex, error_report(code).unwrap_or("not a report"))
+                }
+                Reading::Calculator { constants } if constants > 0 => {
+                    reading = Reading::Calculator { constants: constants - 1 };
+                    let v = c.packed_constant();
+                    defb(&c.bytes, hex, &format_number(v))
+                }
+                _ => {
+                    let literal = c.rd();
+                    let mut meaning = literal_name(literal);
+                    reading = Reading::Calculator { constants: series_count(literal) };
+                    match literal {
+                        LIT_END_CALC => reading = Reading::Code,
+                        LIT_STK_DATA => meaning = format!("{meaning} {}", format_number(c.packed_constant())),
+                        LIT_JUMP | LIT_JUMP_TRUE | LIT_DEC_JR_NZ => {
+                            // Relative to the byte that holds the distance.
+                            let at = addr + c.bytes.len() as u32;
+                            let to = (at as i64 + i64::from(c.rd() as i8)) as u32 & 0xffff;
+                            target = Some(to);
+                            let name = symbols.get(to).map(|n| format!(" {n}")).unwrap_or_default();
+                            meaning = format!("{meaning} to {}{name}", h16(to, hex));
+                        }
+                        _ => {}
+                    }
+                    defb(&c.bytes, hex, &meaning)
+                }
+            };
+            p = c.p;
+            out.push(DisLine { addr, bytes: c.bytes, text, target });
+            continue;
+        }
         let mut target: Option<u32> = None;
         #[allow(unused_assignments)] // every branch below sets it
         let mut text = String::new();
@@ -489,7 +595,21 @@ pub fn disassemble(data: &[u8], offset: usize, base: u32, count: usize, opts: Di
             }
         }
 
-        if opts.rom_labels {
+        if opts.literals {
+            reading = match op {
+                0xcf => Reading::Report,
+                0xef => Reading::Calculator { constants: 0 },
+                _ => Reading::Code,
+            };
+        }
+        // The user's name for what the instruction points at comes first; then
+        // the ROM's, then a system variable's.
+        let pointed = target.or(c.last16);
+        let own = pointed.and_then(|a| symbols.get(a));
+        let noted = text.len();
+        if let Some(name) = own {
+            text.push_str(&format!("  ; {name}"));
+        } else if opts.rom_labels {
             match target.and_then(rom_label) {
                 Some(label) => text.push_str(&format!("  ; {label}")),
                 None => {
@@ -502,6 +622,16 @@ pub fn disassemble(data: &[u8], offset: usize, base: u32, count: usize, opts: Di
                         }
                     }
                 }
+            }
+        }
+        if opts.sysvars && text.len() == noted {
+            let variable = match (target, c.last16, ix, c.last_disp) {
+                (None, Some(nn), _, _) => sysvar_name(nn),
+                (None, None, Some("IY"), Some(d)) => sysvar_name((SYSVAR_IY as i64 + i64::from(d)) as u32),
+                _ => None,
+            };
+            if let Some(name) = variable {
+                text.push_str(&format!("  ; {name}"));
             }
         }
         p = c.p;
@@ -542,6 +672,10 @@ pub fn dis_to_text(lines: &[DisLine]) -> String {
     let rendered: Vec<String> = lines
         .iter()
         .map(|l| {
+            // A name on a line of its own, at the margin.
+            if l.bytes.is_empty() {
+                return l.text.clone();
+            }
             let bytes: Vec<String> = l.bytes.iter().map(|b| format!("{b:02X}")).collect();
             format!("{:04X}  {:<12} {}", l.addr, bytes.join(" "), l.text).trim_end().to_string()
         })
