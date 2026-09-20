@@ -467,6 +467,16 @@ pub fn encode_content(c: &crate::content::ContentInfo) -> Vec<u8> {
     w
 }
 
+/// A content guess and the values it was decrypted with, if any.
+pub fn encode_content_as_loaded(c: &crate::content::ContentInfo, crypt: Option<(u8, u8)>) -> Vec<u8> {
+    let mut w = encode_content(c);
+    match crypt {
+        Some((xor, add)) => w.extend_from_slice(&[1, xor, add]),
+        None => w.push(0),
+    }
+    w
+}
+
 /// An optional ROM header, as `decodeHeader` returns one.
 pub fn encode_header_info(h: Option<&crate::describe::HeaderInfo>) -> Vec<u8> {
     let mut w = header();

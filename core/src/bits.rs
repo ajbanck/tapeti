@@ -91,3 +91,19 @@ pub fn encrypt_bytes(d: &[u8], xor: u8, add: u8) -> Vec<u8> {
 
 /// The values the SpeedLock versions use unless a game changes them.
 pub const CRYPT_PRESETS: [(&str, u8, u8); 2] = [("SpeedLock 2/3", 0x98, 0x0b), ("SpeedLock 4-7", 0xc1, 0x11)];
+
+/// The values the loader a group is named after used, from the name the decoders
+/// write: "SpeedLock N block M". Versions 2 and 3 share one pair, 4 to 7 the
+/// other; version 1 does not encrypt, and a name without a version says nothing.
+///
+/// `None` for anything else on purpose: decrypting with the wrong values is
+/// worse than not decrypting, because the result still looks like data.
+pub fn crypt_preset_for(name: &str) -> Option<(u8, u8)> {
+    let rest = name.trim_start().to_ascii_lowercase();
+    let rest = rest.strip_prefix("speedlock")?.trim_start();
+    match rest.chars().next()?.to_digit(10)? {
+        2 | 3 => Some((CRYPT_PRESETS[0].1, CRYPT_PRESETS[0].2)),
+        4..=7 => Some((CRYPT_PRESETS[1].1, CRYPT_PRESETS[1].2)),
+        _ => None,
+    }
+}

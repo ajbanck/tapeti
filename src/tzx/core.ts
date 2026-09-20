@@ -8,11 +8,12 @@
 // the parse functions are sync from then on.
 import { CORE_WASM_BASE64 } from './core.wasm';
 import {
-  BasicLine, BasicOptions, BitData, Block, BlockCompareMode, CompareResult, ContentInfo, DisLine,
+  AsLoaded, BasicLine, BasicOptions, BitData, Block, BlockCompareMode, CompareResult, ContentInfo, DisLine,
   DisOptions, HeaderInfo, Issue, ParsedTape, PokesInfo, Program, TapeCompareMode, VariableEntry,
 } from './types';
 import {
   decodeBasicLines, decodeBitData, decodeBlocks, decodeBytes, decodeComparison, decodeContent,
+  decodeContentAsLoaded,
   decodeDuration, decodePulses, decodeSamples, decodeTimeline, encodeBlocksAndOrder,
   decodeDescribed, decodeDisLines, decodeF64, decodeHeaderInfo, decodeIssues, decodeOptString,
   decodeBasicEdit, encodeBasicEdit, decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
@@ -38,6 +39,7 @@ interface CoreExports {
   core_describe_block(ptr: number, len: number, hex: number): number;
   core_content_labels(ptr: number, len: number): number;
   core_detect_content(ptr: number, len: number, index: number): number;
+  core_detect_content_as_loaded(ptr: number, len: number, index: number): number;
   core_check_consistency(ptr: number, len: number, base: number): number;
   core_detect_programs(ptr: number, len: number): number;
   core_group_ranges(ptr: number, len: number): number;
@@ -231,6 +233,16 @@ export function detectContentCore(blocks: Block[], index: number): ContentInfo {
   const prev = index > 0 ? blocks[index - 1] : null;
   const window = prev ? [prev, block] : [block];
   return decodeContent(call('core_detect_content', encodeBlocks(window), prev ? 1 : 0));
+}
+
+/**
+ * The same for a data window: the guess is made on the decrypted bytes when the
+ * group around the block names a loader that encrypts. The whole tape goes over
+ * rather than a two-block window, since the group is what decides — a data
+ * window is opened by hand, not drawn per frame.
+ */
+export function detectContentAsLoadedCore(blocks: Block[], index: number): AsLoaded {
+  return decodeContentAsLoaded(call('core_detect_content_as_loaded', encodeBlocks(blocks), index));
 }
 
 export function checkConsistencyCore(blocks: Block[], base: number): Issue[] {

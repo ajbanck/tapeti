@@ -4,7 +4,7 @@
 // them in, so key order (and therefore anything comparing JSON) is unchanged.
 import { Reader, Writer } from './bytes';
 import {
-  ArchiveEntry, BasicLine, BasicToken, BitData, Block, CompareResult, ContentInfo, ContentKind,
+  ArchiveEntry, AsLoaded, BasicLine, BasicToken, BitData, Block, CompareResult, ContentInfo, ContentKind,
   DisLine, HardwareEntry, HeaderInfo, Issue, isUnknown, newUid, ParsedTape, PilotRun, Poke,
   PokesInfo, Program, SelectEntry, SymDef, Trainer, VariableEntry,
 } from './types';
@@ -427,9 +427,7 @@ export function decodeRanges(buf: Uint8Array): Map<number, number> {
   return out;
 }
 
-export function decodeContent(buf: Uint8Array): ContentInfo {
-  const r = new Reader(buf);
-  readHeader(r);
+function contentInfo(r: Reader): ContentInfo {
   return {
     kind: str(r) as ContentKind,
     label: str(r),
@@ -441,6 +439,20 @@ export function decodeContent(buf: Uint8Array): ContentInfo {
     source: str(r) as ContentInfo['source'],
     expectedLength: optU16(r),
   };
+}
+
+export function decodeContent(buf: Uint8Array): ContentInfo {
+  const r = new Reader(buf);
+  readHeader(r);
+  return contentInfo(r);
+}
+
+/** A content guess and the values it was decrypted with, if any. */
+export function decodeContentAsLoaded(buf: Uint8Array): AsLoaded {
+  const r = new Reader(buf);
+  readHeader(r);
+  const content = contentInfo(r);
+  return { content, crypt: r.u8() === 1 ? { xor: r.u8(), add: r.u8() } : null };
 }
 
 export function decodeHeaderInfo(buf: Uint8Array): HeaderInfo | null {

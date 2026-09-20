@@ -2,7 +2,9 @@
 //! code, an array or plain data. The port of `src/tzx/content.ts`: it uses the
 //! preceding header when there is one, otherwise heuristics on the bytes.
 
+use crate::bits::{crypt_preset_for, decrypt_bytes};
 use crate::describe::{decode_header, HeaderInfo};
+use crate::programs::group_ranges;
 use crate::types::{Block, Body};
 
 pub const SCREEN_SIZE: usize = 6912;
@@ -278,6 +280,45 @@ pub fn detect_content(blocks: &[Block], index: usize) -> ContentInfo {
         source: Source::None,
         ..ContentInfo::default()
     }
+}
+
+/// The values the loader that wrote block `index` encrypted it with, when the
+/// group around it names one.
+///
+/// Only Pure Data blocks, as TAPER's own auto-decrypt has it: a protected tape's
+/// encrypted payload is the pure data, while the loader's own header and BASIC
+/// travel in ordinary blocks that decrypting would only spoil. The innermost
+/// enclosing group decides, so a SpeedLock group inside a named one still counts.
+pub fn crypt_preset_at(blocks: &[Block], index: usize) -> Option<(u8, u8)> {
+    if !matches!(blocks.get(index)?.body, Body::PureData { .. }) {
+        return None;
+    }
+    let mut around: Vec<(u32, u32)> = group_ranges(blocks)
+        .into_iter()
+        .filter(|(s, e)| index > *s as usize && index < *e as usize)
+        .collect();
+    around.sort_by_key(|(s, _)| core::cmp::Reverse(*s));
+    around.iter().find_map(|(s, _)| match &blocks[*s as usize].body {
+        Body::GroupStart { name } => crypt_preset_for(name),
+        _ => None,
+    })
+}
+
+/// Block `index` as its loader stored it: the content guess, made on the
+/// decrypted bytes when the group around it names a loader that encrypts, and
+/// the values it used. This is what a data window opens with; `detect_content`
+/// stays the answer about the bytes as they lie on the tape.
+pub fn detect_content_as_loaded(blocks: &[Block], index: usize) -> (ContentInfo, Option<(u8, u8)>) {
+    let Some((xor, add)) = crypt_preset_at(blocks, index) else {
+        return (detect_content(blocks, index), None);
+    };
+    let mut plain = blocks[index].clone();
+    if let Body::PureData { data, .. } = &mut plain.body {
+        *data = decrypt_bytes(data, xor, add);
+    }
+    // On its own: a pure data block never reads the header in front of it, and
+    // the one the encrypted bytes might have spelled was not a header anyway.
+    (detect_content(&[plain], 0), Some((xor, add)))
 }
 
 /// The list labels for a whole tape, in one call: the UI asks for all of them at

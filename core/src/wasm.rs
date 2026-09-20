@@ -17,7 +17,7 @@ use crate::bits::{
 };
 use crate::compare::{blocks_equal, compare_tapes, find_matches, BlockCompareMode, TapeCompareMode};
 use crate::consistency::check_consistency;
-use crate::content::{basic_score, content_labels, detect_content};
+use crate::content::{basic_score, content_labels, detect_content, detect_content_as_loaded};
 use crate::convert::convert_block;
 use crate::describe::{block_length, checksum, decode_header, describe_block, encode_header};
 use crate::parser::{parse_tap, parse_tape, parse_tzx, ParsedTape};
@@ -36,11 +36,11 @@ use crate::types::Block;
 use crate::wire::{
     decode_basic_edit, decode_basic_lines, decode_bit_data, decode_blocks, decode_blocks_and_order,
     decode_header_info, decode_pokes_info, decode_snapshot_request, encode_basic_edit, encode_basic_lines,
-    encode_bit_data, encode_blocks_answer, encode_bytes, encode_comparison, encode_content, encode_described,
-    encode_dis_lines, encode_duration, encode_error, encode_f64, encode_header_info, encode_issues,
-    encode_opt_string, encode_pokes_info, encode_programs, encode_pulses, encode_ranges, encode_samples,
-    encode_snapshot_info, encode_strings, encode_tap, encode_tape, encode_timeline, encode_u32s, encode_u8,
-    encode_variables, encode_version, WIRE_VERSION,
+    encode_bit_data, encode_blocks_answer, encode_bytes, encode_comparison, encode_content,
+    encode_content_as_loaded, encode_described, encode_dis_lines, encode_duration, encode_error, encode_f64,
+    encode_header_info, encode_issues, encode_opt_string, encode_pokes_info, encode_programs, encode_pulses,
+    encode_ranges, encode_samples, encode_snapshot_info, encode_strings, encode_tap, encode_tape,
+    encode_timeline, encode_u32s, encode_u8, encode_variables, encode_version, WIRE_VERSION,
 };
 use crate::writer::{required_version, save_version, serialize_block, serialize_tap, serialize_tzx, Version};
 use std::alloc::{alloc, dealloc, Layout};
@@ -307,6 +307,20 @@ pub unsafe extern "C" fn core_content_labels(ptr: *const u8, len: usize) -> *mut
 #[no_mangle]
 pub unsafe extern "C" fn core_detect_content(ptr: *const u8, len: usize, index: u32) -> *mut u8 {
     with_blocks(ptr, len, |blocks| encode_content(&detect_content(blocks, index as usize)))
+}
+
+/// The same for a data window: the guess is made on the decrypted bytes when the
+/// group around the block names a loader that encrypts, and the answer says with
+/// which values. The whole tape goes over, since the group is what decides.
+///
+/// # Safety
+/// `ptr` must point at `len` bytes of wire-encoded block list.
+#[no_mangle]
+pub unsafe extern "C" fn core_detect_content_as_loaded(ptr: *const u8, len: usize, index: u32) -> *mut u8 {
+    with_blocks(ptr, len, |blocks| {
+        let (info, crypt) = detect_content_as_loaded(blocks, index as usize);
+        encode_content_as_loaded(&info, crypt)
+    })
 }
 
 /// Structure, useless blocks, infinite loops and cross nesting. `base` is the

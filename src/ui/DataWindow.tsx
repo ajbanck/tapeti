@@ -3,7 +3,7 @@ import { ComponentChildren } from 'preact';
 import { dataWindow, tapes, Side, commit, locked, disSymbols, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
 import { downloadBytes, pickFile } from '../state/files';
 import { Block, isUnknown } from '../tzx/types';
-import { detectContent } from '../tzx/content';
+import { detectContentAsLoaded } from '../tzx/content';
 import { decodeHeader, encodeHeader, checksum, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
 import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, decryptBytes, encryptBytes, CRYPT_PRESETS, totalBits } from '../tzx/bits';
 import { renderScreen, hasFlash, SCREEN_SIZE } from '../spectrum/screen';
@@ -37,10 +37,14 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const single = blocks.length === 1;
   const block = blocks[0];
   const hasUsedBits = single && typeof (block as any).usedBits === 'number';
-  const guess = useMemo(() => {
+  // The group a block sits in can name the loader that wrote it, and a loader
+  // that encrypts leaves bytes nothing reads: the guess is then made on the
+  // decrypted data, and the window opens with Decrypt on and its values set.
+  const loaded = useMemo(() => {
     const t = tapes[side].value;
-    return detectContent(t.blocks, t.blocks.findIndex((b) => b.uid === block.uid));
+    return detectContentAsLoaded(t.blocks, t.blocks.findIndex((b) => b.uid === block.uid));
   }, [block.uid]);
+  const guess = loaded.content;
   const [work, setWork] = useState<BitData>(() => joinBits(blocks.map(bitDataOf)));
   const [base, setBase] = useState(single ? guess.base : 0x8000);
   const [viewAs, setViewAs] = useState<ViewAs>(single && guess.kind === 'header' ? 'header' : single && guess.kind === 'screen' ? 'screen' : single && guess.kind === 'basic' ? 'basic' : 'dump');
@@ -50,9 +54,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [hideCs, setHideCs] = useState(single && guess.skipChecksum);
   const [baseBeforeReverse, setBaseBeforeReverse] = useState<number | null>(null);
   // What the loader does to each byte on its way to memory: (byte XOR x) + y.
-  const [decrypt, setDecrypt] = useState(false);
-  const [cryptXor, setCryptXor] = useState(CRYPT_PRESETS[0].xor);
-  const [cryptAdd, setCryptAdd] = useState(CRYPT_PRESETS[0].add);
+  const [decrypt, setDecrypt] = useState(loaded.crypt !== null);
+  const [cryptXor, setCryptXor] = useState(loaded.crypt?.xor ?? CRYPT_PRESETS[0].xor);
+  const [cryptAdd, setCryptAdd] = useState(loaded.crypt?.add ?? CRYPT_PRESETS[0].add);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
   // Set once the BASIC view has rewritten the program: where VARS now is in the

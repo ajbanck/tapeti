@@ -361,3 +361,55 @@ fn a_speedlock_group_answers_for_its_parity() {
     // Any other group is left alone: its pure data answers to nobody.
     assert!(check_consistency(&tape("Alkatraz", 0x00), 0).is_empty());
 }
+
+#[test]
+fn a_speedlock_group_decrypts_what_it_holds() {
+    use tapeti_core::bits::{crypt_preset_for, encrypt_bytes, CRYPT_PRESETS};
+    use tapeti_core::content::{crypt_preset_at, detect_content, detect_content_as_loaded, ContentKind};
+    use tapeti_core::types::{Block, Body};
+
+    let (xor, add) = (CRYPT_PRESETS[0].1, CRYPT_PRESETS[0].2);
+    assert_eq!(crypt_preset_for("SpeedLock 3 block 2"), Some((xor, add)));
+    assert_eq!(crypt_preset_for("speedlock 2"), Some((xor, add)));
+    assert_eq!(crypt_preset_for("SpeedLock 7 block 1"), Some((CRYPT_PRESETS[1].1, CRYPT_PRESETS[1].2)));
+    // Version 1 does not encrypt, and a name with no version says nothing.
+    assert_eq!(crypt_preset_for("SpeedLock 1 block 1"), None);
+    assert_eq!(crypt_preset_for("SpeedLock"), None);
+    assert_eq!(crypt_preset_for("Side A"), None);
+
+    // A loading screen as the tape holds it: encrypted, inside the group.
+    let screen = vec![0x38u8; 6912];
+    let pure =
+        |data: Vec<u8>| Block::new(Body::PureData { zero: 555, one: 1110, used_bits: 8, pause: 0, data });
+    let blocks = vec![
+        Block::new(Body::GroupStart { name: "SpeedLock 3 block 1".into() }),
+        Block::new(Body::PureTone { pulse_len: 2168, count: 200 }),
+        pure(encrypt_bytes(&screen, xor, add)),
+        Block::new(Body::GroupEnd),
+    ];
+    assert_eq!(crypt_preset_at(&blocks, 2), Some((xor, add)));
+    let (info, crypt) = detect_content_as_loaded(&blocks, 2);
+    assert_eq!(crypt, Some((xor, add)));
+    assert_eq!((info.kind, info.base), (ContentKind::Screen, 16384));
+    assert!(!info.skip_flag && !info.skip_checksum);
+
+    // The same bytes outside such a group are what they look like on the tape.
+    let plain = vec![blocks[1].clone(), blocks[2].clone()];
+    assert_eq!(crypt_preset_at(&plain, 1), None);
+    assert_eq!(detect_content_as_loaded(&plain, 1).1, None);
+    assert_eq!(detect_content_as_loaded(&plain, 1).0, detect_content(&plain, 1));
+
+    // Only the pure data is the loader's payload: its own blocks are left alone.
+    let mut with_header = blocks.clone();
+    with_header.insert(1, Block::new(Body::Standard { pause: 1000, data: vec![0x00; 19] }));
+    assert_eq!(crypt_preset_at(&with_header, 1), None);
+    // A group the tape nests inside a named one still decides for itself.
+    let nested = vec![
+        Block::new(Body::GroupStart { name: "Side A".into() }),
+        blocks[0].clone(),
+        blocks[2].clone(),
+        Block::new(Body::GroupEnd),
+        Block::new(Body::GroupEnd),
+    ];
+    assert_eq!(crypt_preset_at(&nested, 2), Some((xor, add)));
+}

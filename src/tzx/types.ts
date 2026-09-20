@@ -226,6 +226,16 @@ export interface ContentInfo {
   expectedLength: number | null;
 }
 
+/**
+ * What a data window opens a block with: the content guess, and the values an
+ * encrypting loader used when the group around the block names one, in which
+ * case the guess was made on the decrypted bytes.
+ */
+export interface AsLoaded {
+  content: ContentInfo;
+  crypt: { xor: number; add: number } | null;
+}
+
 /** A complaint from `consistency.ts`. */
 export interface Issue {
   block: number; // 0-based index, -1 for tape-wide

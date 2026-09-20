@@ -15,7 +15,7 @@ use tapeti_core::bits::{
     add_bits, decrypt_bytes, drop_bits, encrypt_bytes, flip_bytes, join_bits, shift_left_bits,
     shift_right_bits, total_bits, BitData, CRYPT_PRESETS,
 };
-use tapeti_core::content::detect_content;
+use tapeti_core::content::detect_content_as_loaded;
 use tapeti_core::describe::{checksum, decode_header, encode_header, HeaderInfo, HEADER_TYPE_NAMES};
 use tapeti_core::spectrum::basic::{basic_to_text, list_basic, list_variables, BasicOptions};
 use tapeti_core::spectrum::charset::{dump_char, zx_char};
@@ -135,7 +135,10 @@ impl DataWin {
         let chosen: Vec<&Block> = uids.iter().filter_map(|u| blocks.iter().find(|b| b.uid == *u)).collect();
         let single = chosen.len() == 1;
         let index = blocks.iter().position(|b| Some(b.uid) == uids.first().copied()).unwrap_or(0);
-        let guess = detect_content(blocks, index);
+        // The group a block sits in can name the loader that wrote it, and a
+        // loader that encrypts leaves bytes nothing reads: the guess is then
+        // made on the decrypted data, and the window opens with Decrypt on.
+        let (guess, crypt) = detect_content_as_loaded(blocks, index);
         let work = join_bits(&chosen.iter().map(|b| bit_data_of(b)).collect::<Vec<_>>());
         let base = if single { i64::from(guess.base) } else { 0x8000 };
         let view = match guess.kind {
@@ -156,9 +159,9 @@ impl DataWin {
             base_before_reverse: None,
             hide_flag: single && guess.skip_flag,
             hide_cs: single && guess.skip_checksum,
-            decrypt: false,
-            crypt_xor: i64::from(CRYPT_PRESETS[0].1),
-            crypt_add: i64::from(CRYPT_PRESETS[0].2),
+            decrypt: crypt.is_some(),
+            crypt_xor: i64::from(crypt.map_or(CRYPT_PRESETS[0].1, |(xor, _)| xor)),
+            crypt_add: i64::from(crypt.map_or(CRYPT_PRESETS[0].2, |(_, add)| add)),
             n: 1,
             dirty: false,
 
@@ -1515,6 +1518,38 @@ mod tests {
         let shown = dw.view_bytes();
         dw.set_view_byte(0, shown[0], 3);
         assert_eq!(dw.work.data[0], 0x00, "writing back what is shown changes nothing");
+    }
+
+    /// A block inside a group the decoder named after an encrypting loader opens
+    /// decrypted: nothing else shows the loading screen a SpeedLock tape holds.
+    #[test]
+    fn a_speedlock_block_opens_decrypted() {
+        use tapeti_core::bits::{encrypt_bytes, CRYPT_PRESETS};
+        let (xor, add) = (CRYPT_PRESETS[0].1, CRYPT_PRESETS[0].2);
+        let screen = vec![0x38u8; 6912];
+        let blocks = vec![
+            Block::new(Body::GroupStart { name: "SpeedLock 3 block 1".into() }),
+            Block::new(Body::PureData {
+                zero: 555,
+                one: 1110,
+                used_bits: 8,
+                pause: 0,
+                data: encrypt_bytes(&screen, xor, add),
+            }),
+            Block::new(Body::GroupEnd),
+        ];
+        let dw = DataWin::new(&blocks, 0, vec![blocks[1].uid]);
+        assert!(dw.decrypt);
+        assert_eq!((dw.crypt_xor, dw.crypt_add), (i64::from(xor), i64::from(add)));
+        assert_eq!(dw.view, ViewAs::Screen, "the guess is made on the decrypted bytes");
+        assert_eq!(dw.base, 16384);
+        assert_eq!(dw.view_bytes(), screen);
+
+        // The same block on its own is read as it lies on the tape.
+        let loose = vec![blocks[1].clone()];
+        let dw = DataWin::new(&loose, 0, vec![loose[0].uid]);
+        assert!(!dw.decrypt);
+        assert_eq!(dw.view_bytes(), encrypt_bytes(&screen, xor, add));
     }
 
     /// Ticking "Reverse order" on a screen moves the base to the end of screen

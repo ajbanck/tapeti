@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { disassemble, disassemblyText, checkSymbols } from '../src/spectrum/z80dis';
 import { decryptBytes, encryptBytes, CRYPT_PRESETS } from '../src/tzx/bits';
 import { decodeHeader } from '../src/tzx/describe';
-import { detectContent } from '../src/tzx/content';
+import { detectContent, detectContentAsLoaded } from '../src/tzx/content';
 import { checkConsistency } from '../src/tzx/consistency';
 import { tapes, dialog } from '../src/state/store';
 import { loadBytes, insertDataFile, headerName, newTape, MAX_FILE_BYTES } from '../src/state/files';
@@ -55,6 +55,26 @@ describe('decrypt modifier', () => {
     const all = Uint8Array.from({ length: 256 }, (_, i) => i);
     for (const p of CRYPT_PRESETS) expect(encryptBytes(decryptBytes(all, p.xor, p.add), p.xor, p.add)).toEqual(all);
     expect(Array.from(decryptBytes(new Uint8Array([0x00, 0xff]), 0x98, 0x0b))).toEqual([0xa3, 0x72]);
+  });
+
+  it('comes on by itself for a block in a SpeedLock group', () => {
+    const screen = new Uint8Array(6912).fill(0x38);
+    const { xor, add } = CRYPT_PRESETS[0];
+    const blocks: Block[] = [0x21, 0x14, 0x22].map((id) => createBlock(id));
+    (blocks[0] as GroupStartBlock).name = 'SpeedLock 3 block 1';
+    (blocks[1] as PureDataBlock).data = encryptBytes(screen, xor, add);
+    const loaded = detectContentAsLoaded(blocks, 1);
+    expect(loaded.crypt).toEqual({ xor, add });
+    // The guess is made on the decrypted bytes: encrypted, this is not a screen
+    // the app would open on, and the label would say so.
+    expect(loaded.content.kind).toBe('screen');
+    expect(loaded.content.base).toBe(16384);
+    expect(detectContent(blocks, 1).label).toBe('SCREEN?');
+
+    // Outside the group the same bytes are read as they lie on the tape.
+    const loose = [blocks[1]];
+    expect(detectContentAsLoaded(loose, 0).crypt).toBe(null);
+    expect(detectContentAsLoaded(loose, 0).content).toEqual(detectContent(loose, 0));
   });
 });
 
