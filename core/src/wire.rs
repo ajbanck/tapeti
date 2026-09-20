@@ -824,3 +824,32 @@ pub fn decode_snapshot_request(buf: &[u8]) -> ReadResult<(Vec<u8>, Vec<u8>, Stri
     let name = String::from_utf8_lossy(&read_bytes(&mut r)?).into_owned();
     Ok((file, screen, name))
 }
+
+/// A program area and the text to make of it, as the app sends them: both `bytes`.
+pub fn decode_basic_edit(buf: &[u8]) -> ReadResult<(Vec<u8>, String)> {
+    let mut r = Reader::new(buf);
+    let data = read_bytes(&mut r)?;
+    let text = String::from_utf8_lossy(&read_bytes(&mut r)?).into_owned();
+    Ok((data, text))
+}
+
+/// What came of it: `[u8 1]` and the new program area as `bytes`, or `[u8 0]`,
+/// `[u32 count]` and per mistake `[u32 line][str message]`.
+pub fn encode_basic_edit(result: &Result<Vec<u8>, Vec<crate::spectrum::source::SourceError>>) -> Vec<u8> {
+    let mut w = header();
+    match result {
+        Ok(program) => {
+            w.push(1);
+            bytes(&mut w, program);
+        }
+        Err(errors) => {
+            w.push(0);
+            u32v(&mut w, errors.len());
+            for e in errors {
+                u32v(&mut w, e.line as usize);
+                string(&mut w, &e.message);
+            }
+        }
+    }
+    w
+}

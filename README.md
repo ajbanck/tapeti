@@ -50,7 +50,7 @@ paged-in ROMs (Interface 1, Multiface) cannot be put back. The desktop app lists
 "Open With" for snapshots but leaves the double click to your emulator. The method and the loader
 are [Taper](#credits)'s.
 
-**Block operations**: insert any block type, cut / copy / paste / duplicate / delete, move up and
+**Block operations**: insert any block type (or an empty BASIC program, header and data), cut / copy / paste / duplicate / delete, move up and
 down, drag & drop within and between tapes (hold Alt or Ctrl to copy), group the selection,
 collapse and expand groups and loops (a collapsed group acts as one block), multi-select with
 Shift-click and Ctrl-click (⌘-click on macOS), undo / redo per tape, lock switch to prevent
@@ -80,8 +80,19 @@ signal level, text, message, archive info, hardware type (full hardware list), c
 - View as Screen (with FLASH animation, hide attributes, Save to SCR / PNG).
 - BASIC listing with hidden-number detection, "Show numbers", Speccy 32-column formatting and 128k
   tokens; variables area listing.
+- **Edit** turns the program into text and **Apply** turns it back: one program line per line,
+  keywords in capitals (or any case, if you ask), numbers given their hidden five-byte form as the
+  Spectrum's editor would, and `{...}` for what a keyboard cannot type — `{1F}` a byte, `{A}` a
+  graphic, `{INK 5}` `{AT 2,5}` colour and position codes, `{PRINT}` a keyword inside a string or
+  REM, `10{=1000}` a number that is not what it shows, `7{=}` digits with no number behind them.
+  **Lines you do not touch keep their bytes exactly**, so a protected loader survives an edit
+  elsewhere in it. Mistakes are listed by line. The variables stay behind the program, the
+  checksum is worked out again, and on OK the Program header in front gets the new length — one
+  step to undo. Load text / Save listing read and write the same text as a `.bas` file (Taper's
+  `.BAS` escapes are read too). A new program starts from Insert block → BASIC program.
 - Text view with Spectrum character set and tokens.
-- Z80 disassembly (all prefixes, undocumented forms) with ROM routine labels.
+- Z80 disassembly (all prefixes, undocumented forms) with ROM routine labels; Save listing writes
+  it out as text.
 - Base address, flip bytes (RR), reverse order (DEC IX), hide flag / checksum byte modifiers.
   Typing in the dump works through them — the byte lands where the view shows it.
 - Bit and byte level Drop / Add / Shift left / Shift right and last-byte mask. These act on the

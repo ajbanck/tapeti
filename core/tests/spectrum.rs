@@ -192,3 +192,68 @@ fn disassembles_the_tricky_prefixes() {
     // Running off the end stops rather than inventing instructions.
     assert_eq!(disassemble(&[], 0, 0, 10, DisOptions::default()).len(), 0);
 }
+
+// ---- BASIC as text ---------------------------------------------------------
+
+/// Every BASIC program on a tape, as the bytes between PROG and VARS.
+fn programs(blocks: &[tapeti_core::types::Block]) -> Vec<Vec<u8>> {
+    use tapeti_core::content::{detect_content, ContentKind};
+    (0..blocks.len())
+        .filter_map(|i| {
+            let c = detect_content(blocks, i);
+            let len = usize::from(c.prog_len?);
+            let data = blocks[i].body.data()?;
+            (c.kind == ContentKind::Basic).then(|| data[1..1 + len].to_vec())
+        })
+        .collect()
+}
+
+/// A program written out as text and typed back in is the same program, byte for
+/// byte — through the tokeniser, not by way of the lines an edit leaves alone.
+#[test]
+fn programs_survive_being_text() {
+    use tapeti_core::snapshot::{snapshot_to_blocks, LoaderOptions, Snapshot};
+    use tapeti_core::spectrum::source::{basic_source, tokenise_line, SourceOptions};
+
+    let mut found = Vec::new();
+    for name in ["Tapeti demo.tzx", "Tapeti demo (variant).tzx"] {
+        let bytes = std::fs::read(format!("../public/samples/{name}")).unwrap();
+        found.extend(programs(&tapeti_core::parser::parse_tape(&bytes).unwrap().blocks));
+    }
+    // The snapshot loader's BASIC: colour controls in a string, VAL "..." and all.
+    let mut snap = Snapshot::default();
+    snap.pages[5] = Some(vec![0; 16384]);
+    let opts = LoaderOptions { name: "x", speed: 2, border: 0, compress_all: false, screen: None };
+    found.extend(programs(&snapshot_to_blocks(&snap, &opts).unwrap()));
+    assert!(found.len() >= 3, "only {} programs to try", found.len());
+
+    let opts = SourceOptions::default();
+    for program in found {
+        for line in basic_source(&program, 0, program.len(), opts) {
+            let again = tokenise_line(&line.text, opts).unwrap_or_else(|e| panic!("{}: {e}", line.text));
+            assert_eq!(again, &program[line.offset..line.offset + line.len], "{}", line.text);
+        }
+    }
+}
+
+/// The Insert dialog's empty program is one the rest of the app takes for BASIC:
+/// detected as such from its header, consistent, and ready to be given lines.
+#[test]
+fn an_empty_program_is_a_program() {
+    use tapeti_core::consistency::check_consistency;
+    use tapeti_core::content::{detect_content, ContentKind};
+    use tapeti_core::describe::{checksum, decode_header, empty_program};
+    use tapeti_core::spectrum::source::{edit_basic, SourceOptions};
+    use tapeti_core::types::Block;
+
+    let blocks: Vec<Block> = empty_program().into_iter().map(Block::new).collect();
+    let header = decode_header(blocks[0].body.data().unwrap()).unwrap();
+    assert_eq!((header.kind, header.length, header.param1, header.param2), (0, 0, 0x8000, 0));
+    let content = detect_content(&blocks, 1);
+    assert_eq!((content.kind, content.prog_len), (ContentKind::Basic, Some(0)));
+    assert_eq!(checksum(blocks[1].body.data().unwrap()), 0);
+    assert!(check_consistency(&blocks, 0).is_empty(), "{:?}", check_consistency(&blocks, 0));
+
+    let program = edit_basic(&[], 0, 0, "10 PRINT \"hi\"\n20 GO TO 10", SourceOptions::default()).unwrap();
+    assert_eq!(program.len(), 4 + 6 + 4 + 10);
+}

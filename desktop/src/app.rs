@@ -852,6 +852,71 @@ mod tests {
         );
     }
 
+    /// Editing a program as text: the block gets the new lines and a checksum
+    /// that is right again, the header in front gets the new length and VARS, and
+    /// the two are one step to undo.
+    #[test]
+    fn editing_basic_as_text_keeps_block_and_header_in_step() {
+        use tapeti_core::describe::{checksum, decode_header, encode_header, HeaderInfo};
+        use tapeti_core::spectrum::source::{tokenise_line, SourceOptions};
+        use tapeti_core::types::Body;
+
+        let program = tokenise_line("10 PRINT \"hello\"", SourceOptions::default()).unwrap();
+        let vars = [0x80u8];
+        let mut data = vec![0xff];
+        data.extend_from_slice(&program);
+        data.extend_from_slice(&vars);
+        data.push(checksum(&data));
+        let header = HeaderInfo {
+            kind: 0,
+            type_name: "Program".into(),
+            name: "demo".into(),
+            length: (program.len() + vars.len()) as u16,
+            param1: 10,
+            param2: program.len() as u16,
+        };
+        let blocks = vec![
+            Block::new(Body::Standard { pause: 1000, data: encode_header(&header) }),
+            Block::new(Body::Standard { pause: 1000, data }),
+        ];
+        let uid = blocks[1].uid;
+        let (ctx, mut app) = app_with(blocks);
+        app.store.set_cursor(0, 1, SelectMode::Single);
+        app.open_data_window(0, vec![uid]);
+        draw(&ctx, &mut app);
+
+        let mut dw = app.datawin.take().unwrap();
+        // A mistake is reported and changes nothing.
+        let errors = dw.retype_program(|text| format!("{text}\nno number"));
+        assert_eq!(errors.iter().map(|e| e.line).collect::<Vec<_>>(), [2]);
+        assert_eq!(dw.work_data().len(), 1 + program.len() + vars.len() + 1);
+
+        let errors = dw.retype_program(|text| format!("{text}\n20 GO TO 10"));
+        assert!(errors.is_empty(), "{errors:?}");
+        let added = tokenise_line("20 GO TO 10", SourceOptions::default()).unwrap();
+        // The editing frame, with the text box up, draws too.
+        app.datawin = Some(dw);
+        draw(&ctx, &mut app);
+        let dw = app.datawin.take().unwrap();
+        crate::datawin::apply(&mut app, &dw);
+
+        let t = app.store.tape(0);
+        let Body::Standard { data, .. } = &t.blocks[1].body else { panic!() };
+        assert_eq!(data[1..data.len() - 2], [program.clone(), added.clone()].concat()[..]);
+        assert_eq!(data[data.len() - 2], 0x80, "the variables stay behind the program");
+        assert_eq!(checksum(data), 0, "the checksum is right again");
+        let Body::Standard { data: head, .. } = &t.blocks[0].body else { panic!() };
+        let h = decode_header(head).unwrap();
+        assert_eq!(usize::from(h.param2), program.len() + added.len());
+        assert_eq!(usize::from(h.length), program.len() + added.len() + vars.len());
+        assert_eq!((h.name.trim_end(), h.param1), ("demo", 10), "the rest of the header is left alone");
+
+        app.store.undo(0);
+        let t = app.store.tape(0);
+        assert_eq!(decode_header(t.blocks[0].body.data().unwrap()).unwrap().param2, header.param2);
+        assert_eq!(t.blocks[1].body.data().unwrap().len(), 1 + program.len() + vars.len() + 1);
+    }
+
     #[test]
     fn draws_a_collapsed_group_and_a_context_menu() {
         let ids = [0x21u8, 0x10, 0x22, 0x20];

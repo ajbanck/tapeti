@@ -536,3 +536,15 @@ fn trailing_address(text: &str, hex: bool) -> Option<u32> {
     }
     u32::from_str_radix(digits, if hex { 16 } else { 10 }).ok()
 }
+
+/// A disassembly as text, for saving: address, bytes, instruction.
+pub fn dis_to_text(lines: &[DisLine]) -> String {
+    let rendered: Vec<String> = lines
+        .iter()
+        .map(|l| {
+            let bytes: Vec<String> = l.bytes.iter().map(|b| format!("{b:02X}")).collect();
+            format!("{:04X}  {:<12} {}", l.addr, bytes.join(" "), l.text).trim_end().to_string()
+        })
+        .collect();
+    rendered.join("\n")
+}

@@ -4,11 +4,11 @@ import { Dialog, dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum
 import { downloadBytes, importSnapshot, pickFile } from '../state/files';
 import { SNAPSHOT_SPEEDS, SNAPSHOT_SPEED_NAMES, SNAPSHOT_MACHINES, DEFAULT_SNAPSHOT_SPEED, SCREEN_BYTES } from '../tzx/snapshot';
 import { renderScreen } from '../spectrum/screen';
-import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block } from '../tzx/types';
+import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block, StandardBlock } from '../tzx/types';
 import { checkConsistency } from '../tzx/consistency';
 import { tapeDuration, renderWav, playbackOrder, blockDuration, TSTATES_PER_SEC } from '../tzx/audio';
 import { saveVersion, serializeTzx } from '../tzx/writer';
-import { describeBlock } from '../tzx/describe';
+import { describeBlock, encodeHeader } from '../tzx/describe';
 import { detectPrograms } from '../tzx/programs';
 import { jumpToProgram } from '../state/actions';
 
@@ -73,13 +73,29 @@ export function Dialogs() {
   return null;
 }
 
+/** Not a block ID: the Insert dialog's entry for an empty BASIC program. */
+const BASIC_PROGRAM = 0;
+
+/**
+ * A BASIC program with nothing in it yet: the Program header (no autostart line)
+ * and the data block behind it. The data window's BASIC view fills it in, and
+ * keeps the header's lengths right as it does. `empty_program` in the core.
+ */
+function emptyProgram(): Block[] {
+  const header = encodeHeader({ type: 0, typeName: 'Program', name: 'program', length: 0, param1: 0x8000, param2: 0 });
+  return [
+    { ...(createBlock(0x10) as StandardBlock), data: header },
+    { ...(createBlock(0x10) as StandardBlock), data: new Uint8Array([0xff, 0xff]) },
+  ];
+}
+
 function InsertDialog({ side }: { side: Side }) {
   const [id, setId] = useState(0x10);
   const [where, setWhere] = useState<'before' | 'after' | 'end'>('after');
   const t = tapes[side].value;
   const doInsert = () => {
     const at = where === 'end' || t.cursor < 0 ? t.blocks.length : where === 'after' ? t.cursor + 1 : t.cursor;
-    insertBlocks(side, at, [createBlock(id)]);
+    insertBlocks(side, at, id === BASIC_PROGRAM ? emptyProgram() : [createBlock(id)]);
     close();
   };
   return (
@@ -90,6 +106,10 @@ function InsertDialog({ side }: { side: Side }) {
             <code>{i.toString(16).toUpperCase().padStart(2, '0')}</code> {BLOCK_NAMES[i]}
           </div>
         ))}
+        {/* After the block types, the one thing here that is two blocks. */}
+        <div class={'t' + (id === BASIC_PROGRAM ? ' sel' : '')} onClick={() => setId(BASIC_PROGRAM)}>
+          <code>{'\u00a0\u00a0'}</code> BASIC program (header and data, to edit as text)
+        </div>
       </div>
       <div class="row-flex" style={{ marginTop: 8 }}>
         <label><input type="radio" checked={where === 'before'} onChange={() => setWhere('before')} /> Before cursor</label>

@@ -9,17 +9,18 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use egui::{vec2, Align2, FontId, Rect, RichText, Sense, Ui};
+use egui::{vec2, Align2, FontId, Rect, RichText, Sense, TextEdit, Ui};
 
 use tapeti_core::bits::{
     add_bits, drop_bits, flip_bytes, join_bits, shift_left_bits, shift_right_bits, total_bits, BitData,
 };
 use tapeti_core::content::detect_content;
-use tapeti_core::describe::{decode_header, encode_header, HeaderInfo, HEADER_TYPE_NAMES};
+use tapeti_core::describe::{checksum, decode_header, encode_header, HeaderInfo, HEADER_TYPE_NAMES};
 use tapeti_core::spectrum::basic::{basic_to_text, list_basic, list_variables, BasicOptions};
 use tapeti_core::spectrum::charset::{dump_char, zx_char};
 use tapeti_core::spectrum::screen::{has_flash, render_screen, ScreenOptions, SCREEN_SIZE};
-use tapeti_core::spectrum::z80dis::{disassemble, DisOptions};
+use tapeti_core::spectrum::source::{basic_source_text, edit_basic, SourceError, SourceOptions};
+use tapeti_core::spectrum::z80dis::{dis_to_text, disassemble, DisOptions};
 use tapeti_core::types::{Block, Body, Uid};
 
 use crate::app::App;
@@ -89,6 +90,16 @@ pub struct DataWin {
     prog: i64,
     vars_addr: i64,
     basic: BasicOptions,
+    /// The program as text being edited, or `None` while it is only listed.
+    source: Option<String>,
+    any_case: bool,
+    source_errors: Vec<SourceError>,
+    /// Set once the program has been rewritten: where VARS now is in the block's
+    /// body, which is what the header in front has to say on OK.
+    new_vars: Option<usize>,
+    /// Whether the block has a flag byte and a checksum at all, whatever is hidden.
+    has_flag: bool,
+    has_checksum: bool,
 
     // text
     cols: usize,
@@ -154,6 +165,12 @@ impl DataWin {
             prog: base,
             vars_addr: guess.prog_len.map_or(-1, |l| base + i64::from(l)),
             basic: BasicOptions::default(),
+            source: None,
+            any_case: false,
+            source_errors: Vec::new(),
+            new_vars: None,
+            has_flag: single && guess.skip_flag,
+            has_checksum: single && guess.skip_checksum,
             cols: 32,
             expand_tokens: true,
             from: base,
@@ -181,6 +198,49 @@ impl DataWin {
 
     fn modifiers_on(&self) -> bool {
         self.flip || self.reverse || self.hide_flag || self.hide_cs
+    }
+
+    /// The BASIC view's Apply: the text becomes the program between two offsets
+    /// of the view. Flip and Reverse are off (the view says so), so the view is
+    /// the raw data but for a hidden flag and checksum, and a block that has a
+    /// checksum gets it worked out again.
+    fn apply_source(&mut self, view: &[u8], from: usize, to: usize, start: i64, opts: SourceOptions) {
+        let Some(source) = &self.source else { return };
+        let program = match edit_basic(view, from, to, source, opts) {
+            Ok(p) => p,
+            Err(errors) => {
+                self.source_errors = errors;
+                return;
+            }
+        };
+        let head = usize::from(self.hide_flag && !self.work.data.is_empty());
+        let raw = &self.work.data;
+        let mut out = raw[..head + from].to_vec();
+        out.extend_from_slice(&program);
+        out.extend_from_slice(&raw[head + to..]);
+        if self.has_checksum && out.len() > 1 {
+            let last = out.len() - 1;
+            out[last] = checksum(&out[..last]);
+        }
+        self.work.data = out;
+        self.dirty = true;
+        self.new_vars = Some(head + from + program.len() - usize::from(self.has_flag));
+        self.vars_addr = start + (from + program.len()) as i64;
+        self.source = None;
+        self.source_errors.clear();
+    }
+
+    /// Edit the program as the BASIC view would, from PROG to VARS, and press
+    /// Apply. Test-only; what comes back is what Apply would have complained of.
+    #[cfg(test)]
+    pub fn retype_program(&mut self, retype: impl FnOnce(&str) -> String) -> Vec<SourceError> {
+        let view = self.view_bytes();
+        let start = self.start_addr(view.len());
+        let to = ((self.vars_addr - start).max(0) as usize).min(view.len());
+        let opts = SourceOptions::default();
+        self.source = Some(retype(&basic_source_text(&view, 0, to, opts)));
+        self.apply_source(&view, 0, to, start, opts);
+        self.source_errors.clone()
     }
 
     /// The bytes the views show: the work buffer with the modifiers applied.
@@ -259,6 +319,11 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     let tok = app.tokens;
     let locked = app.store.locked;
     let zero = app.store.settings.zero_based;
+    // What Save names its files after: the tape and the block.
+    let stem = {
+        let t = app.store.tape(app.datawin.as_ref().map_or(0, |d| d.side));
+        format!("{}-block{}", files::stem(&t.name), fmt::block_no(t.cursor.max(0) as usize, zero))
+    };
     let mut dw = app.datawin.take().unwrap();
     // Read once, so a click on the switch below shows in the next frame rather
     // than halfway down this one.
@@ -350,10 +415,13 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 // default for exactly this content.
                 ViewAs::Header => header_view(&mut dw, ui, hex, &tok, editable),
                 ViewAs::Screen => screen(&mut dw, ui, &view, 16384 - start, &tok, body_h),
-                ViewAs::Basic => basic(&mut dw, ui, &view, start, false, &tok, body_h),
-                ViewAs::Vars => basic(&mut dw, ui, &view, start, true, &tok, body_h),
+                ViewAs::Basic => {
+                    let can_edit = editable && !dw.flip && !dw.reverse;
+                    basic(&mut dw, ui, &view, start, false, &tok, body_h, can_edit.then_some(stem.as_str()))
+                }
+                ViewAs::Vars => basic(&mut dw, ui, &view, start, true, &tok, body_h, None),
                 ViewAs::Text => text_view(&mut dw, ui, &view, body_h),
-                ViewAs::Dis => disassembly(&mut dw, ui, &view, start, hex, &tok, body_h),
+                ViewAs::Dis => disassembly(&mut dw, ui, &view, start, hex, &tok, body_h, &stem),
             }
 
             // ---- bit and byte editing
@@ -459,7 +527,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Write the edited bytes back into the block.
-fn apply(app: &mut App, dw: &DataWin) {
+pub(crate) fn apply(app: &mut App, dw: &DataWin) {
     if !dw.dirty || !dw.single() {
         return;
     }
@@ -484,7 +552,26 @@ fn apply(app: &mut App, dw: &DataWin) {
         }
         _ => return,
     }
-    app.store.replace_block(dw.side, uid, body);
+    let mut bodies = vec![(uid, body)];
+    // An edited program has a new length and a new VARS: the Program header in
+    // front says both, and the tape would not load with the old ones.
+    let blocks = &app.store.tape(dw.side).blocks;
+    let before = blocks.iter().position(|b| b.uid == uid).and_then(|i| i.checked_sub(1)).map(|i| &blocks[i]);
+    let mut fixed = false;
+    if let (Some(vars), Some(Block { uid: header_uid, body: Body::Standard { pause, data } })) =
+        (dw.new_vars, before)
+    {
+        if let Some(h) = decode_header(data).filter(|h| h.kind == 0) {
+            let len = dw.work.data.len() - usize::from(dw.has_flag) - usize::from(dw.has_checksum);
+            let header = encode_header(&HeaderInfo { length: len as u16, param2: vars as u16, ..h });
+            bodies.push((*header_uid, Body::Standard { pause: *pause, data: header }));
+            fixed = true;
+        }
+    }
+    app.store.replace_blocks(dw.side, bodies);
+    if fixed {
+        app.store.set_status("Program changed; the header in front now has its new length".to_string());
+    }
     app.editor[dw.side].uid = None;
 }
 
@@ -840,8 +927,19 @@ fn screen(dw: &mut DataWin, ui: &mut Ui, data: &[u8], at_base: i64, tok: &Tokens
 
 // ---- BASIC and variables --------------------------------------------------------
 
+/// `stem` names the files Save writes, and is only there when the program can be
+/// edited: a single unlocked block with Flip and Reverse off.
 #[allow(clippy::too_many_arguments)]
-fn basic(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, vars: bool, tok: &Tokens, h: f32) {
+fn basic(
+    dw: &mut DataWin,
+    ui: &mut Ui,
+    data: &[u8],
+    start: i64,
+    vars: bool,
+    tok: &Tokens,
+    h: f32,
+    stem: Option<&str>,
+) {
     if dw.prog == 0 {
         dw.prog = start;
     }
@@ -855,6 +953,12 @@ fn basic(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, vars: bool, tok
             None => dw.prog,
         }
     };
+    // The program area as offsets of the view: what Edit shows and Apply replaces.
+    let from = prog_off.min(data.len());
+    let to = ((auto_vars - start).max(0) as usize).clamp(from, data.len());
+    let editing = dw.source.is_some() && !vars;
+    let opts = SourceOptions { basic128: dw.basic.basic128, any_case: dw.any_case };
+    let mut do_apply = false;
     ui.horizontal(|ui| {
         ui.label("PROG");
         w::num(ui, "dw-prog", &mut dw.prog, 0, 0xffff, false, 70.0, true);
@@ -864,9 +968,14 @@ fn basic(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, vars: bool, tok
             dw.vars_addr = v;
         }
         if !vars {
-            w::check(ui, "Show numbers", &mut dw.basic.show_numbers, true);
-            w::check(ui, "Speccy formatting", &mut dw.basic.speccy_format, true);
+            if !editing {
+                w::check(ui, "Show numbers", &mut dw.basic.show_numbers, true);
+                w::check(ui, "Speccy formatting", &mut dw.basic.speccy_format, true);
+            }
             w::check(ui, "128k BASIC", &mut dw.basic.basic128, true);
+            if editing {
+                w::check(ui, "Keywords in any case", &mut dw.any_case, true);
+            }
         }
         let count = if vars {
             format!(
@@ -877,7 +986,82 @@ fn basic(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, vars: bool, tok
             format!("{} line(s)", lines.len())
         };
         w::note(ui, tok, count);
+        if vars {
+            return;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if editing {
+                if ui.button("Cancel edit").clicked() {
+                    dw.source = None;
+                    dw.source_errors.clear();
+                }
+                do_apply = ui.button("Apply").clicked();
+            }
+            if ui.button(if editing { "Save text" } else { "Save listing" }).clicked() {
+                let text = dw.source.clone().unwrap_or_else(|| basic_source_text(data, from, to, opts));
+                let name = format!("{}.bas", stem.unwrap_or("program"));
+                files::save_bytes(&name, ("BASIC as text", &["bas", "txt"]), format!("{text}\n").as_bytes());
+            }
+            if editing {
+                if ui.button("Load text").clicked() {
+                    if let Some((_, bytes)) = files::pick_any_file() {
+                        dw.source =
+                            Some(String::from_utf8_lossy(&bytes).replace("\r\n", "\n").replace('\r', "\n"));
+                    }
+                }
+            } else {
+                let hint = "Needs an unlocked single block, with Flip and Reverse off";
+                if ui
+                    .add_enabled(stem.is_some(), egui::Button::new("Edit"))
+                    .on_disabled_hover_text(hint)
+                    .clicked()
+                {
+                    dw.source_errors.clear();
+                    dw.source = Some(basic_source_text(data, from, to, opts));
+                }
+            }
+        });
     });
+    if do_apply {
+        dw.apply_source(data, from, to, start, opts);
+    }
+    if let (true, Some(source)) = (!vars, dw.source.as_mut()) {
+        let notes = if dw.source_errors.is_empty() { 40.0 } else { 70.0 };
+        // The box fills what the listing would, and grows past it with the text.
+        let area = (h - 30.0 - notes).max(80.0);
+        let rows = ((area - 8.0) / ui.text_style_height(&egui::TextStyle::Monospace)).floor().max(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("basic-source")
+            .max_height(area)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(source)
+                        .id_salt("basic-source-text")
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(rows as usize)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
+        if dw.source_errors.is_empty() {
+            w::note(
+                ui,
+                tok,
+                "One program line per line, in the order written. Keywords in capitals; {1F} a byte, {A} a \
+                 graphic, {INK 5} {AT 2,5} controls, {PRINT} a keyword inside a string or REM, 10{=1000} a \
+                 number that is not what it shows. Lines left as they are keep their bytes exactly.",
+            );
+        } else {
+            egui::ScrollArea::vertical().id_salt("basic-errors").max_height(notes).show(ui, |ui| {
+                for e in &dw.source_errors {
+                    let at =
+                        if e.line > 0 { format!("Line {} of the text: ", e.line) } else { String::new() };
+                    ui.label(RichText::new(format!("{at}{}", e.message)).color(tok.danger));
+                }
+            });
+        }
+        return;
+    }
     egui::ScrollArea::vertical().id_salt("basic").max_height(h - 30.0).auto_shrink([false, false]).show(
         ui,
         |ui| {
@@ -1002,14 +1186,27 @@ fn header_view(dw: &mut DataWin, ui: &mut Ui, hex: bool, tok: &Tokens, editable:
 // ---- disassembly ------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-fn disassembly(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, hex: bool, tok: &Tokens, h: f32) {
+fn disassembly(
+    dw: &mut DataWin,
+    ui: &mut Ui,
+    data: &[u8],
+    start: i64,
+    hex: bool,
+    tok: &Tokens,
+    h: f32,
+    stem: &str,
+) {
     if dw.from == 0 {
         dw.from = start;
     }
+    let mut save = false;
     ui.horizontal(|ui| {
         ui.label("From address");
         w::num(ui, "dw-from", &mut dw.from, 0, 0xffff, false, 70.0, true);
         w::check(ui, "ROM labels", &mut dw.rom_labels, true);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            save = ui.button("Save listing").clicked();
+        });
     });
     let offset = (dw.from - start).max(0) as usize;
     let lines = disassemble(
@@ -1019,6 +1216,10 @@ fn disassembly(dw: &mut DataWin, ui: &mut Ui, data: &[u8], start: i64, hex: bool
         1_000_000,
         DisOptions { hex, rom_labels: dw.rom_labels },
     );
+    if save {
+        let text = format!("{}\n", dis_to_text(&lines));
+        files::save_bytes(&format!("{stem}.dis.txt"), ("Text", &["txt"]), text.as_bytes());
+    }
     w::note(ui, tok, format!("{} instruction(s)", lines.len()));
     egui::ScrollArea::vertical().id_salt("dis").max_height(h - 50.0).auto_shrink([false, false]).show_rows(
         ui,

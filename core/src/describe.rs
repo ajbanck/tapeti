@@ -50,6 +50,24 @@ pub fn encode_header(h: &HeaderInfo) -> Vec<u8> {
     d
 }
 
+/// A BASIC program with nothing in it yet: the Program header (no autostart
+/// line) and the data block behind it. The data window's BASIC view fills it
+/// in, and keeps the header's lengths right as it does.
+pub fn empty_program() -> [crate::types::Body; 2] {
+    let header = HeaderInfo {
+        kind: 0,
+        type_name: HEADER_TYPE_NAMES[0].to_string(),
+        name: "program".to_string(),
+        length: 0,
+        param1: 0x8000,
+        param2: 0,
+    };
+    [
+        crate::types::Body::Standard { pause: 1000, data: encode_header(&header) },
+        crate::types::Body::Standard { pause: 1000, data: vec![0xff, 0xff] },
+    ]
+}
+
 /// XOR of the bytes, as the ROM loader computes it.
 pub fn checksum(data: &[u8]) -> u8 {
     data.iter().fold(0, |c, b| c ^ b)

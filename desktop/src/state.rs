@@ -486,10 +486,18 @@ impl Store {
     }
 
     pub fn replace_block(&mut self, side: Side, uid: Uid, body: Body) {
+        self.replace_blocks(side, vec![(uid, body)]);
+    }
+
+    /// Several blocks at once, as one step to undo: a program and the header that
+    /// says how long it is.
+    pub fn replace_blocks(&mut self, side: Side, bodies: Vec<(Uid, Body)>) {
         let cursor = self.tapes[side].cursor;
         self.commit(side, move |bl| {
-            if let Some(b) = bl.iter_mut().find(|b| b.uid == uid) {
-                b.body = body;
+            for (uid, body) in bodies {
+                if let Some(b) = bl.iter_mut().find(|b| b.uid == uid) {
+                    b.body = body;
+                }
             }
             Edit::cursor(cursor)
         });

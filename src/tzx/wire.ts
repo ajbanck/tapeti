@@ -28,6 +28,24 @@ export function decodeBytes(buf: Uint8Array): Uint8Array {
   return bytes(r);
 }
 
+/** A program area and the text to make of it. */
+export function encodeBasicEdit(data: Uint8Array, text: string): Uint8Array {
+  const w = new Writer();
+  putBytes(w, data);
+  putBytes(w, utf8.encode.encode(text));
+  return w.toUint8Array();
+}
+
+/** The new program area, or what is wrong with the text, by line (from 1; 0 for the whole). */
+export function decodeBasicEdit(buf: Uint8Array): { program: Uint8Array } | { errors: { line: number; message: string }[] } {
+  const r = new Reader(buf);
+  readHeader(r);
+  if (r.u8() === 1) return { program: bytes(r) };
+  const errors: { line: number; message: string }[] = [];
+  for (let n = r.u32(); n > 0; n--) errors.push({ line: r.u32(), message: str(r) });
+  return { errors };
+}
+
 /** What the import dialog shows of a snapshot. */
 export function decodeSnapshotInfo(buf: Uint8Array): { machine: number; border: number; screen: Uint8Array } {
   const r = new Reader(buf);

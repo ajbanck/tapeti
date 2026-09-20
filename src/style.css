@@ -342,6 +342,9 @@ textarea.wide { width: 100%; }
 .datawin .editrow .label { width: 46px; color: var(--muted); font-size: 12px; }
 .datawin .mask { display: flex; gap: 2px; align-items: center; }
 .datawin .mask span { color: var(--muted); font-size: 12px; margin-right: 6px; }
+.datawin textarea.basic-source { resize: none; padding: 10px; color: var(--text); white-space: pre; tab-size: 4; }
+.datawin .basic-errors { max-height: 84px; overflow: auto; margin-top: 6px; }
+.datawin .basic-errors .error { cursor: pointer; padding: 1px 0; }
 .datawin pre { margin: 0; padding: 10px; font: var(--mono); user-select: text; white-space: pre-wrap; }
 .datawin .token { color: var(--accent); }
 .datawin .number { color: var(--warn); }

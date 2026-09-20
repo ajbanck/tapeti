@@ -53,7 +53,7 @@ export const TAPE_FILTERS: FileFilter[] = [
 
 export function filtersForName(name: string): FileFilter[] {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  const known: Record<string, string> = { tzx: 'TZX tape image', tap: 'TAP tape image', wav: 'WAV audio', scr: 'Spectrum screen', png: 'PNG image', bin: 'Binary data' };
+  const known: Record<string, string> = { tzx: 'TZX tape image', tap: 'TAP tape image', wav: 'WAV audio', bas: 'BASIC as text', txt: 'Text', scr: 'Spectrum screen', png: 'PNG image', bin: 'Binary data' };
   if (known[ext]) return [{ name: known[ext], extensions: [ext] }, { name: 'All files', extensions: ['*'] }];
   return [{ name: 'All files', extensions: ['*'] }];
 }

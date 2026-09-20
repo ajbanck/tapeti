@@ -4,7 +4,7 @@
 //
 // The previous implementation lives on as test/reference/spectrum/basic.ts.
 import { BasicLine, BasicOptions, BasicToken, VariableEntry } from '../tzx/types';
-import { basicToTextCore, decodeNumberCore, formatNumberCore, listBasicCore, listVariablesCore } from '../tzx/core';
+import { basicSourceCore, editBasicCore, basicToTextCore, decodeNumberCore, formatNumberCore, listBasicCore, listVariablesCore } from '../tzx/core';
 
 export type { BasicToken, BasicLine, BasicOptions, VariableEntry };
 
@@ -30,4 +30,33 @@ export function basicToText(lines: BasicLine[], opts: BasicOptions): string {
 /** List the variables area (starting at VARS) until the 0x80 end marker. */
 export function listVariables(data: Uint8Array, start: number, end: number): VariableEntry[] {
   return listVariablesCore(data, start, end);
+}
+
+export interface SourceOptions {
+  basic128?: boolean;
+  /** Take `print` for `PRINT`. */
+  anyCase?: boolean;
+}
+
+export interface SourceError {
+  /** Line of the text, from 1; 0 for the program as a whole. */
+  line: number;
+  message: string;
+}
+
+/**
+ * A program area as text that can be edited, saved and tokenised again: keywords
+ * spelled out and {...} for what a keyboard cannot type. core/src/spectrum/source.rs
+ * has the format.
+ */
+export function basicSource(data: Uint8Array, start: number, end: number, opts: SourceOptions = {}): string {
+  return basicSourceCore(data, start, end, opts);
+}
+
+/**
+ * The program area `text` stands for, given the one it was made from. Lines still
+ * as basicSource wrote them keep their bytes; only the others are tokenised.
+ */
+export function editBasic(data: Uint8Array, start: number, end: number, text: string, opts: SourceOptions = {}): { program: Uint8Array } | { errors: SourceError[] } {
+  return editBasicCore(data, start, end, text, opts);
 }

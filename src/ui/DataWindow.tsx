@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
-import { dataWindow, tapes, Side, replaceBlock, locked, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
+import { dataWindow, tapes, Side, commit, locked, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
 import { downloadBytes, pickFile } from '../state/files';
-import { Block } from '../tzx/types';
+import { Block, isUnknown } from '../tzx/types';
 import { detectContent } from '../tzx/content';
-import { decodeHeader, encodeHeader, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
+import { decodeHeader, encodeHeader, checksum, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
 import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, totalBits } from '../tzx/bits';
 import { renderScreen, hasFlash, SCREEN_SIZE } from '../spectrum/screen';
-import { listBasic, listVariables, basicToText, BasicOptions } from '../spectrum/basic';
-import { disassemble, DisLine } from '../spectrum/z80dis';
+import { listBasic, listVariables, basicToText, basicSource, editBasic, BasicOptions, SourceError } from '../spectrum/basic';
+import { disassemble, disassemblyText, DisLine } from '../spectrum/z80dis';
 import { zxChar, dumpChar } from '../spectrum/charset';
 import { NumInput, TextInput, Check } from './fields';
 import { Icon } from './icons';
@@ -51,6 +51,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [baseBeforeReverse, setBaseBeforeReverse] = useState<number | null>(null);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
+  // Set once the BASIC view has rewritten the program: where VARS now is in the
+  // block's body, which is what the header in front has to say on OK.
+  const [newVars, setNewVars] = useState<number | null>(null);
   // This window's own Dec/Hex switch: the main window's says nothing about it,
   // and it starts at Dec every time a data window is opened.
   const [h, setH] = useState(false);
@@ -111,13 +114,48 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     }
   };
 
+  /**
+   * The BASIC view's Apply: the program between two offsets of the view becomes
+   * `program`. Flip and reverse are off (the view says so), so the view is the
+   * raw data but for a hidden flag and checksum, and a block that has a checksum
+   * gets it worked out again.
+   */
+  const applyProgram = (from: number, to: number, program: Uint8Array) => {
+    const head = hideFlag && work.data.length > 0 ? 1 : 0;
+    const raw = work.data;
+    const out = new Uint8Array(raw.length - (to - from) + program.length);
+    out.set(raw.subarray(0, head + from));
+    out.set(program, head + from);
+    out.set(raw.subarray(head + to), head + from + program.length);
+    if (guess.skipChecksum && out.length > 1) out[out.length - 1] = checksum(out, 0, out.length - 1);
+    setWork({ ...work, data: out });
+    setDirty(true);
+    setNewVars(head + from + program.length - (guess.skipFlag ? 1 : 0));
+  };
+
   const close = () => (dataWindow.value = null);
   const ok = () => {
     if (dirty && single) {
       const patch: any = { data: work.data };
       if (hasUsedBits) patch.usedBits = work.usedBits;
       if (block.id === 0x19 && (block as any).dataSymbols.length <= 2) patch.totd = totalBits(work);
-      replaceBlock(side, block.uid, { ...(block as any), ...patch });
+      let fixedHeader = false;
+      commit(side, (bl) => {
+        const i = bl.findIndex((b) => b.uid === block.uid);
+        if (i < 0) return { blocks: bl };
+        bl[i] = { ...(block as any), ...patch, uid: block.uid } as Block;
+        // An edited program has a new length and a new VARS: the Program header
+        // in front says both, and the tape would not load with the old ones.
+        const prev = i > 0 ? bl[i - 1] : null;
+        const hdr = newVars !== null && prev && !isUnknown(prev) && prev.id === 0x10 ? decodeHeader(prev.data) : null;
+        if (hdr && hdr.type === 0 && prev) {
+          const body = work.data.length - (guess.skipFlag ? 1 : 0) - (guess.skipChecksum ? 1 : 0);
+          bl[i - 1] = { ...(prev as any), data: encodeHeader({ ...hdr, length: body, param2: newVars! }) } as Block;
+          fixedHeader = true;
+        }
+        return { blocks: bl, cursor: tapes[side].value.cursor };
+      });
+      if (fixedHeader) setStatus('Program changed; the header in front now has its new length');
     }
     close();
   };
@@ -136,8 +174,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     }
     setStatus(`${replace ? 'Replaced with' : 'Appended'} ${bytes.length} bytes from ${f.name}`);
   };
+  const fileStem = (tapes[side].value.name.replace(/\.(tzx|tap|z80|sna)$/i, '') || 'block') + `-block${blockNo(tapes[side].value.cursor)}`;
   const saveFile = () => {
-    downloadBytes(view, (tapes[side].value.name.replace(/\.(tzx|tap)$/i, '') || 'block') + `-block${blockNo(tapes[side].value.cursor)}.bin`);
+    downloadBytes(view, fileStem + '.bin');
   };
 
   const title = single ? `Data window — block #${blockNo(tapes[side].value.cursor)}` : `Data window — ${blocks.length} blocks viewed as one`;
@@ -184,10 +223,10 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
       {viewAs === 'dump' && <Dump data={view} startAddr={startAddr} editable={editable} setByte={setByte} h={h} />}
       {viewAs === 'header' && <HeaderView data={work.data} h={h} editable={editable} onChange={(d) => { setWork({ ...work, data: d }); setDirty(true); }} />}
       {viewAs === 'screen' && <Screen data={view} offset={16384 - startAddr} />}
-      {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} />}
-      {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} h={h} />}
+      {viewAs === 'basic' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={false} h={h} fileStem={fileStem} apply={editable && !flip && !reverse ? applyProgram : null} />}
+      {viewAs === 'vars' && <Basic data={view} startAddr={startAddr} progLen={guess.progLen} vars={true} h={h} fileStem={fileStem} apply={null} />}
       {viewAs === 'text' && <TextView data={view} />}
-      {viewAs === 'dis' && <Dis data={view} startAddr={startAddr} h={h} />}
+      {viewAs === 'dis' && <Dis data={view} startAddr={startAddr} h={h} fileStem={fileStem} />}
 
       <div class="editrow">
         <span class="label" />
@@ -420,10 +459,19 @@ function Screen({ data, offset: atBase }: { data: Uint8Array; offset: number }) 
 
 // ---- BASIC / variables -----------------------------------------------------------
 
-function Basic({ data, startAddr, progLen, vars, h }: { data: Uint8Array; startAddr: number; progLen: number | null; vars: boolean; h: boolean }) {
+function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
+  data: Uint8Array; startAddr: number; progLen: number | null; vars: boolean; h: boolean; fileStem: string;
+  /** Replace the view's bytes between two offsets with a program; null when the block cannot be edited here. */
+  apply: ((from: number, to: number, program: Uint8Array) => void) | null;
+}) {
   const [prog, setProg] = useState(startAddr);
   const [varsAddr, setVarsAddr] = useState(progLen !== null ? startAddr + progLen : -1);
   const [opts, setOpts] = useState<BasicOptions>({ showNumbers: false, basic128: false, speccyFormat: false });
+  // The program as text being edited, or null while it is only listed.
+  const [source, setSource] = useState<string | null>(null);
+  const [anyCase, setAnyCase] = useState(false);
+  const [errors, setErrors] = useState<SourceError[]>([]);
+  const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setProg(startAddr), [startAddr]);
   const progOff = prog - startAddr;
   const lines = useMemo(() => listBasic(data, Math.max(0, progOff), data.length, opts), [data, progOff, opts]);
@@ -434,18 +482,76 @@ function Basic({ data, startAddr, progLen, vars, h }: { data: Uint8Array; startA
   }, [lines, varsAddr, startAddr, prog]);
   const variables = useMemo(() => (vars ? listVariables(data, autoVars - startAddr, data.length) : []), [data, autoVars, startAddr, vars]);
   const text = useMemo(() => basicToText(lines.filter((l) => l.offset + 4 + l.length <= autoVars - startAddr || varsAddr < 0), opts), [lines, opts, autoVars]);
+
+  // The program area as offsets of the view: what Edit shows and Apply replaces.
+  const from = Math.min(Math.max(0, progOff), data.length);
+  const to = Math.min(Math.max(from, autoVars - startAddr), data.length);
+  const sourceOpts = { basic128: opts.basic128, anyCase };
+  const save = () => {
+    const out = source ?? basicSource(data, from, to, sourceOpts);
+    downloadBytes(new TextEncoder().encode(out + '\n'), fileStem + '.bas', 'text/plain');
+  };
+  const load = async () => {
+    const f = await pickFile();
+    if (f) setSource(new TextDecoder().decode(f.bytes).replace(/\r\n?/g, '\n'));
+  };
+  const doApply = () => {
+    if (source === null || !apply) return;
+    const r = editBasic(data, from, to, source, sourceOpts);
+    if ('errors' in r) {
+      setErrors(r.errors);
+      return;
+    }
+    apply(from, to, r.program);
+    setVarsAddr(startAddr + from + r.program.length);
+    setErrors([]);
+    setSource(null);
+  };
+  /** Put the caret on a line of the text, which is where a mistake is. */
+  const goTo = (line: number) => {
+    const el = area.current;
+    if (!el || line < 1) return;
+    const before = el.value.split('\n').slice(0, line - 1).join('\n').length + (line > 1 ? 1 : 0);
+    const end = el.value.indexOf('\n', before);
+    el.focus();
+    el.setSelectionRange(before, end < 0 ? el.value.length : end);
+  };
   return (
     <>
       <div class="row-flex">
         <label>PROG</label><NumInput value={prog} max={0xffff} hex={h} onChange={setProg} width={70} />
         <label>VARS</label><NumInput value={autoVars} max={0xffff} hex={h} onChange={setVarsAddr} width={70} />
-        {!vars && <>
+        {!vars && source === null && <>
           <Check label="Show numbers" checked={opts.showNumbers} onChange={(v) => setOpts({ ...opts, showNumbers: v })} />
           <Check label="Speccy formatting" checked={opts.speccyFormat} onChange={(v) => setOpts({ ...opts, speccyFormat: v })} />
-          <Check label="128k BASIC" checked={opts.basic128} onChange={(v) => setOpts({ ...opts, basic128: v })} />
         </>}
+        {!vars && <Check label="128k BASIC" checked={opts.basic128} onChange={(v) => setOpts({ ...opts, basic128: v })} />}
+        {!vars && source !== null && <Check label="Keywords in any case" checked={anyCase} onChange={setAnyCase} />}
         <span class="note">{vars ? `${variables.length} variable(s)` : `${lines.length} line(s)`}</span>
+        <span style={{ flex: 1 }} />
+        {!vars && source === null && <>
+          <button class="small" disabled={!apply} title={apply ? 'Edit the program as text' : 'Needs an unlocked single block, with Flip and Reverse off'} onClick={() => { setErrors([]); setSource(basicSource(data, from, to, sourceOpts)); }}>Edit</button>
+          <button class="small" onClick={save}>Save listing</button>
+        </>}
+        {!vars && source !== null && <>
+          <button class="small" onClick={load}>Load text</button>
+          <button class="small" onClick={save}>Save text</button>
+          <button class="small primary" onClick={doApply}>Apply</button>
+          <button class="small" onClick={() => { setSource(null); setErrors([]); }}>Cancel edit</button>
+        </>}
       </div>
+      {source !== null && !vars ? (
+        <>
+          <textarea ref={area} class="view basic-source" spellcheck={false} value={source} onInput={(e) => setSource((e.target as HTMLTextAreaElement).value)} />
+          {errors.length > 0 ? (
+            <div class="basic-errors">
+              {errors.map((e, i) => <div key={i} class="error" onClick={() => goTo(e.line)}>{e.line > 0 ? `Line ${e.line} of the text: ` : ''}{e.message}</div>)}
+            </div>
+          ) : (
+            <div class="note">One program line per line, in the order written. Keywords in capitals; {'{1F}'} a byte, {'{A}'} a graphic, {'{INK 5}'} {'{AT 2,5}'} controls, {'{PRINT}'} a keyword inside a string or REM, {'10{=1000}'} a number that is not what it shows. Lines left as they are keep their bytes exactly.</div>
+          )}
+        </>
+      ) : (
       <div class="view">
         {vars ? (
           <table style={{ margin: 6, fontFamily: 'inherit' }}>
@@ -466,6 +572,7 @@ function Basic({ data, startAddr, progLen, vars, h }: { data: Uint8Array; startA
           </pre>
         )}
       </div>
+      )}
     </>
   );
 }
@@ -546,7 +653,7 @@ function HeaderView({ data, h, editable, onChange }: { data: Uint8Array; h: bool
 
 // ---- Disassembly ---------------------------------------------------------------
 
-function Dis({ data, startAddr, h }: { data: Uint8Array; startAddr: number; h: boolean }) {
+function Dis({ data, startAddr, h, fileStem }: { data: Uint8Array; startAddr: number; h: boolean; fileStem: string }) {
   const [from, setFrom] = useState(startAddr);
   const [labels, setLabels] = useState(true);
   useEffect(() => setFrom(startAddr), [startAddr]);
@@ -571,6 +678,8 @@ function Dis({ data, startAddr, h }: { data: Uint8Array; startAddr: number; h: b
         <label>From address</label><NumInput value={from} max={0xffff} hex={h} onChange={setFrom} width={70} />
         <Check label="ROM labels" checked={labels} onChange={setLabels} />
         <span class="note">{lines.length} instruction(s)</span>
+        <span style={{ flex: 1 }} />
+        <button class="small" onClick={() => downloadBytes(new TextEncoder().encode(disassemblyText(data, Math.max(0, from - startAddr), from, 1e6, { hex: h, romLabels: labels }) + '\n'), fileStem + '.dis.txt', 'text/plain')}>Save listing</button>
       </div>
       <div class="view dis" ref={v.ref} onScroll={v.onScroll}>
         <div style={{ height: v.totalH, position: 'relative' }}>

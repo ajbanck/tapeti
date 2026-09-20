@@ -10,7 +10,7 @@ use egui::{Align, Layout, RichText, Ui};
 
 use tapeti_core::audio::{playback_order, FlowOptions, RenderOptions, TSTATES_PER_SEC};
 use tapeti_core::consistency::{check_consistency, Severity};
-use tapeti_core::describe::describe_block;
+use tapeti_core::describe::{describe_block, empty_program};
 use tapeti_core::programs::detect_programs;
 use tapeti_core::snapshot::{LoaderOptions, Snapshot, DEFAULT_SPEED, SPEED_BPS};
 use tapeti_core::spectrum::screen::{render_screen, ScreenOptions, SCREEN_SIZE};
@@ -275,11 +275,18 @@ fn about_body(ui: &mut Ui, tok: &Tokens) -> Outcome {
     footer(ui, |ui| if ui.button("OK").clicked() { Outcome::Close } else { Outcome::Keep })
 }
 
+/// Not a block ID: the Insert dialog's entry for an empty BASIC program.
+const BASIC_PROGRAM: u8 = 0;
+
 fn insert_body(ui: &mut Ui, app: &mut App, s: &mut InsertState) -> Outcome {
     let mut go = false;
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-        for id in CREATABLE_IDS {
-            let label = format!("{id:02X}  {}", block_name(id).unwrap_or("Unknown"));
+        // After the block types, the one thing here that is two blocks.
+        for id in CREATABLE_IDS.into_iter().chain([BASIC_PROGRAM]) {
+            let label = match id {
+                BASIC_PROGRAM => "     BASIC program (header and data, to edit as text)".to_string(),
+                _ => format!("{id:02X}  {}", block_name(id).unwrap_or("Unknown")),
+            };
             let r = ui.selectable_label(s.id == id, RichText::new(label).monospace());
             if r.clicked() {
                 s.id = id;
@@ -312,7 +319,11 @@ fn insert_body(ui: &mut Ui, app: &mut App, s: &mut InsertState) -> Outcome {
             Where::After => t.cursor as usize + 1,
             Where::Before => t.cursor as usize,
         };
-        app.store.insert_blocks(s.side, at, vec![Block::new(create_body(s.id))]);
+        let blocks = match s.id {
+            BASIC_PROGRAM => empty_program().into_iter().map(Block::new).collect(),
+            id => vec![Block::new(create_body(id))],
+        };
+        app.store.insert_blocks(s.side, at, blocks);
         return Outcome::Close;
     }
     outcome

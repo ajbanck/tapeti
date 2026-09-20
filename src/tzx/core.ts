@@ -15,7 +15,7 @@ import {
   decodeBasicLines, decodeBitData, decodeBlocks, decodeBytes, decodeComparison, decodeContent,
   decodeDuration, decodePulses, decodeSamples, decodeTimeline, encodeBlocksAndOrder,
   decodeDescribed, decodeDisLines, decodeF64, decodeHeaderInfo, decodeIssues, decodeOptString,
-  decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
+  decodeBasicEdit, encodeBasicEdit, decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
   decodeTape, decodeU32s, decodeU8, decodeVariables, decodeVersion, encodeBasicLines, encodeBitData,
   encodeBlocks, encodeHeaderInfo, encodePokesInfo, encodeSnapshotRequest, WIRE_VERSION,
 } from './wire';
@@ -61,6 +61,9 @@ interface CoreExports {
   core_has_flash(ptr: number, len: number, offset: number): number;
   core_list_basic(ptr: number, len: number, start: number, end: number, flags: number): number;
   core_basic_to_text(ptr: number, len: number, flags: number): number;
+  core_basic_source(ptr: number, len: number, start: number, end: number, flags: number): number;
+  core_edit_basic(ptr: number, len: number, start: number, end: number, flags: number): number;
+  core_disassembly_text(ptr: number, len: number, offset: number, base: number, count: number, flags: number): number;
   core_list_variables(ptr: number, len: number, start: number, end: number): number;
   core_disassemble(ptr: number, len: number, offset: number, base: number, count: number, flags: number): number;
   core_decode_number(ptr: number, len: number, offset: number): number;
@@ -338,6 +341,26 @@ export function listBasicCore(data: Uint8Array, start: number, end: number, opts
 
 export function basicToTextCore(lines: BasicLine[], opts: BasicOptions): string {
   return decodeOptString(call('core_basic_to_text', encodeBasicLines(lines), basicFlags(opts))) ?? '';
+}
+
+/** Flags of the two calls below: 2 for 128k tokens, 8 for keywords in any case. */
+const sourceFlags = (o: { basic128?: boolean; anyCase?: boolean }) => (o.basic128 ? 2 : 0) | (o.anyCase ? 8 : 0);
+
+/** A program area as text that can be edited and tokenised again. */
+export function basicSourceCore(data: Uint8Array, start: number, end: number, opts: { basic128?: boolean }): string {
+  return decodeOptString(call('core_basic_source', data, start, end, sourceFlags(opts))) ?? '';
+}
+
+/** The program area an edited text stands for; lines left alone keep their bytes. */
+export function editBasicCore(
+  data: Uint8Array, start: number, end: number, text: string, opts: { basic128?: boolean; anyCase?: boolean },
+): { program: Uint8Array } | { errors: { line: number; message: string }[] } {
+  return decodeBasicEdit(call('core_edit_basic', encodeBasicEdit(data, text), start, end, sourceFlags(opts)));
+}
+
+export function disassemblyTextCore(data: Uint8Array, offset: number, base: number, count: number, opts: DisOptions): string {
+  const flags = ((opts.hex ?? true) ? 1 : 0) | ((opts.romLabels !== false) ? 2 : 0);
+  return decodeOptString(call('core_disassembly_text', data, offset, base, count, flags)) ?? '';
 }
 
 export function listVariablesCore(data: Uint8Array, start: number, end: number): VariableEntry[] {

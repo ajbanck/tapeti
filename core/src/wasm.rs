@@ -26,16 +26,17 @@ use crate::spectrum::basic::{
 };
 use crate::spectrum::charset::char_table;
 use crate::spectrum::screen::{has_flash, render_screen, ScreenOptions};
-use crate::spectrum::z80dis::{disassemble, DisOptions};
+use crate::spectrum::source::{basic_source_text, edit_basic, SourceOptions};
+use crate::spectrum::z80dis::{dis_to_text, disassemble, DisOptions};
 use crate::types::Block;
 use crate::wire::{
-    decode_basic_lines, decode_bit_data, decode_blocks, decode_blocks_and_order, decode_header_info,
-    decode_pokes_info, decode_snapshot_request, encode_basic_lines, encode_bit_data, encode_blocks_answer,
-    encode_bytes, encode_comparison, encode_content, encode_described, encode_dis_lines, encode_duration,
-    encode_error, encode_f64, encode_header_info, encode_issues, encode_opt_string, encode_pokes_info,
-    encode_programs, encode_pulses, encode_ranges, encode_samples, encode_snapshot_info, encode_strings,
-    encode_tap, encode_tape, encode_timeline, encode_u32s, encode_u8, encode_variables, encode_version,
-    WIRE_VERSION,
+    decode_basic_edit, decode_basic_lines, decode_bit_data, decode_blocks, decode_blocks_and_order,
+    decode_header_info, decode_pokes_info, decode_snapshot_request, encode_basic_edit, encode_basic_lines,
+    encode_bit_data, encode_blocks_answer, encode_bytes, encode_comparison, encode_content, encode_described,
+    encode_dis_lines, encode_duration, encode_error, encode_f64, encode_header_info, encode_issues,
+    encode_opt_string, encode_pokes_info, encode_programs, encode_pulses, encode_ranges, encode_samples,
+    encode_snapshot_info, encode_strings, encode_tap, encode_tape, encode_timeline, encode_u32s, encode_u8,
+    encode_variables, encode_version, WIRE_VERSION,
 };
 use crate::writer::{required_version, save_version, serialize_block, serialize_tap, serialize_tzx, Version};
 use std::alloc::{alloc, dealloc, Layout};
@@ -614,6 +615,66 @@ pub unsafe extern "C" fn core_basic_to_text(ptr: *const u8, len: usize, flags: u
         Ok(lines) => encode_opt_string(Some(&basic_to_text(&lines, basic_options(flags)))),
         Err(e) => encode_error(&e.0),
     })
+}
+
+/// A program area as text that can be edited and tokenised again. `flags`: 2
+/// 128k tokens, 8 keywords in any case (the bits [`core_list_basic`] leaves free).
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn core_basic_source(
+    ptr: *const u8,
+    len: usize,
+    start: u32,
+    end: u32,
+    flags: u32,
+) -> *mut u8 {
+    let text = basic_source_text(slice(ptr, len), start as usize, end as usize, source_options(flags));
+    finish(encode_opt_string(Some(&text)))
+}
+
+/// The program area an edited text stands for; lines left as they were keep
+/// their bytes.
+///
+/// # Safety
+/// `ptr` must point at `len` bytes of wire-encoded data and text.
+#[no_mangle]
+pub unsafe extern "C" fn core_edit_basic(
+    ptr: *const u8,
+    len: usize,
+    start: u32,
+    end: u32,
+    flags: u32,
+) -> *mut u8 {
+    finish(match decode_basic_edit(slice(ptr, len)) {
+        Ok((data, text)) => {
+            encode_basic_edit(&edit_basic(&data, start as usize, end as usize, &text, source_options(flags)))
+        }
+        Err(e) => encode_error(&e.0),
+    })
+}
+
+fn source_options(flags: u32) -> SourceOptions {
+    SourceOptions { basic128: flags & 2 != 0, any_case: flags & 8 != 0 }
+}
+
+/// A disassembly as text, for saving. Arguments as [`core_disassemble`].
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn core_disassembly_text(
+    ptr: *const u8,
+    len: usize,
+    offset: u32,
+    base: u32,
+    count: u32,
+    flags: u32,
+) -> *mut u8 {
+    let opts = DisOptions { hex: flags & 1 != 0, rom_labels: flags & 2 != 0 };
+    let lines = disassemble(slice(ptr, len), offset as usize, base, count as usize, opts);
+    finish(encode_opt_string(Some(&dis_to_text(&lines))))
 }
 
 /// List the variables area.
