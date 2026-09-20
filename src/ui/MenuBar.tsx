@@ -84,12 +84,12 @@ export const MENUS: [string, Entry[]][] = [
   ['Edit', [
     'undo', 'redo', 'sep',
     'cut', 'copy', 'paste', 'duplicate', 'delete', 'sep',
-    'select-all', 'select-program',
+    'select-all', 'invert-selection', 'select-program',
   ]],
   ['Block', [
     'insert', 'view-data', 'view-as-one', 'sep',
     'move-up', 'move-down', 'sep',
-    'group', 'toggle-collapse', 'collapse-all', 'expand-all', 'sep',
+    'group', 'loop', 'toggle-collapse', 'collapse-all', 'expand-all', 'sep',
     'extract', 'set-timings',
   ]],
   ['Tape', [
@@ -99,11 +99,12 @@ export const MENUS: [string, Entry[]][] = [
   ]],
   ['Play', [
     'play', 'play-cursor', 'play-selection', 'stop', 'sep',
+    'step-next', 'step-reset', 'sep',
     'emu-tape', 'emu-cursor', 'emu-selection', 'sep',
     'emu-settings',
   ]],
   ['View', [
-    'opt-zero-based', 'opt-hex-bytes', 'sep',
+    'opt-zero-based', 'opt-hex-bytes', 'opt-backup', 'sep',
     'theme-light', 'theme-dark', 'theme-system', 'sep',
     'switch-pane',
   ]],

@@ -119,6 +119,7 @@ pub const MENUS: &[MenuDef] = &[
             cmd("delete", "Delete Block", "", Cursor),
             sep(),
             cmd("select-all", "Select All", "CmdOrCtrl+A", Blocks),
+            cmd("invert-selection", "Invert Selection", "", Blocks),
             cmd("select-program", "Select Program", "CmdOrCtrl+Shift+A", Cursor),
         ],
     },
@@ -133,6 +134,7 @@ pub const MENUS: &[MenuDef] = &[
             cmd("move-down", "Move Down", "CmdOrCtrl+Down", Cursor),
             sep(),
             cmd("group", "Group Selection", "CmdOrCtrl+G", Cursor),
+            cmd("loop", "Loop Selection", "", Cursor),
             // The bars show one label for both directions; the context menu,
             // which is built per click, says which (`commands::label`).
             cmd("toggle-collapse", "Collapse or Expand Group/Loop", "", Collapsible),
@@ -165,6 +167,9 @@ pub const MENUS: &[MenuDef] = &[
             cmd("play-selection", "Play Selection", "", Blocks),
             cmd("stop", "Stop Playback", "CmdOrCtrl+.", Playing),
             sep(),
+            cmd("step-next", "Step to Next Played Block", "Alt+Down", Cursor),
+            cmd("step-reset", "Restart Stepping", "Alt+Up", Blocks),
+            sep(),
             cmd("emu-tape", "Open Tape in Emulator", "CmdOrCtrl+R", Blocks),
             cmd("emu-cursor", "Open from Cursor in Emulator", "CmdOrCtrl+Shift+R", Cursor),
             cmd("emu-selection", "Open Selection in Emulator", "", Cursor),
@@ -177,6 +182,7 @@ pub const MENUS: &[MenuDef] = &[
         items: &[
             check("opt-zero-based", "Number Blocks from 0", ""),
             check("opt-hex-bytes", "Flag and Checksum Bytes in Hex", ""),
+            check("opt-backup", "Keep a Backup When Saving", ""),
             sep(),
             check("theme-light", "Theme: Light", ""),
             check("theme-dark", "Theme: Dark", ""),

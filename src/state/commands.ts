@@ -3,7 +3,8 @@
 // so labels, enabled state and behaviour live in a single place. Ids match the item ids in menu.rs.
 import {
   Side, tapes, active, dialog, hexBytes, zeroBased, locked, setOption, toggleLock, undo, redo, selectAll,
-  deleteUnit, copyUnit, cutUnit, paste, duplicateUnit, moveUnit, groupSelection, toggleCollapse, collapseAll,
+  deleteUnit, copyUnit, cutUnit, paste, duplicateUnit, moveUnit, groupSelection, loopSelection, invertSelection,
+  stepNext, stepReset, backup, toggleCollapse, collapseAll,
   runCompareTapes, runFindMatch, clearCompare, clipboard, theme, applyTheme,
 } from './store';
 import { groupRanges } from '../tzx/programs';
@@ -63,6 +64,7 @@ export const COMMANDS = {
   'duplicate': { label: 'Duplicate', key: fmtKey('Mod+D'), enabled: hasCursor, run: duplicateUnit },
   'delete': { label: 'Delete', key: isMac ? '⌫' : 'Del', enabled: hasCursor, run: deleteUnit },
   'select-all': { label: 'Select all', key: fmtKey('Mod+A'), enabled: hasBlocks, run: selectAll },
+  'invert-selection': { label: 'Invert selection', enabled: hasBlocks, run: invertSelection },
   // ---- block
   // The desktop menu has Mod+Shift+N for this (Mac keyboards have no Insert key).
   'insert': { label: 'Insert block…', key: 'Ins', run: openInsertDialog },
@@ -71,6 +73,7 @@ export const COMMANDS = {
   'move-up': { label: 'Move up', key: fmtKey('Mod+↑'), enabled: hasCursor, run: (s) => moveUnit(s, -1) },
   'move-down': { label: 'Move down', key: fmtKey('Mod+↓'), enabled: hasCursor, run: (s) => moveUnit(s, 1) },
   'group': { label: 'Group selection', key: fmtKey('Mod+G'), enabled: hasCursor, run: (s) => groupSelection(s, 'Group') },
+  'loop': { label: 'Loop selection', enabled: hasCursor, run: loopSelection },
   'select-program': { label: 'Select program', key: fmtKey('Mod+Shift+A'), enabled: hasCursor, run: selectProgram },
   'extract': { label: 'Extract to other pane', key: fmtKey('Mod+Shift+E'), enabled: hasCursor, run: extractToOtherPane },
   'toggle-collapse': {
@@ -87,6 +90,9 @@ export const COMMANDS = {
   'play-cursor': { label: 'Play from cursor', enabled: hasBlocks, run: (s) => playTape(s, true) },
   'play-selection': { label: 'Play selection', enabled: hasBlocks, run: playSelection },
   'stop': { label: 'Stop playback', enabled: () => playing.value, run: () => stopPlayback() },
+  // Not playing at all: the cursor walks the order the tape would play in.
+  'step-next': { label: 'Step to next played block', key: fmtKey('Alt+↓'), enabled: hasCursor, run: stepNext },
+  'step-reset': { label: 'Restart stepping', key: fmtKey('Alt+↑'), enabled: hasBlocks, run: stepReset },
   'emu-tape': { label: 'Download tape for emulator', enabled: hasBlocks, run: (s) => openInEmulator(s, 'tape') },
   'emu-cursor': { label: 'Download from cursor for emulator', enabled: hasCursor, run: (s) => openInEmulator(s, 'cursor') },
   'emu-selection': { label: 'Download selection for emulator', enabled: hasCursor, run: (s) => openInEmulator(s, 'selection') },
@@ -101,6 +107,8 @@ export const COMMANDS = {
   // ---- view
   'opt-hex-bytes': { label: 'Flag and checksum bytes in hex', checked: () => hexBytes.value, run: () => setOption('hexBytes', !hexBytes.value) },
   'opt-zero-based': { label: 'Number blocks from 0', checked: () => zeroBased.value, run: () => setOption('zeroBased', !zeroBased.value) },
+  /** Only the desktop app has a file to keep: a browser saves by download. The id and the switch are shared. */
+  'opt-backup': { label: 'Keep a backup when saving (desktop app)', checked: () => backup.value, run: () => setOption('backup', !backup.value) },
   'theme-light': { label: 'Theme: light', checked: () => theme.value === 'light', run: () => applyTheme('light') },
   'theme-dark': { label: 'Theme: dark', checked: () => theme.value === 'dark', run: () => applyTheme('dark') },
   'theme-system': { label: 'Theme: system', checked: () => theme.value === 'system', run: () => applyTheme('system') },
@@ -142,7 +150,7 @@ export function commandKey(id: CommandId): string | undefined {
  * it declares in menu.rs, so those keydowns never arrive there; this table still lists them
  * for the browser build. Keys are `e.key` values; `mod` means ⌘ on macOS, Ctrl elsewhere.
  */
-export const KEY_COMMANDS: { key: string; mod: boolean; shift?: boolean; id: CommandId }[] = [
+export const KEY_COMMANDS: { key: string; mod: boolean; shift?: boolean; alt?: boolean; id: CommandId }[] = [
   { key: 'c', mod: true, id: 'copy' },
   { key: 'x', mod: true, id: 'cut' },
   { key: 'v', mod: true, id: 'paste' },
@@ -155,6 +163,8 @@ export const KEY_COMMANDS: { key: string; mod: boolean; shift?: boolean; id: Com
   { key: 'f', mod: true, id: 'find-match' },
   { key: 'ArrowUp', mod: true, id: 'move-up' },
   { key: 'ArrowDown', mod: true, id: 'move-down' },
+  { key: 'ArrowDown', mod: false, alt: true, id: 'step-next' },
+  { key: 'ArrowUp', mod: false, alt: true, id: 'step-reset' },
   { key: 'Delete', mod: false, id: 'delete' },
   { key: 'Backspace', mod: false, id: 'delete' },
   { key: 'Insert', mod: false, id: 'insert' },

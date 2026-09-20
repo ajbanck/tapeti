@@ -62,6 +62,7 @@ pub fn checked(app: &App, id: &str) -> bool {
     match id {
         "opt-hex-bytes" => app.store.settings.hex_bytes,
         "opt-zero-based" => app.store.settings.zero_based,
+        "opt-backup" => app.store.settings.backup,
         "toggle-lock" => app.store.locked,
         "theme-light" => app.store.settings.theme == Theme::Light,
         "theme-dark" => app.store.settings.theme == Theme::Dark,
@@ -138,6 +139,10 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
         "move-up" => app.store.move_unit(side, -1),
         "move-down" => app.store.move_unit(side, 1),
         "group" => app.store.group_selection(side, "Group"),
+        "loop" => app.store.loop_selection(side),
+        "invert-selection" => app.store.invert_selection(side),
+        "step-next" => app.store.step_next(side),
+        "step-reset" => app.store.step_reset(side),
         "toggle-collapse" => {
             if let Some(uid) = app.store.tape(side).cursor_block().map(|b| b.uid) {
                 app.store.toggle_collapse(side, uid);
@@ -180,6 +185,10 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
             app.store.settings.hex_bytes = !app.store.settings.hex_bytes;
             app.store.settings.save();
             app.store.touch_view();
+        }
+        "opt-backup" => {
+            app.store.settings.backup = !app.store.settings.backup;
+            app.store.settings.save();
         }
         "opt-zero-based" => {
             app.store.settings.zero_based = !app.store.settings.zero_based;
@@ -284,6 +293,109 @@ mod tests {
         app
     }
 
+    /// Stepping walks the order the tape plays in: twice round a loop, into a
+    /// collapsed group (which opens), and says so when the tape is over.
+    #[test]
+    fn stepping_follows_the_play_order() {
+        use tapeti_core::types::Body;
+        let ctx = egui::Context::default();
+        let mut store = Store::new(Settings::default());
+        let pause = || Block::new(Body::Pause { pause: 100 });
+        let blocks = vec![
+            pause(),
+            Block::new(Body::LoopStart { count: 2 }),
+            pause(),
+            Block::new(Body::LoopEnd),
+            Block::new(Body::GroupStart { name: "g".into() }),
+            pause(),
+            Block::new(Body::GroupEnd),
+        ];
+        let group = blocks[4].uid;
+        store.tape_mut(0).load("t.tzx".into(), None, blocks, None);
+        let mut app = App::build(&ctx, Menu::headless(), store, std::time::Instant::now(), 0, false);
+        app.store.toggle_collapse(0, group);
+        app.store.set_cursor(0, 0, SelectMode::Single);
+
+        let mut walked = Vec::new();
+        for _ in 0..9 {
+            assert!(run(&mut app, "step-next", 0));
+            walked.push(app.store.tape(0).cursor);
+        }
+        assert_eq!(walked, [1, 2, 3, 2, 3, 4, 5, 6, 6], "the loop goes round twice; the end stays put");
+        assert!(!app.store.tape(0).collapsed.contains(&group), "the group opened to show the block in it");
+        assert_eq!(app.store.status(), "The tape ends here");
+
+        // Moving the cursor by hand starts from that block's first turn.
+        app.store.set_cursor(0, 2, SelectMode::Single);
+        run(&mut app, "step-next", 0);
+        run(&mut app, "step-next", 0);
+        assert_eq!(app.store.tape(0).cursor, 2, "round again, as the first time through");
+        assert!(run(&mut app, "step-reset", 0));
+    }
+
+    #[test]
+    fn loop_and_invert_selection() {
+        use tapeti_core::types::Body;
+        let mut app = app();
+        let n = app.store.tape(0).blocks.len();
+        app.store.set_cursor(0, 3, SelectMode::Single);
+        assert!(run(&mut app, "invert-selection", 0));
+        assert_eq!(app.store.tape(0).selected.len(), n - 1);
+        assert!(run(&mut app, "invert-selection", 0));
+        assert_eq!(app.store.tape(0).selected.len(), 1);
+
+        let wrapped = app.store.tape(0).blocks[3].uid;
+        assert!(run(&mut app, "loop", 0));
+        let t = app.store.tape(0);
+        assert_eq!(t.blocks.len(), n + 2);
+        assert_eq!(t.blocks[3].body, Body::LoopStart { count: 2 });
+        assert_eq!(t.blocks[4].uid, wrapped);
+        assert_eq!(t.blocks[5].body, Body::LoopEnd);
+        assert_eq!(t.cursor, 3);
+        app.store.undo(0);
+        assert_eq!(app.store.tape(0).blocks.len(), n, "one step to undo");
+    }
+
+    /// Inverting works on the rows the list shows: a collapsed group is one of
+    /// them, and must come out selected whole rather than leaving hidden blocks
+    /// selected with nothing to show it on.
+    #[test]
+    fn inverting_takes_a_collapsed_group_as_one_row() {
+        use tapeti_core::types::{create_body, Block};
+        let mut app = app();
+        let blocks: Vec<Block> =
+            [0x20, 0x21, 0x30, 0x22, 0x20].iter().map(|id| Block::new(create_body(*id))).collect();
+        app.store.tape_mut(0).load("t.tzx".into(), None, blocks, None);
+        let uids: Vec<_> = app.store.tape(0).blocks.iter().map(|b| b.uid).collect();
+        app.store.toggle_collapse(0, uids[1]);
+        let selected = |app: &App| {
+            let mut got: Vec<_> = app.store.tape(0).selected.iter().copied().collect();
+            got.sort_unstable();
+            got
+        };
+        let sorted = |uids: &[tapeti_core::types::Uid]| {
+            let mut want = uids.to_vec();
+            want.sort_unstable();
+            want
+        };
+
+        // The group's row is the selected one: inverting leaves the two pauses,
+        // and nothing of what the group hides.
+        app.store.set_cursor(0, 1, SelectMode::Single);
+        assert!(run(&mut app, "invert-selection", 0));
+        assert_eq!(selected(&app), sorted(&[uids[0], uids[4]]));
+
+        // And back: the group comes out selected whole, so acting on it acts on
+        // all of it, as `unit_indices` has it.
+        assert!(run(&mut app, "invert-selection", 0));
+        assert_eq!(selected(&app), sorted(&uids[1..4]));
+
+        // Expanded, every block is a row of its own again.
+        app.store.toggle_collapse(0, uids[1]);
+        assert!(run(&mut app, "invert-selection", 0));
+        assert_eq!(selected(&app), sorted(&[uids[0], uids[4]]));
+    }
+
     fn command_ids() -> Vec<String> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/state/commands.ts");
         std::fs::read_to_string(path)
@@ -322,7 +434,7 @@ mod tests {
     #[test]
     fn options_toggle_and_report_their_check_marks() {
         let mut app = app();
-        for id in ["opt-hex-bytes", "opt-zero-based", "toggle-lock"] {
+        for id in ["opt-hex-bytes", "opt-zero-based", "opt-backup", "toggle-lock"] {
             let before = checked(&app, id);
             assert!(run(&mut app, id, 0), "{id} did not run");
             assert_ne!(checked(&app, id), before, "{id} did not toggle");

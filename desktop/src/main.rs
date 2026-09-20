@@ -284,6 +284,12 @@ fn main() -> eframe::Result<()> {
     let parse_ms = t_parse.elapsed().as_secs_f64() * 1000.0;
     store.active = 0;
 
+    // What the last run lost to a panic, if it did. Only a run that opens a
+    // window takes them: a screenshot or a measurement must not eat the files.
+    if opts.screenshot.is_none() && !(opts.measure || opts.rows.is_some() || opts.bench.is_some()) {
+        files::restore_rescued(&mut store);
+    }
+
     if let Some(n) = opts.rows {
         let blocks = &store.tape(0).blocks;
         let grown = if n > blocks.len() { grow(blocks, n) } else { blocks[..n.min(blocks.len())].to_vec() };

@@ -286,6 +286,8 @@ export interface BasicOptions {
   showNumbers: boolean; // show the real 5-byte value after the textual number
   basic128: boolean;
   speccyFormat: boolean; // 32 columns, control codes interpreted
+  /** Leave the colour and position codes out of the listing altogether. */
+  dropColours?: boolean;
 }
 
 /** One entry of the Spectrum's variables area. */

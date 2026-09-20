@@ -90,3 +90,108 @@ describe('inserting a file as data', () => {
     expect(tapes[0].value.blocks.length).toBe(0);
   });
 });
+
+// ---- the smaller things: stepping, loops, inverting, parity, colours ----------
+
+import { insertBlocks, setCursor, toggleCollapse, undo, status, backup } from '../src/state/store';
+import { runCommand } from '../src/state/commands';
+import { createBlock, Block, PureDataBlock, GroupStartBlock, LoopStartBlock } from '../src/tzx/types';
+import { listBasic, basicToText } from '../src/spectrum/basic';
+
+describe('stepping through the play order', () => {
+  it('goes twice round a loop, opens a collapsed group, and says when the tape is over', () => {
+    const blocks: Block[] = [0x20, 0x24, 0x20, 0x25, 0x21, 0x20, 0x22].map((id) => createBlock(id));
+    (blocks[1] as LoopStartBlock).count = 2;
+    insertBlocks(0, 0, blocks);
+    toggleCollapse(0, tapes[0].value.blocks[4].uid);
+    setCursor(0, 0);
+    const walked: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      expect(runCommand('step-next', 0)).toBe(true);
+      walked.push(tapes[0].value.cursor);
+    }
+    expect(walked).toEqual([1, 2, 3, 2, 3, 4, 5, 6, 6]);
+    expect(tapes[0].value.collapsed.size).toBe(0);
+    expect(status.value).toBe('The tape ends here');
+    // From a block the cursor was put on by hand, it is that block's first turn.
+    setCursor(0, 2);
+    runCommand('step-next', 0);
+    runCommand('step-next', 0);
+    expect(tapes[0].value.cursor).toBe(2);
+    expect(runCommand('step-reset', 0)).toBe(true);
+  });
+});
+
+describe('loop and invert selection', () => {
+  it('wraps the selection in a loop, as one step to undo', () => {
+    insertBlocks(0, 0, [createBlock(0x20), createBlock(0x30), createBlock(0x20)]);
+    setCursor(0, 1);
+    runCommand('invert-selection', 0);
+    expect(tapes[0].value.selected.size).toBe(2);
+    runCommand('invert-selection', 0);
+    expect(tapes[0].value.selected.size).toBe(1);
+    const wrapped = tapes[0].value.blocks[1].uid;
+    runCommand('loop', 0);
+    const t = tapes[0].value;
+    expect(t.blocks.map((b) => b.id)).toEqual([0x20, 0x24, 0x30, 0x25, 0x20]);
+    expect((t.blocks[1] as LoopStartBlock).count).toBe(2);
+    expect(t.blocks[2].uid).toBe(wrapped);
+    undo(0);
+    expect(tapes[0].value.blocks.length).toBe(3);
+  });
+
+  it('inverts over the rows, so a collapsed group goes as one', () => {
+    // A pause, a group of two, a pause: with the group collapsed the list shows
+    // three rows, and inverting a selected first row must select the other two.
+    const blocks: Block[] = [0x20, 0x21, 0x30, 0x22, 0x20].map((id) => createBlock(id));
+    insertBlocks(0, 0, blocks);
+    const uids = tapes[0].value.blocks.map((b) => b.uid);
+    toggleCollapse(0, uids[1]);
+
+    // The group's row is the selected one: inverting leaves the two pauses, and
+    // nothing of what the group hides.
+    setCursor(0, 1);
+    runCommand('invert-selection', 0);
+    expect([...tapes[0].value.selected].sort()).toEqual([uids[0], uids[4]].sort());
+
+    // And back: the group comes out selected whole, so acting on it acts on all
+    // of it, as `unitIndices` has it.
+    runCommand('invert-selection', 0);
+    expect([...tapes[0].value.selected].sort()).toEqual(uids.slice(1, 4).sort());
+
+    // Expanded, every block is a row of its own again.
+    toggleCollapse(0, uids[1]);
+    runCommand('invert-selection', 0);
+    expect([...tapes[0].value.selected].sort()).toEqual([uids[0], uids[4]].sort());
+  });
+
+  it('has the backup switch the desktop app acts on', () => {
+    const before = backup.value;
+    runCommand('opt-backup', 0);
+    expect(backup.value).toBe(!before);
+    runCommand('opt-backup', 0);
+  });
+});
+
+describe('what the consistency check and the lister gained', () => {
+  it('holds a SpeedLock group to its parity', () => {
+    const pure = (data: number[]) => ({ ...(createBlock(0x14) as PureDataBlock), data: new Uint8Array(data) });
+    const tape = (last: number): Block[] => [
+      { ...(createBlock(0x21) as GroupStartBlock), name: 'SpeedLock 3 data' },
+      pure([0xff, 0x12, 0x34]), pure([0x56, last]), createBlock(0x22),
+    ];
+    expect(checkConsistency(tape(0xff ^ 0x12 ^ 0x34 ^ 0x56))).toEqual([]);
+    const issues = checkConsistency(tape(0));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ block: 0, severity: 'warning' });
+    expect(issues[0].message).toContain('SpeedLock group parity');
+  });
+
+  it('can list a program without its colour codes', () => {
+    const line = new Uint8Array([0, 10, 9, 0, 0xf5, 0x22, 0x10, 2, 0x68, 0x69, 0x22, 0x0d]);
+    const opts = { showNumbers: false, basic128: false, speccyFormat: false };
+    expect(basicToText(listBasic(line, 0, line.length, opts), opts)).toBe('  10 PRINT "[INK 2]hi"');
+    const plain = { ...opts, dropColours: true };
+    expect(basicToText(listBasic(line, 0, line.length, plain), plain)).toBe('  10 PRINT "hi"');
+  });
+});

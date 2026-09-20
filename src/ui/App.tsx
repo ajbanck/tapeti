@@ -34,7 +34,7 @@ export function App() {
       }
       if (inField) return;
       const key = mod ? e.key.toLowerCase() : e.key;
-      const bound = KEY_COMMANDS.find((kc) => kc.mod === mod && (kc.shift === undefined || kc.shift === e.shiftKey) && (kc.mod ? kc.key.toLowerCase() : kc.key) === key);
+      const bound = KEY_COMMANDS.find((kc) => kc.mod === mod && !!kc.alt === e.altKey && (kc.shift === undefined || kc.shift === e.shiftKey) && (kc.mod ? kc.key.toLowerCase() : kc.key) === key);
       if (bound) {
         e.preventDefault();
         runCommand(bound.id, side);

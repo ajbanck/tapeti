@@ -50,6 +50,8 @@ pub struct Settings {
     pub theme: Theme,
     pub hex_bytes: bool,
     pub zero_based: bool,
+    /// Keep the file a Save replaces, as `name.tzx.bak`.
+    pub backup: bool,
     pub emulator_program: String,
     pub emulator_args: String,
     pub editor_height: f32,
@@ -66,6 +68,7 @@ impl Default for Settings {
             // block number is an index into the tape, and that is where the
             // file format, the jump targets and every other tool start.
             zero_based: true,
+            backup: false,
             emulator_program: String::new(),
             emulator_args: String::new(),
             editor_height: 340.0,
@@ -118,6 +121,7 @@ impl Settings {
         s.hex_bytes = get("tapeti.hexBytes") == Some("1");
         // On by default, so an absent key is not "off".
         s.zero_based = get("tapeti.zeroBased") != Some("0");
+        s.backup = get("tapeti.backup") == Some("1");
         if let Some(v) = get("tapeti.emulator.program") {
             s.emulator_program = v.to_string();
         }
@@ -148,6 +152,7 @@ impl Settings {
             "tapeti.theme={}\n\
              tapeti.hexBytes={}\n\
              tapeti.zeroBased={}\n\
+             tapeti.backup={}\n\
              tapeti.emulator.program={}\n\
              tapeti.emulator.args={}\n\
              tapeti.editorHeight={:.0}\n\
@@ -155,6 +160,7 @@ impl Settings {
             self.theme.name(),
             u8::from(self.hex_bytes),
             u8::from(self.zero_based),
+            u8::from(self.backup),
             self.emulator_program,
             self.emulator_args,
             self.editor_height,

@@ -331,3 +331,33 @@ fn a_file_becomes_a_header_and_its_data() {
     assert!(file_blocks("x", &vec![0; MAX_FILE_BYTES], 32768, true).is_ok());
     assert!(file_blocks("x", &vec![0; MAX_FILE_BYTES + 1], 32768, true).is_err());
 }
+
+#[test]
+fn a_speedlock_group_answers_for_its_parity() {
+    use tapeti_core::consistency::{check_consistency, Severity};
+    use tapeti_core::types::{Block, Body};
+    let pure = |data: &[u8]| {
+        Block::new(Body::PureData { zero: 555, one: 1110, used_bits: 8, pause: 0, data: data.to_vec() })
+    };
+    let tape = |name: &str, last: u8| {
+        vec![
+            Block::new(Body::GroupStart { name: name.to_string() }),
+            Block::new(Body::PureTone { pulse_len: 2168, count: 200 }),
+            pure(&[0xff, 0x12, 0x34]),
+            pure(&[0x56, last]),
+            Block::new(Body::GroupEnd),
+        ]
+    };
+    let right = 0xff ^ 0x12 ^ 0x34 ^ 0x56;
+    assert!(check_consistency(&tape("SpeedLock 3 data", right), 0).is_empty());
+    let issues = check_consistency(&tape("speedlock 7", 0x00), 0);
+    assert_eq!(issues.len(), 1);
+    assert_eq!((issues[0].block, issues[0].severity), (0, Severity::Warning));
+    assert!(
+        issues[0].message.contains(&format!("ends in 00, the rest of it makes {right:02X}")),
+        "{}",
+        issues[0].message
+    );
+    // Any other group is left alone: its pure data answers to nobody.
+    assert!(check_consistency(&tape("Alkatraz", 0x00), 0).is_empty());
+}

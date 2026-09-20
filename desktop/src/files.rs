@@ -183,6 +183,75 @@ pub fn open_with(store: &mut Store, paths: &[PathBuf]) {
     }
 }
 
+/// Tapes the panic hook wrote out last time go back into their panes, unsaved as
+/// they were, and the files go. A pane that already has a tape in it (one named
+/// on the command line) keeps it, and the rescued file stays where it is.
+pub fn restore_rescued(store: &mut Store) {
+    if let Some(dir) = crate::settings::config_dir() {
+        restore_rescued_from(store, &dir);
+    }
+}
+
+pub fn restore_rescued_from(store: &mut Store, dir: &Path) {
+    let mut left_behind = Vec::new();
+    let mut restored = false;
+    for side in 0..2 {
+        let path = dir.join(crate::crashlog::rescue_name(side));
+        if !path.exists() {
+            continue;
+        }
+        let parsed = std::fs::read(&path).ok().and_then(|b| parse_tape(&b).ok());
+        match parsed {
+            Some(p) if store.tape(side).blocks.is_empty() => {
+                let t = store.tape_mut(side);
+                t.load(
+                    format!("rescued-{}.tzx", if side == 0 { "left" } else { "right" }),
+                    None,
+                    p.blocks,
+                    None,
+                );
+                t.mark_unsaved();
+                restored = true;
+                let _ = std::fs::remove_file(&path);
+            }
+            _ => left_behind.push(path.display().to_string()),
+        }
+    }
+    if restored {
+        let mut lines = vec![
+            "Tapeti stopped unexpectedly last time. The tapes with unsaved changes are back in their panes;"
+                .to_string(),
+            "save them under a name of your choosing.".to_string(),
+        ];
+        lines.extend(left_behind.iter().map(|p| format!("Also kept, and not opened: {p}")));
+        store.message("Unsaved tapes recovered", lines);
+    } else if !left_behind.is_empty() {
+        let mut lines =
+            vec!["Tapeti stopped unexpectedly last time. Unsaved tapes were kept as:".to_string()];
+        lines.extend(left_behind);
+        store.message("Unsaved tapes recovered", lines);
+    }
+}
+
+/// Write `bytes` over the file at `path` so that a failure — a full disk —
+/// leaves the old file whole: to a temporary beside it first, then renamed over
+/// it. With `backup` the old file is kept as `name.tzx.bak`, which is then
+/// always the version before the last save.
+fn write_in_place(path: &Path, bytes: &[u8], backup: bool) -> std::io::Result<()> {
+    let beside = |suffix: &str| {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(suffix);
+        path.with_file_name(name)
+    };
+    if backup && path.exists() {
+        std::fs::copy(path, beside(".bak"))?;
+    }
+    let tmp = beside(".tmp");
+    std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
 /// Pick one arbitrary file (the data window's Append / Replace from file).
 pub fn pick_any_file() -> Option<(String, Vec<u8>)> {
     let path = rfd::FileDialog::new().add_filter("All files", &["*"]).pick_file()?;
@@ -211,7 +280,7 @@ pub fn save_tzx(store: &mut Store, side: Side, save_as: bool) {
         .flatten()
         .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("tzx")));
     let written = match in_place {
-        Some(path) => match std::fs::write(&path, &bytes) {
+        Some(path) => match write_in_place(&path, &bytes, store.settings.backup) {
             Ok(()) => Some(path),
             Err(e) => {
                 store.message("Cannot save", vec![format!("{}: {e}", path.display())]);
@@ -322,6 +391,26 @@ pub mod tests {
         load_bytes(&mut store, 1, "odd.bin", &[2, 0, 0xff, 0xff], false, None);
         assert!(store.dialog.is_none());
         assert_eq!(store.tape(1).blocks.len(), 1);
+    }
+
+    #[test]
+    fn saving_in_place_keeps_the_old_file_when_asked() {
+        let dir = std::env::temp_dir().join(format!("tapeti-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("game.tzx");
+        std::fs::write(&path, b"first").unwrap();
+
+        write_in_place(&path, b"second", false).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert!(!dir.join("game.tzx.bak").exists() && !dir.join("game.tzx.tmp").exists());
+
+        write_in_place(&path, b"third", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"third");
+        assert_eq!(std::fs::read(dir.join("game.tzx.bak")).unwrap(), b"second");
+
+        // Nowhere to write: the error comes back and nothing is left lying about.
+        assert!(write_in_place(&dir.join("missing").join("x.tzx"), b"x", true).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

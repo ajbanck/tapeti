@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use tapeti_core::audio::{playback_order, FlowOptions};
 use tapeti_core::compare::{compare_tapes, find_matches, BlockCompareMode, CompareResult, TapeCompareMode};
 use tapeti_core::programs::group_ranges;
 use tapeti_core::types::{Block, Body, Uid};
@@ -129,6 +130,11 @@ impl TapeState {
     /// thing back; a save re-bases that identity over the history too, because
     /// the file on disk is these blocks under this name. Undoing past a save is
     /// dirty again, and does not take the name back with it.
+    /// A tape that came from nowhere it could be saved back to: rescued after a crash.
+    pub fn mark_unsaved(&mut self) {
+        self.saved_gen = 0;
+    }
+
     pub fn mark_saved(&mut self) {
         self.saved_gen = self.gen;
         for snap in self.undo.iter_mut().chain(self.redo.iter_mut()) {
@@ -271,6 +277,13 @@ pub enum SelectMode {
     Keep,
 }
 
+/// A place in the order a tape plays in, good for as long as the tape is this version of it.
+struct Stepping {
+    gen: u64,
+    order: Vec<u32>,
+    pos: usize,
+}
+
 pub struct Store {
     pub tapes: [TapeState; 2],
     pub active: Side,
@@ -280,6 +293,8 @@ pub struct Store {
     pub tape_compare: TapeCompareMode,
     /// false = plain square wave, true = the Spectrum MIC response.
     pub audio_mic: bool,
+    /// Where `step_next` is in each tape's play order.
+    stepping: [Option<Stepping>; 2],
     /// The disassembler's symbol table, as typed. Kept for the session, so
     /// closing a data window does not lose it.
     pub symbols: String,
@@ -303,6 +318,7 @@ impl Store {
             tape_compare: TapeCompareMode::DataBlocks,
             audio_mic: true,
             symbols: String::new(),
+            stepping: [None, None],
             clipboard: Vec::new(),
             settings,
             dialog: None,
@@ -648,6 +664,91 @@ impl Store {
             bl.insert(first, start);
             Edit::at(first as i32, HashSet::from([uid]))
         });
+    }
+
+    /// As `group_selection`, with a loop: twice round, which the loop's editor changes.
+    pub fn loop_selection(&mut self, side: Side) {
+        let t = &self.tapes[side];
+        let idx = t.unit_indices(t.cursor);
+        let (Some(first), Some(last)) = (idx.first().copied(), idx.last().copied()) else { return };
+        let start = Block::new(Body::LoopStart { count: 2 });
+        let end = Block::new(Body::LoopEnd);
+        let uid = start.uid;
+        self.commit(side, move |bl| {
+            bl.insert(last + 1, end);
+            bl.insert(first, start);
+            Edit::at(first as i32, HashSet::from([uid]))
+        });
+    }
+
+    /// What is selected is not, and what is not is — over the rows the list
+    /// shows. A collapsed group or loop is one row, so it comes out selected or
+    /// not as a whole: inverting never leaves a block selected that has nothing
+    /// to show it on.
+    pub fn invert_selection(&mut self, side: Side) {
+        let t = &mut self.tapes[side];
+        let ranges = t.ranges();
+        let mut selected: HashSet<Uid> = HashSet::new();
+        let mut i = 0;
+        while i < t.blocks.len() {
+            let end = match ranges.get(&i) {
+                Some(end) if t.collapsed.contains(&t.blocks[i].uid) => *end,
+                _ => i,
+            };
+            if !t.selected.contains(&t.blocks[i].uid) {
+                selected.extend(t.blocks[i..=end].iter().map(|b| b.uid));
+            }
+            i = end + 1;
+        }
+        t.selected = selected;
+    }
+
+    // ---- stepping through the play order --------------------------------------
+
+    /// Move the cursor to the block that plays after the one it is on, following
+    /// loops, jumps and calls as a player would: a way to see that a tape runs
+    /// in the order meant without playing it. Walking on from where the last
+    /// step landed keeps count of the loop passes; from anywhere else it starts
+    /// at that block's first turn.
+    pub fn step_next(&mut self, side: Side) {
+        let t = &self.tapes[side];
+        let carried = self.stepping[side].take().filter(|st| {
+            st.gen == t.gen && st.order.get(st.pos).is_some_and(|i| i64::from(*i) == i64::from(t.cursor))
+        });
+        let mut st = carried.unwrap_or_else(|| {
+            let order = playback_order(&t.blocks, FlowOptions::default());
+            // Not in the order at all (after a jump over it, say): start the tape.
+            let pos = order.iter().position(|i| i64::from(*i) == i64::from(t.cursor));
+            Stepping { gen: t.gen, pos: pos.unwrap_or(usize::MAX), order }
+        });
+        st.pos = st.pos.wrapping_add(1);
+        let Some(next) = st.order.get(st.pos).map(|i| *i as usize) else {
+            self.set_status("The tape ends here".to_string());
+            return;
+        };
+        // A block inside a collapsed group has no row to put the cursor on.
+        let inside: Vec<Uid> = t
+            .ranges()
+            .iter()
+            .filter(|(start, end)| **start < next && next <= **end)
+            .map(|(start, _)| t.blocks[*start].uid)
+            .collect();
+        let turn = st.order[..=st.pos].iter().filter(|i| **i as usize == next).count();
+        let zero = self.settings.zero_based;
+        for uid in inside {
+            self.tapes[side].collapsed.remove(&uid);
+        }
+        self.set_cursor(side, next as i32, SelectMode::Single);
+        self.stepping[side] = Some(st);
+        self.touch_view();
+        let again = if turn > 1 { format!(" (time {turn})") } else { String::new() };
+        self.set_status(format!("Plays next: #{}{again}", crate::fmt::block_no(next, zero)));
+    }
+
+    /// Forget the loop passes and calls walked so far: the next step starts afresh.
+    pub fn step_reset(&mut self, side: Side) {
+        self.stepping[side] = None;
+        self.set_status("Stepping starts afresh from the cursor".to_string());
     }
 
     // ---- compare -----------------------------------------------------------

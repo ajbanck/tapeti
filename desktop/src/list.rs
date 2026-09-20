@@ -130,6 +130,9 @@ impl RowCache {
 /// Rebuild the caches of both panes if anything they read has changed.
 pub fn refresh(app: &mut App) {
     for side in 0..2 {
+        // What a crash would otherwise take: the copy is made once per version.
+        let t = app.store.tape(side);
+        crate::crashlog::keep(side, t.generation(), t.dirty(), || (t.name.clone(), t.blocks.clone()));
         let want = (app.store.tape(side).generation(), app.store.view_gen);
         if app.rows[side].built == Some(want) {
             continue;

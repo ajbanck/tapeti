@@ -9,6 +9,10 @@
 //! report the list panic this module was written for was "it terminates", and
 //! the line number took a terminal and a session to get to.
 //!
+//! A panic also takes every unsaved edit with it, so the hook writes those out
+//! first ([`keep`] is told what they are as the tapes change) and the next start
+//! puts them back in their panes. TAPER did the same with LEFTTAPE.TZX.
+//!
 //! The hook writes the message, the source location and a backtrace beside the
 //! settings file, and the About dialog names that file once it exists. The
 //! location is the part that always survives: it is a static string in the
@@ -18,7 +22,70 @@ use std::backtrace::Backtrace;
 use std::io::Write;
 use std::panic::{Location, PanicHookInfo};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use tapeti_core::types::Block;
+use tapeti_core::writer::serialize_tzx;
+
+/// An unsaved tape as last seen: which version of it, its name, its blocks.
+type Unsaved = Option<(u64, String, Vec<Block>)>;
+
+/// What the hook would have to write out, per pane. `None` for a tape with
+/// nothing unsaved on it.
+static UNSAVED: Mutex<[Unsaved; 2]> = Mutex::new([None, None]);
+
+const SIDES: [&str; 2] = ["left", "right"];
+
+/// The file a pane's unsaved tape goes to when the app dies, in the settings folder.
+pub fn rescue_name(side: usize) -> String {
+    format!("rescued-{}.tzx", SIDES[side])
+}
+
+/// Told once a frame what a pane holds: `generation` is the version of its
+/// blocks, and `unsaved` makes the copy only when that has changed.
+pub fn keep(side: usize, generation: u64, dirty: bool, unsaved: impl FnOnce() -> (String, Vec<Block>)) {
+    if let Ok(mut held) = UNSAVED.try_lock() {
+        update(&mut held[side], generation, dirty, unsaved);
+    }
+}
+
+fn update(slot: &mut Unsaved, generation: u64, dirty: bool, unsaved: impl FnOnce() -> (String, Vec<Block>)) {
+    let have = slot.as_ref().map(|(g, _, _)| *g);
+    match (dirty, have) {
+        (false, _) => *slot = None,
+        (true, Some(g)) if g == generation => {}
+        (true, _) => {
+            let (name, blocks) = unsaved();
+            *slot = Some((generation, name, blocks));
+        }
+    }
+}
+
+/// Write the unsaved tapes beside the log; what comes back is a line per tape
+/// for the report. Runs inside the panic hook, so it must not panic or wait: a
+/// lock someone holds is a tape that is not written.
+fn rescue() -> String {
+    match (UNSAVED.try_lock(), crate::settings::config_dir()) {
+        (Ok(held), Some(dir)) => write_rescued(&held, &dir),
+        _ => String::new(),
+    }
+}
+
+fn write_rescued(held: &[Unsaved; 2], dir: &Path) -> String {
+    let mut lines = String::new();
+    for (side, tape) in held.iter().enumerate() {
+        let Some((_, name, blocks)) = tape else { continue };
+        let path = dir.join(rescue_name(side));
+        let written =
+            std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, serialize_tzx(blocks, None)));
+        lines.push_str(&match written {
+            Ok(()) => format!("unsaved {} tape {name:?} kept as {}\n", SIDES[side], path.display()),
+            Err(e) => format!("unsaved {} tape {name:?} could not be kept: {e}\n", SIDES[side]),
+        });
+    }
+    lines
+}
 
 /// How large the log may get before it is started again. A panic that repeats
 /// on every launch should not grow a file without end, and it is the newest
@@ -37,8 +104,11 @@ pub fn install() {
         // stderr first, and always: running from a terminal should look exactly
         // as it did before this module existed.
         default(info);
+        // The tapes before the report: they are what cannot be had again.
+        let kept = rescue();
+        eprint!("{kept}");
         if let Some(path) = path() {
-            let trace = Backtrace::force_capture().to_string();
+            let trace = format!("{kept}{}", Backtrace::force_capture());
             let _ = append(&path, &report(&message(info), info.location(), &trace, now()));
         }
     }));
@@ -109,6 +179,55 @@ fn append(path: &Path, text: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What is held follows the tape: a copy per unsaved version, nothing once
+    /// it is saved, and no second copy of a version already held.
+    #[test]
+    fn only_what_is_unsaved_is_held() {
+        use tapeti_core::types::{create_body, Block};
+        let tape = || ("demo.tzx".to_string(), vec![Block::new(create_body(0x20))]);
+        let mut slot: Unsaved = None;
+        let held = |slot: &Unsaved| slot.as_ref().map(|(g, _, b)| (*g, b.len()));
+
+        update(&mut slot, 7, false, || panic!("a saved tape is not copied"));
+        assert_eq!(held(&slot), None);
+        update(&mut slot, 7, true, tape);
+        assert_eq!(held(&slot), Some((7, 1)));
+        update(&mut slot, 7, true, || panic!("the same version is not copied twice"));
+        update(&mut slot, 8, true, tape);
+        assert_eq!(held(&slot), Some((8, 1)));
+        update(&mut slot, 8, false, || panic!("saving drops the copy"));
+        assert_eq!(held(&slot), None);
+    }
+
+    /// The whole way round: what the hook writes is what the next start puts
+    /// back, unsaved as it was, and the file is gone once it has been.
+    #[test]
+    fn a_rescued_tape_comes_back_unsaved() {
+        use crate::settings::Settings;
+        use crate::state::Store;
+        use tapeti_core::types::{create_body, Block};
+        let dir = std::env::temp_dir().join(format!("tapeti-rescue-{}", std::process::id()));
+        let blocks = vec![Block::new(create_body(0x20)), Block::new(create_body(0x30))];
+        let held: [Unsaved; 2] = [None, Some((3, "work.tzx".to_string(), blocks.clone()))];
+        let lines = write_rescued(&held, &dir);
+        assert!(lines.contains("unsaved right tape \"work.tzx\" kept as"), "{lines}");
+        assert!(!dir.join(rescue_name(0)).exists() && dir.join(rescue_name(1)).exists());
+
+        let mut store = Store::new(Settings::default());
+        crate::files::restore_rescued_from(&mut store, &dir);
+        assert!(store.tape(0).blocks.is_empty());
+        assert_eq!(store.tape(1).blocks, blocks);
+        assert!(store.tape(1).dirty() && store.tape(1).path.is_none());
+        assert!(!dir.join(rescue_name(1)).exists(), "put back, so not kept");
+        assert!(store.dialog.is_some(), "and the user is told");
+
+        // A pane that already holds a tape keeps it; the file stays, and is named.
+        write_rescued(&held, &dir);
+        crate::files::restore_rescued_from(&mut store, &dir);
+        assert!(dir.join(rescue_name(1)).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn dates_are_the_ones_a_calendar_agrees_with() {

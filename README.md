@@ -53,7 +53,8 @@ are [Taper](#credits)'s.
 **Block operations**: insert any block type (or an empty BASIC program, header and data), insert
 a file — a tape or snapshot goes in as its blocks, anything else (a `.scr`, a binary) as the Bytes
 header and data block `SAVE "name" CODE` would have made, after asking for the name and address — cut / copy / paste / duplicate / delete, move up and
-down, drag & drop within and between tapes (hold Alt or Ctrl to copy), group the selection,
+down, drag & drop within and between tapes (hold Alt or Ctrl to copy), group or loop the selection,
+invert the selection,
 collapse and expand groups and loops (a collapsed group acts as one block), multi-select with
 Shift-click and Ctrl-click (⌘-click on macOS), undo / redo per tape, lock switch to prevent
 accidental edits.
@@ -80,8 +81,8 @@ signal level, text, message, archive info, hardware type (full hardware list), c
   both parameters, labelled for the type, and editable there as in the block editor. A header
   block opens on it.
 - View as Screen (with FLASH animation, hide attributes, Save to SCR / PNG).
-- BASIC listing with hidden-number detection, "Show numbers", Speccy 32-column formatting and 128k
-  tokens; variables area listing.
+- BASIC listing with hidden-number detection, "Show numbers", Speccy 32-column formatting, "Drop
+  colours" (the colour and position codes left out) and 128k tokens; variables area listing.
 - **Edit** turns the program into text and **Apply** turns it back: one program line per line,
   keywords in capitals (or any case, if you ask), numbers given their hidden five-byte form as the
   Spectrum's editor would, and `{...}` for what a keyboard cannot type — `{1F}` a byte, `{A}` a
@@ -118,12 +119,18 @@ blocks without a usable header are guessed from their size and bytes (`SCREEN?`,
 
 **Tape tools**: tape info (size, TZX version, estimated playing time, block counts), consistency
 check (nesting, useless loops, bad jumps, calls without return, infinite loops, checksums),
-compare tapes and find match with block-compare and tape-compare modes (magenta = differs,
+a SpeedLock group's parity — its pure data blocks have no checksum of their own, the loader keeps
+one over the whole group — compare tapes and find match with block-compare and tape-compare modes (magenta = differs,
 grey = ignored, green = match), set selection timings to current block.
 Blocks with consistency problems are marked in the block list: a red `!` for errors (invalid
 structure, bad jump targets, broken generalized data), an amber `!` for warnings such as a
 checksum that does not match or data that is shorter or longer than its header says; hover
 for the details. A collapsed group shows the marks of the blocks inside it.
+
+**Stepping** (Play → Step to next played block, Alt+↓): the cursor moves to the block that plays
+next, following loops, jumps and calls as a player would — twice round a two-pass loop, into a
+collapsed group, which opens — so a tape's flow can be checked without playing it. Alt+↑ forgets
+the passes walked so far.
 
 **Audio**: play the tape, play from cursor or play the selection through Web Audio, and export
 WAV (8/16-bit, several sample rates) with either a square wave or MIC-emulation waveform. Loops,
@@ -154,7 +161,9 @@ follow-the-system; the button at the right end of the in-window menu bar cycles 
 
 ### Files on the desktop
 
-Open and Save use native dialogs, **Save (Ctrl+S) writes back to the file you opened**, and `.tzx`
+Open and Save use native dialogs, **Save (Ctrl+S) writes back to the file you opened** — to a
+temporary file first, so a full disk cannot leave half a tape, and with View → Keep a Backup When
+Saving the version it replaces stays beside it as `name.tzx.bak` — and `.tzx`
 / `.tap` files are associated with the app so they open with a double click (or by dropping them on
 the app icon in the macOS Dock). Tapes can also be opened from the File menu or a tape's folder button, dropped onto
 a tape pane, or named on the command line — `tapeti left.tzx right.tzx` fills both panes. In the
@@ -186,6 +195,13 @@ place of Ctrl and Option in place of Alt**; Delete is the Backspace (⌫) key th
 
 Mac keyboards have no Insert key: use ⌘⇧N in the desktop app, or the + button in
 the tape toolbar.
+
+### If the desktop app crashes
+
+Tapes with unsaved changes are written out beside the crash log before the app goes, and the next
+start puts them back in their panes, still unsaved, and says so. (A pane that already holds a tape
+named on the command line keeps it; the rescued file then stays in the settings folder, which the
+message names.)
 
 ### Not implemented
 

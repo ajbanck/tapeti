@@ -59,6 +59,8 @@ pub struct BasicOptions {
     pub basic128: bool,
     /// 32 columns, control codes interpreted.
     pub speccy_format: bool,
+    /// Leave the colour and position codes out of the listing altogether.
+    pub drop_colours: bool,
 }
 
 /// Decode a 5-byte Sinclair floating point number.
@@ -285,7 +287,7 @@ pub fn list_basic(data: &[u8], start: usize, end: usize, opts: BasicOptions) -> 
                 }
                 if (0x10..=0x15).contains(&c) && q < line_end {
                     const NAMES: [&str; 6] = ["INK", "PAPER", "FLASH", "BRIGHT", "INVERSE", "OVER"];
-                    let t = if opts.speccy_format {
+                    let t = if opts.speccy_format || opts.drop_colours {
                         String::new()
                     } else {
                         format!("[{} {}]", NAMES[usize::from(c) - 0x10], at(q))
@@ -293,7 +295,7 @@ pub fn list_basic(data: &[u8], start: usize, end: usize, opts: BasicOptions) -> 
                     line.tokens.push(BasicToken { text: t, kind: TokenKind::Ctrl });
                     q += 1;
                 } else if (c == 0x16 || c == 0x17) && q + 1 < line_end {
-                    let t = if opts.speccy_format {
+                    let t = if opts.speccy_format || opts.drop_colours {
                         String::new()
                     } else {
                         format!("[{} {},{}]", if c == 0x16 { "AT" } else { "TAB" }, at(q), at(q + 1))

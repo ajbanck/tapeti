@@ -4,6 +4,7 @@ import { signal } from '@preact/signals';
 import { Block, cloneBlock } from '../tzx/types';
 import { BlockCompareMode, TapeCompareMode, CompareResult, compareTapes, findMatches } from '../tzx/compare';
 import { groupRanges } from '../tzx/programs';
+import { playbackOrder } from '../tzx/audio';
 import type { SnapshotInfo, SnapshotKind } from '../tzx/snapshot';
 
 export type Side = 0 | 1;
@@ -81,8 +82,10 @@ function loadFlag(key: string, dflt = false): boolean {
  */
 export const zeroBased = signal(loadFlag('tapeti.zeroBased', true));
 export const hexBytes = signal(loadFlag('tapeti.hexBytes'));
-export function setOption(opt: 'zeroBased' | 'hexBytes', on: boolean) {
-  (opt === 'zeroBased' ? zeroBased : hexBytes).value = on;
+/** The desktop app keeps the file a Save replaces as `name.tzx.bak`; a browser saves by download and has nothing to keep. */
+export const backup = signal(loadFlag('tapeti.backup'));
+export function setOption(opt: 'zeroBased' | 'hexBytes' | 'backup', on: boolean) {
+  ({ zeroBased, hexBytes, backup })[opt].value = on;
   try { localStorage.setItem('tapeti.' + opt, on ? '1' : '0'); } catch { /* ignore */ }
 }
 export function applyTheme(t: Theme) {
@@ -287,6 +290,24 @@ export function selectAll(side: Side) {
   patch(side, { selected: new Set(t.blocks.map((b) => b.uid)) });
 }
 
+/**
+ * What is selected is not, and what is not is — over the rows the list shows.
+ * A collapsed group or loop is one row, so it comes out selected or not as a
+ * whole: inverting never leaves a block selected that has nothing to show it on.
+ */
+export function invertSelection(side: Side) {
+  const t = tapes[side].value;
+  const ranges = groupRanges(t.blocks);
+  const selected = new Set<number>();
+  for (let i = 0; i < t.blocks.length; i++) {
+    const end = ranges.get(i);
+    const unit = end !== undefined && t.collapsed.has(t.blocks[i].uid) ? end : i;
+    if (!t.selected.has(t.blocks[i].uid)) for (let k = i; k <= unit; k++) selected.add(t.blocks[k].uid);
+    i = unit;
+  }
+  patch(side, { selected });
+}
+
 export function selectUids(side: Side, uids: number[]) {
   patch(side, { selected: new Set(uids) });
 }
@@ -447,6 +468,64 @@ export function groupSelection(side: Side, name: string) {
     bl.splice(idx[0], 0, s);
     return { blocks: bl, cursor: idx[0], selected: new Set([s.uid]) };
   });
+}
+
+/** As groupSelection, with a loop: twice round, which the loop's editor changes. */
+export function loopSelection(side: Side) {
+  const t = tapes[side].value;
+  const idx = unitIndices(t, t.cursor);
+  if (idx.length === 0) return;
+  commit(side, (bl) => {
+    const s = cloneBlock({ uid: -1, id: 0x24, count: 2 } as Block);
+    const e = cloneBlock({ uid: -1, id: 0x25 } as Block);
+    bl.splice(idx[idx.length - 1] + 1, 0, e);
+    bl.splice(idx[0], 0, s);
+    return { blocks: bl, cursor: idx[0], selected: new Set([s.uid]) };
+  });
+}
+
+// ---- stepping through the play order ----------------------------------------
+
+/** Where stepping is in the order the tape plays in, per tape; gone once the tape changes. */
+const stepping: ({ blocks: Block[]; order: number[]; pos: number } | null)[] = [null, null];
+
+/**
+ * Move the cursor to the block that plays after the one it is on, following
+ * loops, jumps and calls as a player would: a way to see that a tape runs in the
+ * order meant without playing it. Walking on from where the last step landed
+ * keeps count of the loop passes; from anywhere else it starts at that block's
+ * first turn.
+ */
+export function stepNext(side: Side) {
+  const t = tapes[side].value;
+  let st = stepping[side];
+  if (!st || st.blocks !== t.blocks || st.order[st.pos] !== t.cursor) {
+    const order = playbackOrder(t.blocks);
+    st = { blocks: t.blocks, order, pos: order.indexOf(t.cursor) };
+  } else {
+    st = { ...st };
+  }
+  st.pos++;
+  stepping[side] = st;
+  if (st.pos >= st.order.length) {
+    stepping[side] = null;
+    setStatus('The tape ends here');
+    return;
+  }
+  const next = st.order[st.pos];
+  // A block inside a collapsed group has no row to put the cursor on.
+  const collapsed = new Set(t.collapsed);
+  for (const [start, end] of groupRanges(t.blocks)) if (start < next && next <= end) collapsed.delete(t.blocks[start].uid);
+  patch(side, { collapsed });
+  setCursor(side, next);
+  const turn = st.order.slice(0, st.pos + 1).filter((i) => i === next).length;
+  setStatus(`Plays next: #${blockNo(next)}${turn > 1 ? ` (time ${turn})` : ''}`);
+}
+
+/** Forget the loop passes and calls walked so far: the next step starts afresh. */
+export function stepReset(side: Side) {
+  stepping[side] = null;
+  setStatus('Stepping starts afresh from the cursor');
 }
 
 // ---- compare --------------------------------------------------------------

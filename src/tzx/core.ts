@@ -330,7 +330,7 @@ export function charTableCore(kind: CharTable): string[] {
 }
 
 function basicFlags(opts: BasicOptions): number {
-  return (opts.showNumbers ? 1 : 0) | (opts.basic128 ? 2 : 0) | (opts.speccyFormat ? 4 : 0);
+  return (opts.showNumbers ? 1 : 0) | (opts.basic128 ? 2 : 0) | (opts.speccyFormat ? 4 : 0) | (opts.dropColours ? 16 : 0);
 }
 
 export function renderScreenCore(data: Uint8Array, offset: number, opts: { hideAttributes?: boolean; flashPhase?: boolean }): Uint8ClampedArray {

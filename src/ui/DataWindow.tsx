@@ -541,6 +541,7 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
         {!vars && source === null && <>
           <Check label="Show numbers" checked={opts.showNumbers} onChange={(v) => setOpts({ ...opts, showNumbers: v })} />
           <Check label="Speccy formatting" checked={opts.speccyFormat} onChange={(v) => setOpts({ ...opts, speccyFormat: v })} />
+          <Check label="Drop colours" checked={!!opts.dropColours} onChange={(v) => setOpts({ ...opts, dropColours: v })} />
         </>}
         {!vars && <Check label="128k BASIC" checked={opts.basic128} onChange={(v) => setOpts({ ...opts, basic128: v })} />}
         {!vars && source !== null && <Check label="Keywords in any case" checked={anyCase} onChange={setAnyCase} />}

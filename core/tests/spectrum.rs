@@ -402,3 +402,11 @@ fn variables_of_noise_do_not_overflow() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].kind, "number array");
 }
+
+#[test]
+fn a_listing_can_leave_the_colours_out() {
+    let line = [0, 10, 12, 0, 0xf5, b'"', 0x10, 2, 0x16, 1, 2, b'h', b'i', b'"', 0x06, 0x0d];
+    let text = |opts| basic_to_text(&list_basic(&line, 0, line.len(), opts), opts);
+    assert_eq!(text(BasicOptions::default()), "  10 PRINT \"[INK 2][AT 1,2]hi\"[,]");
+    assert_eq!(text(BasicOptions { drop_colours: true, ..BasicOptions::default() }), "  10 PRINT \"hi\"[,]");
+}

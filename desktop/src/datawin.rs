@@ -1024,6 +1024,7 @@ fn basic(
             if !editing {
                 w::check(ui, "Show numbers", &mut dw.basic.show_numbers, true);
                 w::check(ui, "Speccy formatting", &mut dw.basic.speccy_format, true);
+                w::check(ui, "Drop colours", &mut dw.basic.drop_colours, true);
             }
             w::check(ui, "128k BASIC", &mut dw.basic.basic128, true);
             if editing {

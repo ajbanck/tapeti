@@ -607,7 +607,8 @@ pub unsafe extern "C" fn core_has_flash(ptr: *const u8, len: usize, offset: i32)
     finish(encode_u8(has_flash(slice(ptr, len), i64::from(offset)) as u8))
 }
 
-/// List a BASIC program area. `flags`: 1 show numbers, 2 128k tokens, 4 Spectrum format.
+/// List a BASIC program area. `flags`: 1 show numbers, 2 128k tokens, 4 Spectrum
+/// format, 16 colour and position codes left out (8 is the source text's).
 ///
 /// # Safety
 /// `ptr` must point at `len` readable bytes.
@@ -780,7 +781,12 @@ pub unsafe extern "C" fn core_format_number(_ptr: *const u8, _len: usize, v: f64
 }
 
 fn basic_options(flags: u32) -> BasicOptions {
-    BasicOptions { show_numbers: flags & 1 != 0, basic128: flags & 2 != 0, speccy_format: flags & 4 != 0 }
+    BasicOptions {
+        show_numbers: flags & 1 != 0,
+        basic128: flags & 2 != 0,
+        speccy_format: flags & 4 != 0,
+        drop_colours: flags & 16 != 0,
+    }
 }
 
 // ---- audio ----------------------------------------------------------------

@@ -258,6 +258,39 @@ pub fn check_consistency(blocks: &[Block], base: i32) -> Vec<Issue> {
         }
     }
 
+    // SpeedLock's pure data blocks have no checksum of their own to mark: the
+    // loader keeps one parity over the group, which must come out as nothing.
+    // (TAPER's "Group parity". Groups are named this by the decoders that make them.)
+    let mut i = 0;
+    while i < n {
+        let Body::GroupStart { name } = &blocks[i].body else {
+            i += 1;
+            continue;
+        };
+        let end = (i + 1..n).find(|j| matches!(blocks[*j].body, Body::GroupEnd)).unwrap_or(n);
+        if name.trim_start().to_ascii_lowercase().starts_with("speedlock") {
+            let pure: Vec<&Vec<u8>> = blocks[i + 1..end]
+                .iter()
+                .filter_map(|b| match &b.body {
+                    Body::PureData { data, .. } if !data.is_empty() => Some(data),
+                    _ => None,
+                })
+                .collect();
+            let parity = pure.iter().fold(0u8, |p, data| p ^ checksum(data));
+            if let (Some(last), true) = (pure.last().and_then(|d| d.last()), parity != 0) {
+                issues.push(issue(
+                    i as i32,
+                    Severity::Warning,
+                    format!(
+                        "SpeedLock group parity does not match: the pure data ends in {last:02X}, the rest of it makes {:02X}",
+                        parity ^ last
+                    ),
+                ));
+            }
+        }
+        i = end.max(i + 1);
+    }
+
     // Data blocks whose length differs from what the preceding ROM header announces.
     for (i, b) in blocks.iter().enumerate() {
         let data = match &b.body {
