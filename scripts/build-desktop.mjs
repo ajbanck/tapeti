@@ -15,7 +15,7 @@
 //                           is there) and a .tar.gz, always
 //                  Windows  Tapeti-v<version>-windows-x86_64-portable.exe and, with
 //                           the WiX `wix` command on PATH, an .msi that registers
-//                           .tzx/.tap
+//                           .tzx/.tap (and offers itself for .z80/.sna)
 //   --universal  macOS: build both architectures and lipo them into one binary
 //   --no-build   package what is already in desktop/target
 //
@@ -152,6 +152,16 @@ function macApp() {
       <key>LSItemContentTypes</key>
       <array><string>com.zxtoolkit.tapeti.tzx</string><string>com.zxtoolkit.tapeti.tap</string></array>
     </dict>
+    <!-- Snapshots are an emulator's files: Tapeti opens them (as the tape that loads
+         them) from Open With or a drop on the Dock icon, and never becomes their
+         default. By extension, because the types are not ours to declare. -->
+    <dict>
+      <key>CFBundleTypeName</key><string>ZX Spectrum snapshot</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>z80</string><string>sna</string></array>
+    </dict>
   </array>
   <key>UTExportedTypeDeclarations</key>
   <array>
@@ -208,7 +218,7 @@ Comment=ZX Spectrum TZX/TAP tape editor
 Exec=tapeti %F
 Icon=tapeti
 Categories=Utility;AudioVideo;Development;
-MimeType=application/x-tzx;application/x-tap;
+MimeType=application/x-tzx;application/x-tap;application/x-z80;application/x-sna;
 Terminal=false
 `;
 
@@ -255,8 +265,8 @@ function linuxPackages() {
 
 // ---- Windows --------------------------------------------------------------
 
-/** WiX v4+ source: one component with the exe, a Start menu shortcut, and the two
- *  file associations. Windows has no bundle to declare them in, so they are
+/** WiX v4+ source: one component with the exe, a Start menu shortcut, the two
+ *  file associations and an "Open with" entry for snapshots. Windows has no bundle to declare them in, so they are
  *  registry entries an installer writes — which is why there is an .msi at all. */
 function wxs() {
   return `<?xml version="1.0" encoding="utf-8"?>
@@ -288,6 +298,16 @@ function wxs() {
             <Verb Id="open" Command="Open" TargetFile="TapetiExeFile" Argument="&quot;%1&quot;" />
           </Extension>
         </ProgId>
+        <!-- Snapshots are an emulator's files: be in their "Open with" list, not their
+             default. An Extension element would claim them, so these are plain keys. -->
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\Tapeti.snapshot" Type="string"
+                       Value="ZX Spectrum snapshot" />
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\Tapeti.snapshot\\shell\\open\\command" Type="string"
+                       Value="&quot;[#TapetiExeFile]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\.z80\\OpenWithProgids" Name="Tapeti.snapshot"
+                       Type="string" Value="" />
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\.sna\\OpenWithProgids" Name="Tapeti.snapshot"
+                       Type="string" Value="" />
       </Component>
     </ComponentGroup>
     <Feature Id="Main">

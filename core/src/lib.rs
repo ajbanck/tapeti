@@ -16,6 +16,7 @@ pub mod dump;
 pub mod parser;
 pub mod pokes;
 pub mod programs;
+pub mod snapshot;
 pub mod spectrum;
 pub mod types;
 pub mod wasm;

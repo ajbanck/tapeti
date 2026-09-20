@@ -804,3 +804,23 @@ pub fn encode_samples(samples: &[f32]) -> Vec<u8> {
     }
     w
 }
+
+/// What the import dialog shows of a snapshot: `[u8 machine]` (0 48K, 1 128K,
+/// 2 Scorpion), `[u8 border]`, then its screen as `bytes`.
+pub fn encode_snapshot_info(snap: &crate::snapshot::Snapshot) -> Vec<u8> {
+    let mut w = header();
+    w.push(if snap.is_128k && snap.is_scorpion { 2 } else { u8::from(snap.is_128k) });
+    w.push(snap.border);
+    bytes(&mut w, snap.screen());
+    w
+}
+
+/// A snapshot to convert, as the app sends it: the file, a loading screen
+/// (empty for none) and the file's name, each as `bytes`.
+pub fn decode_snapshot_request(buf: &[u8]) -> ReadResult<(Vec<u8>, Vec<u8>, String)> {
+    let mut r = Reader::new(buf);
+    let file = read_bytes(&mut r)?;
+    let screen = read_bytes(&mut r)?;
+    let name = String::from_utf8_lossy(&read_bytes(&mut r)?).into_owned();
+    Ok((file, screen, name))
+}

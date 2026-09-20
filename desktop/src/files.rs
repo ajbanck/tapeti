@@ -8,22 +8,24 @@
 use std::path::{Path, PathBuf};
 
 use tapeti_core::parser::{is_tzx, parse_tape};
+use tapeti_core::snapshot::{parse_snapshot, snapshot_to_blocks, LoaderOptions, SnapshotKind, SPEED_BPS};
 use tapeti_core::writer::{save_version, serialize_tap, serialize_tzx, Version};
 
 use crate::fmt;
 use crate::state::{Side, Store};
 
 pub const TAPE_EXTENSIONS: [&str; 4] = ["tzx", "tap", "TZX", "TAP"];
+/// Snapshots open too: as the tape that loads them, once the dialog has been answered.
+pub const SNAPSHOT_EXTENSIONS: [&str; 4] = ["z80", "sna", "Z80", "SNA"];
 
 pub fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// The tape's name without a `.tzx`/`.tap` extension, or `tape`.
+/// The tape's name without a `.tzx`/`.tap` extension (or a snapshot's), or `tape`.
 pub fn stem(name: &str) -> String {
-    let s = name.strip_suffix(".tzx").or_else(|| name.strip_suffix(".TZX"));
-    let s = s.or_else(|| name.strip_suffix(".tap")).or_else(|| name.strip_suffix(".TAP"));
-    let s = s.unwrap_or(name);
+    let known = TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS);
+    let s = known.filter_map(|e| name.strip_suffix(e)?.strip_suffix('.')).next().unwrap_or(name);
     if s.is_empty() {
         "tape".to_string()
     } else {
@@ -45,6 +47,16 @@ pub fn load_bytes(
     insert_at_cursor: bool,
     path: Option<PathBuf>,
 ) {
+    if let Some(kind) = SnapshotKind::from_name(name) {
+        // A snapshot becomes a tape only once the dialog has its answers.
+        match parse_snapshot(bytes, kind) {
+            Ok(snap) => {
+                store.dialog = Some(crate::dialogs::Dialog::snapshot(side, name, snap, insert_at_cursor))
+            }
+            Err(e) => store.message("Cannot load file", vec![e]),
+        }
+        return;
+    }
     let parsed = match parse_tape(bytes) {
         Ok(p) => p,
         Err(e) => {
@@ -70,8 +82,42 @@ pub fn load_bytes(
     store.set_status(format!("Loaded {name}: {count} blocks, TZX v{major}.{minor:02}"));
 }
 
+/// The snapshot import dialog's OK: build the tape that loads the snapshot.
+pub fn import_snapshot(
+    store: &mut Store,
+    side: Side,
+    snap: &tapeti_core::snapshot::Snapshot,
+    opts: &LoaderOptions,
+    insert_at_cursor: bool,
+) {
+    let blocks = match snapshot_to_blocks(snap, opts) {
+        Ok(b) => b,
+        Err(e) => {
+            store.message("Cannot import snapshot", vec![e]);
+            return;
+        }
+    };
+    let count = blocks.len();
+    if insert_at_cursor {
+        let t = store.tape(side);
+        let at = if t.cursor < 0 { t.blocks.len() } else { t.cursor as usize };
+        store.insert_blocks(side, at, blocks);
+    } else {
+        // No path: saving must ask where, not write over the snapshot.
+        store.tape_mut(side).load(opts.name.to_string(), None, blocks, None);
+    }
+    store.active = side;
+    let bps = SPEED_BPS[usize::from(opts.speed)];
+    store.set_status(format!("Imported {}: {count} blocks, loading at {bps} bps", opts.name));
+}
+
 fn tape_dialog() -> rfd::FileDialog {
-    rfd::FileDialog::new().add_filter("Tape images", &TAPE_EXTENSIONS).add_filter("All files", &["*"])
+    let all: Vec<&str> = TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS).copied().collect();
+    rfd::FileDialog::new()
+        .add_filter("Tape images and snapshots", &all)
+        .add_filter("Tape images", &TAPE_EXTENSIONS)
+        .add_filter("Snapshots (imported as a tape)", &SNAPSHOT_EXTENSIONS)
+        .add_filter("All files", &["*"])
 }
 
 /// Show the open dialog and load what was chosen.
@@ -171,5 +217,73 @@ pub fn save_tap(store: &mut Store, side: Side) {
         lines.extend(skipped.iter().map(|i| format!("#{}", fmt::block_no(*i as usize, zero_based))));
         lines.push("Turbo/pure data blocks were written as standard blocks (their timings are lost).".into());
         store.message("TAP export", lines);
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::dialogs::Dialog;
+    use crate::settings::Settings;
+    use tapeti_core::snapshot::Snapshot;
+
+    /// A 48K .sna of synthetic memory, with the program counter on its stack.
+    fn sna() -> Vec<u8> {
+        let mut file = vec![0u8; 27 + 49152];
+        file[23..25].copy_from_slice(&0x8000u16.to_le_bytes());
+        file[26] = 3;
+        file[27..27 + 6144].fill(0x55);
+        file[27 + 0x4000..27 + 0x4002].copy_from_slice(&0x9123u16.to_le_bytes());
+        file
+    }
+
+    pub fn snapshot() -> Snapshot {
+        parse_snapshot(&sna(), SnapshotKind::Sna).unwrap()
+    }
+
+    #[test]
+    fn a_snapshot_asks_first_and_loads_on_ok() {
+        let mut store = Store::new(Settings::default());
+        let path = PathBuf::from("/somewhere/game.sna");
+        load_bytes(&mut store, 0, "game.sna", &sna(), false, Some(path));
+        assert!(store.tape(0).blocks.is_empty(), "nothing loads before the dialog is answered");
+        let Some(Dialog::Snapshot(s)) = store.dialog.take() else { panic!("no import dialog") };
+        assert_eq!((s.border, s.speed, s.snap.is_128k), (3, 2, false));
+
+        let opts = LoaderOptions {
+            name: &s.name,
+            speed: s.speed,
+            border: s.border,
+            compress_all: false,
+            screen: None,
+        };
+        import_snapshot(&mut store, 0, &s.snap, &opts, false);
+        let t = store.tape(0);
+        // text, header, program and three pages; the loader sat on zeroes
+        assert_eq!(t.blocks.iter().map(|b| b.id()).collect::<Vec<_>>(), [0x30, 0x10, 0x10, 0x11, 0x11, 0x11]);
+        assert_eq!(t.name, "game.sna");
+        // Saving must ask where: the snapshot is not the tape's file.
+        assert!(t.path.is_none() && t.loaded_version.is_none() && !t.dirty());
+        assert_eq!(stem(&t.name), "game");
+
+        // Inserting goes to the cursor of the tape that is there.
+        import_snapshot(&mut store, 0, &s.snap, &opts, true);
+        assert_eq!(store.tape(0).blocks.len(), 12);
+    }
+
+    #[test]
+    fn a_broken_snapshot_says_so() {
+        let mut store = Store::new(Settings::default());
+        load_bytes(&mut store, 0, "broken.z80", &[0; 5], false, None);
+        assert!(matches!(&store.dialog, Some(Dialog::Message { title, .. }) if title == "Cannot load file"));
+    }
+
+    #[test]
+    fn stems_drop_tape_and_snapshot_extensions() {
+        assert_eq!(stem("a.tzx"), "a");
+        assert_eq!(stem("a.TAP"), "a");
+        assert_eq!(stem("a.z80"), "a");
+        assert_eq!(stem("a.wav"), "a.wav");
+        assert_eq!(stem(".tzx"), "tape");
     }
 }

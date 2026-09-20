@@ -45,9 +45,10 @@ export function platform(): Promise<Platform> {
 }
 
 export const TAPE_FILTERS: FileFilter[] = [
-  { name: 'Tape images', extensions: ['tzx', 'tap'] },
+  { name: 'Tape images and snapshots', extensions: ['tzx', 'tap', 'z80', 'sna'] },
   { name: 'TZX tape image', extensions: ['tzx'] },
   { name: 'TAP tape image', extensions: ['tap'] },
+  { name: 'Snapshot (imported as a tape)', extensions: ['z80', 'sna'] },
 ];
 
 export function filtersForName(name: string): FileFilter[] {

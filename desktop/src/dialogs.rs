@@ -12,6 +12,8 @@ use tapeti_core::audio::{playback_order, FlowOptions, RenderOptions, TSTATES_PER
 use tapeti_core::consistency::{check_consistency, Severity};
 use tapeti_core::describe::describe_block;
 use tapeti_core::programs::detect_programs;
+use tapeti_core::snapshot::{LoaderOptions, Snapshot, DEFAULT_SPEED, SPEED_BPS};
+use tapeti_core::spectrum::screen::{render_screen, ScreenOptions, SCREEN_SIZE};
 use tapeti_core::types::{block_name, create_body, Block, CREATABLE_IDS};
 use tapeti_core::writer::{save_version, serialize_tzx};
 
@@ -62,6 +64,21 @@ pub struct EmulatorState {
     pub detected: Option<String>,
 }
 
+pub struct SnapshotState {
+    pub side: Side,
+    pub name: String,
+    pub snap: Snapshot,
+    pub insert_at_cursor: bool,
+    pub speed: u8,
+    pub border: u8,
+    pub compress_all: bool,
+    /// A loading screen to show instead of the snapshot's own: file name and 6912 bytes.
+    pub screen: Option<(String, Vec<u8>)>,
+    pub error: String,
+    /// The picture, and whether it is of `screen`.
+    tex: Option<(bool, egui::TextureHandle)>,
+}
+
 pub enum Dialog {
     Message { title: String, lines: Vec<String> },
     Confirm { title: String, lines: Vec<String>, then: Then },
@@ -72,9 +89,24 @@ pub enum Dialog {
     Wav(WavState),
     Programs(ProgramsState),
     Emulator(EmulatorState),
+    Snapshot(Box<SnapshotState>),
 }
 
 impl Dialog {
+    pub fn snapshot(side: Side, name: &str, snap: Snapshot, insert_at_cursor: bool) -> Dialog {
+        Dialog::Snapshot(Box::new(SnapshotState {
+            side,
+            name: name.to_string(),
+            border: snap.border,
+            snap,
+            insert_at_cursor,
+            speed: DEFAULT_SPEED,
+            compress_all: false,
+            screen: None,
+            error: String::new(),
+            tex: None,
+        }))
+    }
     pub fn message(title: &str, lines: Vec<String>) -> Dialog {
         Dialog::Message { title: title.to_string(), lines }
     }
@@ -137,6 +169,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         Dialog::Wav(_) => ("Export WAV".into(), 440.0),
         Dialog::Programs(_) => ("Programs".into(), 460.0),
         Dialog::Emulator(_) => ("Emulator".into(), 560.0),
+        Dialog::Snapshot(_) => ("Import snapshot".into(), 520.0),
     };
 
     let response = egui::Modal::new(egui::Id::new("tapeti-dialog"))
@@ -166,6 +199,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 Dialog::Wav(s) => wav_body(ui, app, s, &tok),
                 Dialog::Programs(s) => programs_body(ui, app, s, &tok),
                 Dialog::Emulator(s) => emulator_body(ui, app, s, &tok),
+                Dialog::Snapshot(s) => snapshot_body(ui, app, s, &tok),
             };
             // The ✕ wins over the body, which reports `Keep` on every frame in
             // which nothing was clicked in it. Assigning both to one variable is
@@ -451,6 +485,120 @@ fn export_wav(app: &mut App, s: &WavState, order: &[u32]) {
         let saved = files::file_name(&path);
         app.store.set_status(format!("Saved {saved}"));
     }
+}
+
+const SPEED_NAMES: [&str; 4] = ["Normal", "High", "Turbo", "Ludicrous"];
+const BORDER_NAMES: [&str; 8] = ["Black", "Blue", "Red", "Magenta", "Green", "Cyan", "Yellow", "White"];
+
+/// A snapshot was opened: ask how the tape that loads it should be made.
+fn snapshot_body(ui: &mut Ui, app: &mut App, s: &mut SnapshotState, tok: &Tokens) -> Outcome {
+    let hex = app.store.hex;
+    let machine = match (s.snap.is_128k, s.snap.is_scorpion) {
+        (false, _) => "48K",
+        (true, false) => "128K",
+        (true, true) => "Scorpion 256K",
+    };
+    egui::Grid::new("snapshot-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        ui.label("Snapshot");
+        ui.label(format!("{} ({machine})", s.name));
+        ui.end_row();
+
+        ui.label("Loading speed");
+        let speeds: Vec<(u8, String)> = (0u8..4)
+            .map(|i| (i, format!("{} ({} bps)", SPEED_NAMES[usize::from(i)], SPEED_BPS[usize::from(i)])))
+            .collect();
+        w::combo(ui, "snapshot-speed", &mut s.speed, &speeds, 200.0, true);
+        ui.end_row();
+
+        ui.label("Border");
+        let borders: Vec<(u8, String)> =
+            (0u8..8).map(|i| (i, format!("{i} {}", BORDER_NAMES[usize::from(i)]))).collect();
+        w::combo(ui, "snapshot-border", &mut s.border, &borders, 200.0, true);
+        ui.end_row();
+
+        ui.label("Method");
+        let methods = [
+            (false, "Cleanest: nothing but the picture on screen while loading".to_string()),
+            (true, "Fastest: pack every block".to_string()),
+        ];
+        w::combo(ui, "snapshot-method", &mut s.compress_all, &methods, 360.0, true);
+        ui.end_row();
+
+        ui.label("Loading screen");
+        ui.horizontal(|ui| {
+            ui.label(s.screen.as_ref().map_or("The snapshot's own", |(name, _)| name.as_str()));
+            if ui.button("Choose…").clicked() {
+                if let Some((name, bytes)) = files::pick_any_file() {
+                    if bytes.len() == SCREEN_SIZE {
+                        s.error.clear();
+                        s.screen = Some((name, bytes));
+                    } else {
+                        s.error = format!(
+                            "A loading screen is {} bytes; {name} has {}.",
+                            fmt::num(SCREEN_SIZE as i64, hex),
+                            fmt::num(bytes.len() as i64, hex)
+                        );
+                    }
+                }
+            }
+            if s.screen.is_some() && ui.button("Reset").clicked() {
+                s.screen = None;
+            }
+        });
+        ui.end_row();
+
+        ui.label("");
+        let custom = s.screen.is_some();
+        if s.tex.as_ref().is_none_or(|(of_custom, _)| *of_custom != custom) {
+            let bytes = s.screen.as_ref().map_or(s.snap.screen(), |(_, b)| b.as_slice());
+            let px = render_screen(bytes, 0, ScreenOptions::default());
+            let image = egui::ColorImage::from_rgba_unmultiplied([256, 192], &px);
+            let tex = ui.ctx().load_texture("snapshot-screen", image, egui::TextureOptions::NEAREST);
+            s.tex = Some((custom, tex));
+        }
+        if let Some((_, tex)) = &s.tex {
+            ui.image((tex.id(), egui::vec2(256.0, 192.0)));
+        }
+        ui.end_row();
+    });
+    if !s.error.is_empty() {
+        ui.label(RichText::new(&s.error).color(tok.danger));
+    }
+    let mut note =
+        String::from("The snapshot becomes a BASIC loader followed by its memory as packed blocks");
+    if s.speed == 0 {
+        note.push_str(" at ROM speed, which still need the custom loader");
+    }
+    note.push_str(
+        ". The loader runs at BE00 and finishes in the bottom three pixel lines of the screen, \
+         so those and the bottom attribute row are lost.",
+    );
+    if s.speed == 3 {
+        note.push_str(" 6000 bps is for emulators and direct playback, not for recording to tape.");
+    }
+    w::note(ui, tok, note);
+
+    let mut go = false;
+    let outcome = footer(ui, |ui| {
+        let cancel = ui.button("Cancel").clicked();
+        go = ui.button("Import").clicked();
+        if cancel {
+            return Outcome::Close;
+        }
+        Outcome::Keep
+    });
+    if go {
+        let opts = LoaderOptions {
+            name: &s.name,
+            speed: s.speed,
+            border: s.border,
+            compress_all: s.compress_all,
+            screen: s.screen.as_ref().map(|(_, b)| b.as_slice()),
+        };
+        files::import_snapshot(&mut app.store, s.side, &s.snap, &opts, s.insert_at_cursor);
+        return Outcome::Close;
+    }
+    outcome
 }
 
 fn programs_body(ui: &mut Ui, app: &mut App, s: &mut ProgramsState, tok: &Tokens) -> Outcome {

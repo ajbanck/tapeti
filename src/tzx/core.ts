@@ -15,9 +15,9 @@ import {
   decodeBasicLines, decodeBitData, decodeBlocks, decodeBytes, decodeComparison, decodeContent,
   decodeDuration, decodePulses, decodeSamples, decodeTimeline, encodeBlocksAndOrder,
   decodeDescribed, decodeDisLines, decodeF64, decodeHeaderInfo, decodeIssues, decodeOptString,
-  decodePokesInfo, decodePrograms, decodeRanges, decodeStrings, decodeTap, decodeTape, decodeU32s,
-  decodeU8, decodeVariables, decodeVersion, encodeBasicLines, encodeBitData, encodeBlocks,
-  encodeHeaderInfo, encodePokesInfo, WIRE_VERSION,
+  decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
+  decodeTape, decodeU32s, decodeU8, decodeVariables, decodeVersion, encodeBasicLines, encodeBitData,
+  encodeBlocks, encodeHeaderInfo, encodePokesInfo, encodeSnapshotRequest, WIRE_VERSION,
 } from './wire';
 
 interface CoreExports {
@@ -28,6 +28,8 @@ interface CoreExports {
   core_parse_tape(ptr: number, len: number): number;
   core_parse_tzx(ptr: number, len: number): number;
   core_parse_tap(ptr: number, len: number): number;
+  core_snapshot_info(ptr: number, len: number, kind: number): number;
+  core_snapshot_to_tape(ptr: number, len: number, kind: number, speed: number, border: number, flags: number): number;
   core_serialize_tzx(ptr: number, len: number, major: number, minor: number): number;
   core_serialize_tap(ptr: number, len: number): number;
   core_serialize_blocks(ptr: number, len: number): number;
@@ -160,6 +162,20 @@ export function parseTzxCore(buf: Uint8Array): ParsedTape {
 
 export function parseTapCore(buf: Uint8Array): ParsedTape {
   return decodeTape(call('core_parse_tap', buf));
+}
+
+/** What a snapshot import dialog shows. `kind`: 0 .z80, 1 .sna. Throws on a bad file. */
+export function snapshotInfoCore(file: Uint8Array, kind: number): { machine: number; border: number; screen: Uint8Array } {
+  return decodeSnapshotInfo(call('core_snapshot_info', file, kind));
+}
+
+/** The tape that loads a snapshot. */
+export function snapshotToTapeCore(
+  file: Uint8Array, kind: number, name: string,
+  opts: { speed: number; border: number; compressAll: boolean; screen: Uint8Array | null },
+): ParsedTape {
+  const request = encodeSnapshotRequest(file, opts.screen, name);
+  return decodeTape(call('core_snapshot_to_tape', request, kind, opts.speed, opts.border, opts.compressAll ? 1 : 0));
 }
 
 export function serializeTzxCore(blocks: Block[], version?: { major: number; minor: number }): Uint8Array {

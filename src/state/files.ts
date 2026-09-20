@@ -3,6 +3,8 @@
 import { Side, tapes, active, dialog, emptyTape, markSaved, insertBlocks, setStatus, showMessage, blockNo } from './store';
 import { parseTape, isTzx } from '../tzx/parser';
 import { serializeTzx, serializeTap, saveVersion } from '../tzx/writer';
+import { ParsedTape } from '../tzx/types';
+import { snapshotKind, snapshotInfo, snapshotToTape, SnapshotKind, SnapshotOptions, SNAPSHOT_SPEEDS } from '../tzx/snapshot';
 import { platform, OpenedFile, TAPE_FILTERS, filtersForName, FileFilter, fileToOpened } from '../platform';
 
 export function newTape(side: Side) {
@@ -11,26 +13,49 @@ export function newTape(side: Side) {
 }
 
 export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtCursor = false) {
+  const format = snapshotKind(name);
   let parsed;
   try {
+    if (format) {
+      // A snapshot becomes a tape only once the dialog has its answers.
+      dialog.value = { kind: 'snapshot', side, name, bytes, format, info: snapshotInfo(bytes, format), insertAtCursor };
+      return;
+    }
     parsed = parseTape(bytes);
   } catch (e) {
     showMessage('Cannot load file', (e as Error).message);
     return;
   }
   if (parsed.warnings.length) showMessage(`Warnings while loading ${name}`, parsed.warnings);
+  loadParsed(side, name, parsed, insertAtCursor, isTzx(bytes));
+  setStatus(`Loaded ${name}: ${parsed.blocks.length} blocks, TZX v${parsed.major}.${String(parsed.minor).padStart(2, '0')}`);
+}
+
+/** The snapshot import dialog's OK: build the tape that loads the snapshot. */
+export function importSnapshot(side: Side, name: string, bytes: Uint8Array, format: SnapshotKind, opts: SnapshotOptions, insertAtCursor: boolean) {
+  let parsed;
+  try {
+    parsed = snapshotToTape(bytes, format, name, opts);
+  } catch (e) {
+    showMessage('Cannot import snapshot', (e as Error).message);
+    return;
+  }
+  loadParsed(side, name, parsed, insertAtCursor, false);
+  setStatus(`Imported ${name}: ${parsed.blocks.length} blocks, loading at ${SNAPSHOT_SPEEDS[opts.speed]} bps`);
+}
+
+function loadParsed(side: Side, name: string, parsed: ParsedTape, insertAtCursor: boolean, fromTzx: boolean) {
   if (insertAtCursor) {
     const t = tapes[side].value;
     insertBlocks(side, t.cursor < 0 ? t.blocks.length : t.cursor, parsed.blocks);
   } else {
     tapes[side].value = {
       ...emptyTape(name), blocks: parsed.blocks, saved: parsed.blocks, cursor: parsed.blocks.length ? 0 : -1,
-      // TAP files carry no version; only remember it for real TZX headers
-      loadedVersion: isTzx(bytes) ? { major: parsed.major, minor: parsed.minor } : null,
+      // TAP files and snapshots carry no version; only remember it for real TZX headers
+      loadedVersion: fromTzx ? { major: parsed.major, minor: parsed.minor } : null,
     };
   }
   active.value = side;
-  setStatus(`Loaded ${name}: ${parsed.blocks.length} blocks, TZX v${parsed.major}.${String(parsed.minor).padStart(2, '0')}`);
 }
 
 /** Save bytes through the platform: a download, named after the tape. */
@@ -42,7 +67,7 @@ export async function downloadBytes(bytes: Uint8Array, name: string, mime = 'app
 }
 
 function stem(name: string) {
-  return name.replace(/\.(tap|tzx)$/i, '') || 'tape';
+  return name.replace(/\.(tap|tzx|z80|sna)$/i, '') || 'tape';
 }
 
 /** Save as TZX. The browser downloads it; the desktop app (desktop/) writes in place. */

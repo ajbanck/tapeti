@@ -20,6 +20,7 @@ use crate::describe::{block_length, checksum, decode_header, describe_block, enc
 use crate::parser::{parse_tap, parse_tape, parse_tzx, ParsedTape};
 use crate::pokes::{decode_pokes, encode_pokes, pokes_to_text, text_to_pokes};
 use crate::programs::{detect_programs, group_ranges, tape_title};
+use crate::snapshot::{parse_snapshot, snapshot_to_blocks, LoaderOptions, SnapshotKind};
 use crate::spectrum::basic::{
     basic_to_text, decode_number, format_number, list_basic, list_variables, BasicOptions,
 };
@@ -29,11 +30,12 @@ use crate::spectrum::z80dis::{disassemble, DisOptions};
 use crate::types::Block;
 use crate::wire::{
     decode_basic_lines, decode_bit_data, decode_blocks, decode_blocks_and_order, decode_header_info,
-    decode_pokes_info, encode_basic_lines, encode_bit_data, encode_blocks_answer, encode_bytes,
-    encode_comparison, encode_content, encode_described, encode_dis_lines, encode_duration, encode_error,
-    encode_f64, encode_header_info, encode_issues, encode_opt_string, encode_pokes_info, encode_programs,
-    encode_pulses, encode_ranges, encode_samples, encode_strings, encode_tap, encode_tape, encode_timeline,
-    encode_u32s, encode_u8, encode_variables, encode_version, WIRE_VERSION,
+    decode_pokes_info, decode_snapshot_request, encode_basic_lines, encode_bit_data, encode_blocks_answer,
+    encode_bytes, encode_comparison, encode_content, encode_described, encode_dis_lines, encode_duration,
+    encode_error, encode_f64, encode_header_info, encode_issues, encode_opt_string, encode_pokes_info,
+    encode_programs, encode_pulses, encode_ranges, encode_samples, encode_snapshot_info, encode_strings,
+    encode_tap, encode_tape, encode_timeline, encode_u32s, encode_u8, encode_variables, encode_version,
+    WIRE_VERSION,
 };
 use crate::writer::{required_version, save_version, serialize_block, serialize_tap, serialize_tzx, Version};
 use std::alloc::{alloc, dealloc, Layout};
@@ -213,6 +215,59 @@ unsafe fn with_blocks(ptr: *const u8, len: usize, f: impl Fn(&[Block]) -> Vec<u8
         Err(e) => encode_error(&e.0),
     };
     finish(payload)
+}
+
+// ---- snapshots ------------------------------------------------------------
+
+fn snapshot_kind(kind: u32) -> SnapshotKind {
+    if kind == 1 {
+        SnapshotKind::Sna
+    } else {
+        SnapshotKind::Z80
+    }
+}
+
+/// What the import dialog needs of a snapshot. `kind`: 0 .z80, 1 .sna.
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn core_snapshot_info(ptr: *const u8, len: usize, kind: u32) -> *mut u8 {
+    finish(match parse_snapshot(slice(ptr, len), snapshot_kind(kind)) {
+        Ok(snap) => encode_snapshot_info(&snap),
+        Err(message) => encode_error(&message),
+    })
+}
+
+/// The tape that loads a snapshot, answered as a parsed tape is. `flags`: 1
+/// pack the screen's page whatever it looks like while loading.
+///
+/// # Safety
+/// `ptr` must point at `len` bytes of wire-encoded snapshot request.
+#[no_mangle]
+pub unsafe extern "C" fn core_snapshot_to_tape(
+    ptr: *const u8,
+    len: usize,
+    kind: u32,
+    speed: u32,
+    border: u32,
+    flags: u32,
+) -> *mut u8 {
+    let answer = || -> Result<Vec<u8>, String> {
+        let (file, screen, name) = decode_snapshot_request(slice(ptr, len)).map_err(|e| e.0)?;
+        let snap = parse_snapshot(&file, snapshot_kind(kind))?;
+        let opts = LoaderOptions {
+            name: &name,
+            speed: speed as u8,
+            border: border as u8,
+            compress_all: flags & 1 != 0,
+            screen: (!screen.is_empty()).then_some(&screen[..]),
+        };
+        let blocks = snapshot_to_blocks(&snap, &opts)?;
+        let v = required_version(&blocks);
+        Ok(encode_tape(&ParsedTape { blocks, major: v.major, minor: v.minor, warnings: Vec::new() }))
+    };
+    finish(answer().unwrap_or_else(|message| encode_error(&message)))
 }
 
 // ---- descriptions, content, consistency and programs ----------------------

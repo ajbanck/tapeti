@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
-import { dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum, fmtTime, unitIndices, hex, blockNo, zeroBased } from '../state/store';
-import { downloadBytes } from '../state/files';
+import { Dialog, dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum, fmtTime, unitIndices, hex, blockNo, zeroBased } from '../state/store';
+import { downloadBytes, importSnapshot, pickFile } from '../state/files';
+import { SNAPSHOT_SPEEDS, SNAPSHOT_SPEED_NAMES, SNAPSHOT_MACHINES, DEFAULT_SNAPSHOT_SPEED, SCREEN_BYTES } from '../tzx/snapshot';
+import { renderScreen } from '../spectrum/screen';
 import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block } from '../tzx/types';
 import { checkConsistency } from '../tzx/consistency';
 import { tapeDuration, renderWav, playbackOrder, blockDuration, TSTATES_PER_SEC } from '../tzx/audio';
@@ -65,6 +67,8 @@ export function Dialogs() {
       return <ProgramPicker side={d.side} />;
     case 'emulator':
       return <EmulatorDialog />;
+    case 'snapshot':
+      return <SnapshotImport d={d} />;
   }
   return null;
 }
@@ -232,6 +236,73 @@ function WavExport({ side }: { side: Side }) {
         </div>
       </div>
       <p class="note">About {fmtTime(secs)} of audio, {fmtNum(Math.round(secs * rate * bits / 8 / 1024))} KB.</p>
+    </Modal>
+  );
+}
+
+const BORDER_NAMES = ['Black', 'Blue', 'Red', 'Magenta', 'Green', 'Cyan', 'Yellow', 'White'];
+
+/** A snapshot was opened: ask how the tape that loads it should be made. */
+function SnapshotImport({ d }: { d: Extract<Dialog, { kind: 'snapshot' }> }) {
+  const [speed, setSpeed] = useState(DEFAULT_SNAPSHOT_SPEED);
+  const [border, setBorder] = useState(d.info.border);
+  const [compressAll, setCompressAll] = useState(false);
+  const [screen, setScreen] = useState<{ name: string; bytes: Uint8Array } | null>(null);
+  const [error, setError] = useState('');
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const shown = screen?.bytes ?? d.info.screen;
+  useEffect(() => {
+    const ctx = canvas.current?.getContext('2d');
+    if (!ctx || shown.length < SCREEN_BYTES) return;
+    ctx.putImageData(new ImageData(renderScreen(shown, 0) as Uint8ClampedArray<ArrayBuffer>, 256, 192), 0, 0);
+  }, [shown]);
+  const pickScreen = async () => {
+    const f = await pickFile();
+    if (!f) return;
+    if (f.bytes.length !== SCREEN_BYTES) {
+      setError(`A loading screen is ${fmtNum(SCREEN_BYTES)} bytes; ${f.name} has ${fmtNum(f.bytes.length)}.`);
+      return;
+    }
+    setError('');
+    setScreen(f);
+  };
+  const go = () => {
+    close();
+    importSnapshot(d.side, d.name, d.bytes, d.format, { speed, border, compressAll, screen: screen?.bytes ?? null }, d.insertAtCursor);
+  };
+  return (
+    <Modal title="Import snapshot" onClose={close} width={520} cls="snapshot" footer={<><button class="primary" onClick={go}>Import</button><button onClick={close}>Cancel</button></>}>
+      <div class="grid" style={{ gridTemplateColumns: 'auto 1fr' }}>
+        <label>Snapshot</label>
+        <div>{d.name} ({SNAPSHOT_MACHINES[d.info.machine]})</div>
+        <label>Loading speed</label>
+        <select value={speed} onChange={(e) => setSpeed(Number((e.target as HTMLSelectElement).value))}>
+          {SNAPSHOT_SPEEDS.map((bps, i) => <option key={i} value={i}>{SNAPSHOT_SPEED_NAMES[i]} ({bps} bps)</option>)}
+        </select>
+        <label>Border</label>
+        <select value={border} onChange={(e) => setBorder(Number((e.target as HTMLSelectElement).value))}>
+          {BORDER_NAMES.map((n, i) => <option key={i} value={i}>{i} {n}</option>)}
+        </select>
+        <label>Method</label>
+        <select value={compressAll ? 1 : 0} onChange={(e) => setCompressAll((e.target as HTMLSelectElement).value === '1')}>
+          <option value={0}>Cleanest: nothing but the picture on screen while loading</option>
+          <option value={1}>Fastest: pack every block</option>
+        </select>
+        <label>Loading screen</label>
+        <div class="row-flex">
+          <span>{screen ? screen.name : "The snapshot's own"}</span>
+          <button onClick={pickScreen}>Choose…</button>
+          {screen && <button onClick={() => setScreen(null)}>Reset</button>}
+        </div>
+        <label></label>
+        <canvas ref={canvas} width={256} height={192} style={{ imageRendering: 'pixelated', border: '1px solid var(--border)' }} />
+      </div>
+      {error && <p class="error">{error}</p>}
+      <p class="note">
+        The snapshot becomes a BASIC loader followed by its memory as packed blocks{speed === 0 ? ' at ROM speed, which still need the custom loader' : ''}.
+        The loader runs at BE00 and finishes in the bottom three pixel lines of the screen, so those and the bottom attribute row are lost.
+        {speed === 3 && ' 6000 bps is for emulators and direct playback, not for recording to tape.'}
+      </p>
     </Modal>
   );
 }

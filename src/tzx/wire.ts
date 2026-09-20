@@ -28,6 +28,22 @@ export function decodeBytes(buf: Uint8Array): Uint8Array {
   return bytes(r);
 }
 
+/** What the import dialog shows of a snapshot. */
+export function decodeSnapshotInfo(buf: Uint8Array): { machine: number; border: number; screen: Uint8Array } {
+  const r = new Reader(buf);
+  readHeader(r);
+  return { machine: r.u8(), border: r.u8(), screen: bytes(r) };
+}
+
+/** A snapshot to convert: the file, a loading screen (empty for none) and the file's name. */
+export function encodeSnapshotRequest(file: Uint8Array, screen: Uint8Array | null, name: string): Uint8Array {
+  const w = new Writer();
+  putBytes(w, file);
+  putBytes(w, screen ?? new Uint8Array(0));
+  putBytes(w, utf8.encode.encode(name));
+  return w.toUint8Array();
+}
+
 /** A TAP answer: the bytes plus the indices of the blocks left out. */
 export function decodeTap(buf: Uint8Array): { bytes: Uint8Array; skipped: number[] } {
   const r = new Reader(buf);

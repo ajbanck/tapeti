@@ -784,6 +784,7 @@ mod tests {
             Dialog::wav(0),
             Dialog::programs(0),
             Dialog::emulator(true, Some(Then::EmulatorGo(0, Scope::Tape)), &Settings::default()),
+            Dialog::snapshot(0, "game.sna", crate::files::tests::snapshot(), false),
         ];
         for d in dialogs {
             app.store.dialog = Some(d);
