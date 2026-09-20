@@ -350,8 +350,9 @@ export function basicToTextCore(lines: BasicLine[], opts: BasicOptions): string 
   return decodeOptString(call('core_basic_to_text', encodeBasicLines(lines), basicFlags(opts))) ?? '';
 }
 
-/** Flags of the two calls below: 2 for 128k tokens, 8 for keywords in any case. */
-const sourceFlags = (o: { basic128?: boolean; anyCase?: boolean }) => (o.basic128 ? 2 : 0) | (o.anyCase ? 8 : 0);
+/** Flags of the two calls below: 2 for 128k tokens, 8 for keywords in any case, 32 to check the syntax. */
+const sourceFlags = (o: { basic128?: boolean; anyCase?: boolean; checkSyntax?: boolean }) =>
+  (o.basic128 ? 2 : 0) | (o.anyCase ? 8 : 0) | (o.checkSyntax ? 32 : 0);
 
 /** A program area as text that can be edited and tokenised again. */
 export function basicSourceCore(data: Uint8Array, start: number, end: number, opts: { basic128?: boolean }): string {
@@ -360,7 +361,7 @@ export function basicSourceCore(data: Uint8Array, start: number, end: number, op
 
 /** The program area an edited text stands for; lines left alone keep their bytes. */
 export function editBasicCore(
-  data: Uint8Array, start: number, end: number, text: string, opts: { basic128?: boolean; anyCase?: boolean },
+  data: Uint8Array, start: number, end: number, text: string, opts: { basic128?: boolean; anyCase?: boolean; checkSyntax?: boolean },
 ): { program: Uint8Array } | { errors: { line: number; message: string }[] } {
   return decodeBasicEdit(call('core_edit_basic', encodeBasicEdit(data, text), start, end, sourceFlags(opts)));
 }

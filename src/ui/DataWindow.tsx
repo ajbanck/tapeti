@@ -487,6 +487,7 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
   // The program as text being edited, or null while it is only listed.
   const [source, setSource] = useState<string | null>(null);
   const [anyCase, setAnyCase] = useState(false);
+  const [checkSyntax, setCheckSyntax] = useState(true);
   const [errors, setErrors] = useState<SourceError[]>([]);
   const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setProg(startAddr), [startAddr]);
@@ -503,7 +504,7 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
   // The program area as offsets of the view: what Edit shows and Apply replaces.
   const from = Math.min(Math.max(0, progOff), data.length);
   const to = Math.min(Math.max(from, autoVars - startAddr), data.length);
-  const sourceOpts = { basic128: opts.basic128, anyCase };
+  const sourceOpts = { basic128: opts.basic128, anyCase, checkSyntax };
   const save = () => {
     const out = source ?? basicSource(data, from, to, sourceOpts);
     downloadBytes(new TextEncoder().encode(out + '\n'), fileStem + '.bas', 'text/plain');
@@ -544,7 +545,10 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
           <Check label="Drop colours" checked={!!opts.dropColours} onChange={(v) => setOpts({ ...opts, dropColours: v })} />
         </>}
         {!vars && <Check label="128k BASIC" checked={opts.basic128} onChange={(v) => setOpts({ ...opts, basic128: v })} />}
-        {!vars && source !== null && <Check label="Keywords in any case" checked={anyCase} onChange={setAnyCase} />}
+        {!vars && source !== null && <>
+          <Check label="Keywords in any case" checked={anyCase} onChange={setAnyCase} />
+          <Check label="Check syntax" checked={checkSyntax} onChange={setCheckSyntax} />
+        </>}
         <span class="note">{vars ? `${variables.length} variable(s)` : `${lines.length} line(s)`}</span>
         <span style={{ flex: 1 }} />
         {!vars && source === null && <>
@@ -566,7 +570,7 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
               {errors.map((e, i) => <div key={i} class="error" onClick={() => goTo(e.line)}>{e.line > 0 ? `Line ${e.line} of the text: ` : ''}{e.message}</div>)}
             </div>
           ) : (
-            <div class="note">One program line per line, in the order written. Keywords in capitals; {'{1F}'} a byte, {'{A}'} a graphic, {'{INK 5}'} {'{AT 2,5}'} controls, {'{PRINT}'} a keyword inside a string or REM, {'10{=1000}'} a number that is not what it shows. Lines left as they are keep their bytes exactly.</div>
+            <div class="note">One program line per line, in the order written. Keywords in capitals; {'{1F}'} a byte, {'{A}'} a graphic, {'{INK 5}'} {'{AT 2,5}'} controls, {'{PRINT}'} a keyword inside a string or REM, {'10{=1000}'} a number that is not what it shows. Lines left as they are keep their bytes exactly. Check syntax holds a changed line to what the 48K ROM would accept.</div>
           )}
         </>
       ) : (

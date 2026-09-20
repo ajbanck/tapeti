@@ -47,7 +47,7 @@ try {
   const T = {
     BORDER: 0xe7, PAPER: 0xda, INK: 0xd9, CLS: 0xfb, PRINT: 0xf5, LOAD: 0xef, SCREEN$: 0xaa, CODE: 0xaf,
     RANDOMIZE: 0xf9, USR: 0xc0, REM: 0xea, PAUSE: 0xf2, AT: 0xac, LET: 0xf1, FOR: 0xeb, TO: 0xcc, NEXT: 0xf3,
-    BEEP: 0xb7, GOTO: 0xec,
+    BEEP: 0xd7, GOTO: 0xec,
   };
   /** A number as it appears in a program: its digits, then 0x0E and the 5-byte binary form. */
   const num = (n) => [...latin1(String(n)), 0x0e, 0, 0, n & 0xff, (n >> 8) & 0xff, 0];

@@ -139,6 +139,31 @@ await left2[2].click();
 await page.keyboard.press('Enter');
 await page.waitForSelector('.datawin');
 expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'BASIC', 'BASIC block opens on BASIC tab');
+
+// editing the program as text, with the syntax check that is on by default
+const button = async (label) => page.evaluateHandle((l) => [...document.querySelectorAll('.datawin button')].find((x) => x.textContent.trim() === l), label);
+await (await button('Edit')).click();
+await page.waitForSelector('.datawin .basic-source');
+await wait(200);
+const syntax = await check('Check syntax');
+expect(await syntax.evaluate((e) => e.checked), 'the BASIC editor checks the syntax unless told not to');
+await page.screenshot({ path: `${OUT}/08-datawindow-basic-edit.png` });
+await page.click('.datawin .basic-source');
+await page.keyboard.down('Meta'); await page.keyboard.press('ArrowDown'); await page.keyboard.up('Meta');
+await page.keyboard.type('\n9000 LET a$=1');
+await (await button('Apply')).click();
+await wait(200);
+const firstError = () => page.$eval('.datawin .basic-errors .error', (e) => e.textContent.trim());
+expect((await firstError()).includes('string variable takes a string'), 'a line the ROM would not take is reported');
+await page.screenshot({ path: `${OUT}/09-datawindow-basic-error.png` });
+await syntax.click();
+await wait(150);
+await (await button('Apply')).click();
+await wait(200);
+expect(!(await page.$('.datawin .basic-source')), 'unticked, the same line is only spelling and goes in');
+await page.keyboard.down('Meta'); await page.keyboard.press('z'); await page.keyboard.up('Meta');
+await wait(150);
+
 await page.click('.datawin .tab[data-view=dump]');
 await wait(150);
 // a standard block hides its flag and checksum by default; the dump is editable

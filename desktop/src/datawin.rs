@@ -99,6 +99,7 @@ pub struct DataWin {
     /// The program as text being edited, or `None` while it is only listed.
     source: Option<String>,
     any_case: bool,
+    check_syntax: bool,
     source_errors: Vec<SourceError>,
     /// Set once the program has been rewritten: where VARS now is in the block's
     /// body, which is what the header in front has to say on OK.
@@ -179,6 +180,7 @@ impl DataWin {
             basic: BasicOptions::default(),
             source: None,
             any_case: false,
+            check_syntax: true,
             source_errors: Vec::new(),
             new_vars: None,
             has_flag: single && guess.skip_flag,
@@ -247,6 +249,13 @@ impl DataWin {
 
     /// Open the disassembly view's symbol strip and tick Decrypt. Test-only, so a
     /// headless frame draws them.
+    /// Put the window into editing, so a test frame draws the text box and the
+    /// row of switches over it rather than the listing. Test-only.
+    #[cfg(test)]
+    pub fn edit_program(&mut self, text: &str) {
+        self.source = Some(text.to_string());
+    }
+
     #[cfg(test)]
     pub fn show_everything(&mut self) {
         self.edit_symbols = true;
@@ -260,7 +269,7 @@ impl DataWin {
         let view = self.view_bytes();
         let start = self.start_addr(view.len());
         let to = ((self.vars_addr - start).max(0) as usize).min(view.len());
-        let opts = SourceOptions::default();
+        let opts = SourceOptions { check_syntax: self.check_syntax, ..SourceOptions::default() };
         self.source = Some(retype(&basic_source_text(&view, 0, to, opts)));
         self.apply_source(&view, 0, to, start, opts);
         self.source_errors.clone()
@@ -1010,7 +1019,8 @@ fn basic(
     let from = prog_off.min(data.len());
     let to = ((auto_vars - start).max(0) as usize).clamp(from, data.len());
     let editing = dw.source.is_some() && !vars;
-    let opts = SourceOptions { basic128: dw.basic.basic128, any_case: dw.any_case };
+    let opts =
+        SourceOptions { basic128: dw.basic.basic128, any_case: dw.any_case, check_syntax: dw.check_syntax };
     let mut do_apply = false;
     ui.horizontal(|ui| {
         ui.label("PROG");
@@ -1029,6 +1039,7 @@ fn basic(
             w::check(ui, "128k BASIC", &mut dw.basic.basic128, true);
             if editing {
                 w::check(ui, "Keywords in any case", &mut dw.any_case, true);
+                w::check(ui, "Check syntax", &mut dw.check_syntax, true);
             }
         }
         let count = if vars {
@@ -1103,7 +1114,8 @@ fn basic(
                 tok,
                 "One program line per line, in the order written. Keywords in capitals; {1F} a byte, {A} a \
                  graphic, {INK 5} {AT 2,5} controls, {PRINT} a keyword inside a string or REM, 10{=1000} a \
-                 number that is not what it shows. Lines left as they are keep their bytes exactly.",
+                 number that is not what it shows. Lines left as they are keep their bytes exactly. Check \
+                 syntax holds a changed line to what the 48K ROM would accept.",
             );
         } else {
             egui::ScrollArea::vertical().id_salt("basic-errors").max_height(notes).show(ui, |ui| {
@@ -1390,7 +1402,39 @@ fn disassembly(
 mod tests {
     use super::*;
     use tapeti_core::describe::{encode_header, HeaderInfo};
+    use tapeti_core::spectrum::source::tokenise_line;
     use tapeti_core::types::Block;
+
+    /// A line the editor tokenises is held to the 48K ROM's syntax as well as
+    /// its spelling, and the switch beside "Keywords in any case" turns that
+    /// off. Lines left alone are never checked: they keep their bytes.
+    #[test]
+    fn the_basic_editor_checks_a_changed_line() {
+        let plain = SourceOptions::default();
+        let program = tokenise_line("10 PRINT \"hi\"", plain).unwrap();
+        let mut data = vec![0xff];
+        data.extend_from_slice(&program);
+        data.push(0x80); // where the variables would be
+        data.push(checksum(&data));
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data })];
+        let uid = blocks[0].uid;
+        let mut dw = DataWin::new(&blocks, 0, vec![uid]);
+        let start = dw.start_addr(dw.view_bytes().len());
+        dw.prog = start;
+        dw.vars_addr = start + program.len() as i64;
+        assert!(dw.check_syntax, "a new window checks");
+
+        let errors = dw.retype_program(|text| format!("{text}\n20 LET a$=1"));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].line, 2);
+        assert!(errors[0].message.contains("string variable"), "{}", errors[0].message);
+
+        // Off, the same line is only spelling, and goes in as it is written.
+        dw.check_syntax = false;
+        let errors = dw.retype_program(|text| format!("{text}\n20 LET a$=1"));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(dw.work.data[1..1 + program.len()], program[..], "line 10 kept its bytes");
+    }
 
     /// A header block opens on the view that reads it out, not on its own hex
     /// dump — the 17 bytes say more as a name and a load address.

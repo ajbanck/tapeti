@@ -903,6 +903,8 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         let added = tokenise_line("20 GO TO 10", SourceOptions::default()).unwrap();
         // The editing frame, with the text box up, draws too.
+        let mut dw = dw;
+        dw.edit_program("10 PRINT \"hi\"\n20 GO TO 10");
         app.datawin = Some(dw);
         draw(&ctx, &mut app);
         let dw = app.datawin.take().unwrap();

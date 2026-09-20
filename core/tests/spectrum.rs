@@ -220,32 +220,54 @@ fn programs(blocks: &[tapeti_core::types::Block]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// A program written out as text and typed back in is the same program, byte for
-/// byte — through the tokeniser, not by way of the lines an edit leaves alone.
-#[test]
-fn programs_survive_being_text() {
+/// Every BASIC program the samples hold, and the one the snapshot loader writes:
+/// colour controls in a string, VAL "..." and all.
+fn sample_programs() -> Vec<Vec<u8>> {
     use tapeti_core::snapshot::{snapshot_to_blocks, LoaderOptions, Snapshot};
-    use tapeti_core::spectrum::source::{basic_source, tokenise_line, SourceOptions};
 
     let mut found = Vec::new();
     for name in ["Tapeti demo.tzx", "Tapeti demo (variant).tzx"] {
         let bytes = std::fs::read(format!("../public/samples/{name}")).unwrap();
         found.extend(programs(&tapeti_core::parser::parse_tape(&bytes).unwrap().blocks));
     }
-    // The snapshot loader's BASIC: colour controls in a string, VAL "..." and all.
     let mut snap = Snapshot::default();
     snap.pages[5] = Some(vec![0; 16384]);
     let opts = LoaderOptions { name: "x", speed: 2, border: 0, compress_all: false, screen: None };
     found.extend(programs(&snapshot_to_blocks(&snap, &opts).unwrap()));
     assert!(found.len() >= 3, "only {} programs to try", found.len());
+    found
+}
+
+/// A program written out as text and typed back in is the same program, byte for
+/// byte — through the tokeniser, not by way of the lines an edit leaves alone.
+#[test]
+fn programs_survive_being_text() {
+    use tapeti_core::spectrum::source::{basic_source, tokenise_line, SourceOptions};
 
     let opts = SourceOptions::default();
-    for program in found {
+    for program in sample_programs() {
         for line in basic_source(&program, 0, program.len(), opts) {
             let again = tokenise_line(&line.text, opts).unwrap_or_else(|e| panic!("{}: {e}", line.text));
             assert_eq!(again, &program[line.offset..line.offset + line.len], "{}", line.text);
         }
     }
+}
+
+/// Nothing the samples or the snapshot loader hold is something the syntax check
+/// turns down. A check that shouts at a working program is worse than none.
+#[test]
+fn the_syntax_check_lets_real_programs_through() {
+    use tapeti_core::spectrum::source::{basic_source, tokenise_line, SourceOptions};
+
+    let opts = SourceOptions { check_syntax: true, ..SourceOptions::default() };
+    let mut lines = 0;
+    for program in sample_programs() {
+        for line in basic_source(&program, 0, program.len(), opts) {
+            tokenise_line(&line.text, opts).unwrap_or_else(|e| panic!("{}: {e}", line.text));
+            lines += 1;
+        }
+    }
+    assert!(lines >= 15, "only {lines} lines to try");
 }
 
 /// The Insert dialog's empty program is one the rest of the app takes for BASIC:

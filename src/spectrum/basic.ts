@@ -36,6 +36,8 @@ export interface SourceOptions {
   basic128?: boolean;
   /** Take `print` for `PRINT`. */
   anyCase?: boolean;
+  /** Hold a tokenised line to the 48K ROM's syntax as well as its spelling. */
+  checkSyntax?: boolean;
 }
 
 export interface SourceError {

@@ -31,6 +31,7 @@
 
 use super::basic::{decode_number, format_number};
 use super::charset::{token_name, TOKENS};
+use super::syntax::check_line;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SourceOptions {
@@ -39,6 +40,10 @@ pub struct SourceOptions {
     /// Take `print` for `PRINT`. Off, a program can use lower case names that
     /// happen to spell a keyword, which is how the Spectrum itself tells them apart.
     pub any_case: bool,
+    /// Hold a line that is tokenised to the 48K ROM's syntax as well as its
+    /// spelling. Off in [`Default`], as the disassembler's extras are, because
+    /// the frozen reference knows nothing of it; both data windows turn it on.
+    pub check_syntax: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,7 +71,7 @@ const DEF_FN: u8 = 0xce;
 
 /// How many of these bytes are one number as it is typed: digits, a point, an
 /// exponent — or, after BIN, noughts and ones. A point on its own is not one.
-fn number_len(b: &[u8], bin: bool) -> usize {
+pub(super) fn number_len(b: &[u8], bin: bool) -> usize {
     let digits = |from: usize| b[from..].iter().take_while(|c| c.is_ascii_digit()).count();
     if bin {
         return b.iter().take_while(|c| matches!(c, b'0' | b'1')).count();
@@ -571,6 +576,9 @@ fn tokenise_with(text: &str, keywords: &[(String, u8)], opts: SourceOptions) -> 
     if body.len() > 0xffff {
         return Err("The line is too long".to_string());
     }
+    if opts.check_syntax {
+        check_line(&body, opts.basic128)?;
+    }
     let mut line = vec![(number >> 8) as u8, number as u8, body.len() as u8, (body.len() >> 8) as u8];
     line.extend_from_slice(&body);
     Ok(line)
@@ -621,7 +629,7 @@ pub fn edit_basic(
 mod tests {
     use super::*;
 
-    const OPTS: SourceOptions = SourceOptions { basic128: false, any_case: false };
+    const OPTS: SourceOptions = SourceOptions { basic128: false, any_case: false, check_syntax: false };
 
     fn body(text: &str) -> Vec<u8> {
         let line = tokenise_line(text, OPTS).unwrap();

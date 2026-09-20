@@ -637,7 +637,8 @@ pub unsafe extern "C" fn core_basic_to_text(ptr: *const u8, len: usize, flags: u
 }
 
 /// A program area as text that can be edited and tokenised again. `flags`: 2
-/// 128k tokens, 8 keywords in any case (the bits [`core_list_basic`] leaves free).
+/// 128k tokens, 8 keywords in any case, 32 check the syntax (the bits
+/// [`core_list_basic`] leaves free).
 ///
 /// # Safety
 /// `ptr` must point at `len` readable bytes.
@@ -675,7 +676,7 @@ pub unsafe extern "C" fn core_edit_basic(
 }
 
 fn source_options(flags: u32) -> SourceOptions {
-    SourceOptions { basic128: flags & 2 != 0, any_case: flags & 8 != 0 }
+    SourceOptions { basic128: flags & 2 != 0, any_case: flags & 8 != 0, check_syntax: flags & 32 != 0 }
 }
 
 /// A disassembly as text, for saving. Arguments as [`core_disassemble`].
