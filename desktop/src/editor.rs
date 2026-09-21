@@ -191,6 +191,8 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
                 blocks_len,
                 content: &content,
                 action: &mut action,
+                // Less the body's scroll bar.
+                right: full_rect.right() - 10.0,
             };
             f.fields(ui);
             for e in f.errors.clone() {
@@ -311,6 +313,9 @@ struct Form<'a> {
     blocks_len: usize,
     content: &'a ContentInfo,
     action: &'a mut Option<Action>,
+    /// The right edge the fields have, from the pane's rect: the `Ui`'s own may
+    /// have been widened by a row that overflowed it (see `full_rect`).
+    right: f32,
 }
 
 impl Form<'_> {
@@ -664,16 +669,40 @@ impl Form<'_> {
                 if lines.len() > 40 {
                     text.push_str(&format!("\n… {} more line(s)", lines.len() - 40));
                 }
-                egui::ScrollArea::vertical()
-                    .id_salt("preview")
-                    .max_height(if compact { 90.0 } else { 140.0 })
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(if text.is_empty() { "(no lines)".into() } else { text })
-                                .monospace()
-                                .size(10.0),
-                        );
-                    });
+                // `.preview` and its `pre`: the rest of the row but no less than
+                // 240 px (else a row of its own), top-down, framed, unwrapped and
+                // scrolling both ways. Straight in the wrapping row, the label was
+                // laid out as one row of it: the first line, cut short, and nothing
+                // under it.
+                let tok = self.tok;
+                // Measured against the pane, not the row: the row's rect may
+                // have been widened by something that overflowed it, the
+                // preview's own width of the last frame included.
+                let row_w = self.right - ui.max_rect().left();
+                let avail = self.right - ui.cursor().left();
+                let width = if avail >= 240.0 { avail } else { row_w };
+                let max_h = if compact { 150.0 } else { 210.0 };
+                let layout = egui::Layout::top_down(egui::Align::Min);
+                ui.allocate_ui_with_layout(egui::vec2(width, max_h), layout, |ui| {
+                    ui.set_width(width);
+                    egui::Frame::new()
+                        .fill(tok.surface)
+                        .stroke(egui::Stroke::new(1.0, tok.border))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::both()
+                                .id_salt("preview")
+                                .max_height(max_h - 14.0)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    let text = if text.is_empty() { "(no lines)".into() } else { text };
+                                    let label = egui::Label::new(RichText::new(text).monospace().size(11.5))
+                                        .wrap_mode(egui::TextWrapMode::Extend);
+                                    ui.add(label);
+                                });
+                        });
+                });
             }
             _ => {}
         }
