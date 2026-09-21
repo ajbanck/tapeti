@@ -119,12 +119,15 @@ function DataInfo({ draft, side }: FP) {
   const d: Uint8Array = draft.data;
   const t = tapes[side].value;
   const info = useMemo(() => detectContent(t.blocks.map((b) => (b.uid === draft.uid ? draft : b)), t.blocks.findIndex((b) => b.uid === draft.uid)), [t.blocks, draft]);
-  const flag = d.length > 0 ? d[0] : null;
-  const cs = d.length > 1 ? d[d.length - 1] : null;
-  const expected = d.length > 1 ? checksum(d, 0, d.length - 1) : null;
+  // Flag and checksum only where the bytes are what a ROM-style loader reads: a direct
+  // recording holds samples and a CSW block pulse lengths, which have neither.
+  const romBytes = info.skipFlag && [0x10, 0x11, 0x14, 0x19].includes(draft.id);
+  const flag = romBytes && d.length > 0 ? d[0] : null;
+  const cs = romBytes && d.length > 1 ? d[d.length - 1] : null;
+  const expected = cs !== null ? checksum(d, 0, d.length - 1) : null;
   return (
     <div class="infocol">
-      {info.skipFlag && info.skipChecksum && d.length >= 2 && [0x10, 0x11, 0x14, 0x19].includes(draft.id)
+      {romBytes && info.skipChecksum && d.length >= 2
         ? <div title="As stored in the block; the header length counts only the data">Block length {fmtNum(d.length)} bytes: flag + {fmtNum(d.length - 2)} data + checksum</div>
         : <div>Data length {fmtNum(d.length)} bytes</div>}
       {flag !== null && <div>Flag byte {fmtByte(flag)}{flag === 0 ? ' (header)' : flag === 255 ? ' (data)' : ''}</div>}

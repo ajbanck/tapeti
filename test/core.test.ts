@@ -325,6 +325,14 @@ describe('the Rust descriptions, detection and structure against the TypeScript 
       const blocks = core.parseTape(sample(name)).blocks;
       const labels = coreContent.contentLabels(blocks);
       blocks.forEach((b, i) => {
+        // The one departure from the reference: a direct recording's bytes are samples,
+        // which the reference read as a ROM block (flag, checksum and all). The core
+        // leaves them alone, as it does a CSW block's.
+        if (b.id === 0x15) {
+          const found = coreContent.detectContent(blocks, i);
+          expect([found.skipFlag, found.skipChecksum, labels[i]]).toEqual([false, false, '']);
+          return;
+        }
         expect(coreContent.detectContent(blocks, i)).toEqual(refContent.detectContent(blocks, i));
         const refLabel = isDataBlock(b) ? refContent.detectContent(blocks, i).label : '';
         expect(labels[i]).toBe(refLabel);

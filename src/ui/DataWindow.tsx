@@ -37,6 +37,8 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const single = blocks.length === 1;
   const block = blocks[0];
   const hasUsedBits = single && typeof (block as any).usedBits === 'number';
+  // Samples (direct recording) and pulse lengths (CSW) have no flag or checksum to hide.
+  const romBytes = single && block.id !== 0x15 && block.id !== 0x18;
   // The group a block sits in can name the loader that wrote it, and a loader
   // that encrypts leaves bytes nothing reads: the guess is then made on the
   // decrypted data, and the window opens with Decrypt on and its values set.
@@ -227,8 +229,8 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
       <div class="controls secondary">
         <div class="c"><Check label="Flip bytes (RR L)" checked={flip} onChange={setFlip} /></div>
         <div class="c"><Check label="Reverse order (DEC IX)" checked={reverse} onChange={toggleReverse} /></div>
-        <div class="c"><Check label="Hide flag byte" checked={hideFlag} onChange={setHideFlag} disabled={!single} /></div>
-        <div class="c"><Check label="Hide checksum byte" checked={hideCs} onChange={setHideCs} disabled={!single} /></div>
+        <div class="c"><Check label="Hide flag byte" checked={hideFlag} onChange={setHideFlag} disabled={!romBytes} /></div>
+        <div class="c"><Check label="Hide checksum byte" checked={hideCs} onChange={setHideCs} disabled={!romBytes} /></div>
         <div class="c crypt" title="What an encrypting loader (SpeedLock and others) does to each byte on its way to memory: LD A,x: XOR L: ADD A,y">
           <Check label="Decrypt: XOR" checked={decrypt} onChange={setDecrypt} />
           <NumInput value={cryptXor} max={0xff} hex={h} width={52} onChange={setCryptXor} />

@@ -39,8 +39,24 @@ expect((await rows('first-child')) === 19, 'left tape has 19 blocks');
 expect((await rows('last-child')) === 10, 'right tape has 10 blocks');
 await page.screenshot({ path: `${OUT}/01-main.png` });
 
-// content detection + data window default view
+// a CSW block's bytes are pulse lengths: no flag byte, no checksum to fail
 const right = await page.$$('.pane:last-child .blocklist .row');
+await right[8].click();
+await wait(150);
+const cswInfo = await page.$eval('.pane:last-child .editor .infocol', (e) => e.textContent);
+expect(cswInfo.includes('Data length') && !cswInfo.includes('Flag byte') && !cswInfo.includes('Checksum byte'), 'a CSW block shows no flag or checksum');
+
+// nor does a direct recording, though its samples start with 0xFF
+await right[7].click();
+await wait(150);
+await page.keyboard.press('Enter');
+await page.waitForSelector('.datawin');
+const hideChecks = await page.$$eval('.datawin label', (ls) => ls.filter((l) => /^Hide (flag|checksum) byte$/.test(l.textContent.trim())).map((l) => { const i = l.querySelector('input'); return i.checked || !i.disabled; }));
+expect(hideChecks.length === 2 && !hideChecks.some(Boolean), "a direct recording's data window has no flag or checksum to hide");
+await page.keyboard.press('Escape');
+await wait(150);
+
+// content detection + data window default view
 await right[6].click();
 await wait(150);
 expect((await page.$eval('.pane:last-child .row.cursor .kind', (e) => e.textContent)) === 'SCREEN?', 'screen block detected');

@@ -106,6 +106,9 @@ pub struct DataWin {
     new_vars: Option<usize>,
     /// Whether the block has a flag byte and a checksum at all, whatever is hidden.
     has_flag: bool,
+    /// Whether "hide flag/checksum byte" can apply: one block, and not samples (direct
+    /// recording) or pulse lengths (CSW), which have neither.
+    rom_bytes: bool,
     has_checksum: bool,
 
     // text
@@ -187,6 +190,8 @@ impl DataWin {
             source_errors: Vec::new(),
             new_vars: None,
             has_flag: single && guess.skip_flag,
+            rom_bytes: single
+                && !chosen.iter().any(|b| matches!(b.body, Body::Direct { .. } | Body::Csw { .. })),
             has_checksum: single && guess.skip_checksum,
             cols: 32,
             expand_tokens: true,
@@ -444,9 +449,8 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 if w::check(ui, "Reverse order (DEC IX)", &mut dw.reverse, true) {
                     dw.toggle_reverse(screen);
                 }
-                let single = dw.single();
-                w::check(ui, "Hide flag byte", &mut dw.hide_flag, single);
-                w::check(ui, "Hide checksum byte", &mut dw.hide_cs, single);
+                w::check(ui, "Hide flag byte", &mut dw.hide_flag, dw.rom_bytes);
+                w::check(ui, "Hide checksum byte", &mut dw.hide_cs, dw.rom_bytes);
                 ui.separator();
                 let hint = "What an encrypting loader (SpeedLock and others) does to each byte on its way \
                             to memory: LD A,x: XOR L: ADD A,y";
@@ -1489,6 +1493,29 @@ mod tests {
         // Past the end of the view nothing is written.
         dw.set_view_byte(9, 0x55, view.len());
         assert_eq!(dw.work.data, vec![0xff, 0x99, 0x22, 0x01, 0xaa]);
+    }
+
+    /// Samples start with silence, 0x00 or 0xFF, which once passed for a flag byte:
+    /// the window opened with the first and last eight samples hidden.
+    #[test]
+    fn samples_open_whole_with_nothing_to_hide() {
+        let blocks = vec![
+            Block::new(Body::Direct { tstates: 79, pause: 0, used_bits: 8, data: vec![0xff, 0x0f, 0x00] }),
+            Block::new(Body::Csw {
+                pause: 0,
+                sample_rate: 44100,
+                compression: 1,
+                pulse_count: 1,
+                data: vec![0, 22],
+            }),
+        ];
+        for b in &blocks {
+            let dw = DataWin::new(&blocks, 0, vec![b.uid]);
+            assert!(!dw.hide_flag && !dw.hide_cs && !dw.rom_bytes);
+            assert_eq!(dw.view_bytes(), b.body.data().unwrap());
+        }
+        let std = vec![Block::new(Body::Standard { pause: 1000, data: vec![0xff, 1, 0xfe] })];
+        assert!(DataWin::new(&std, 0, vec![std[0].uid]).rom_bytes);
     }
 
     /// Decrypt is a modifier like the others: the view shows what the loader would

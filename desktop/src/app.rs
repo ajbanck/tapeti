@@ -764,6 +764,56 @@ mod tests {
         }
     }
 
+    /// The text one frame paints, in painting order.
+    fn painted_text(ctx: &egui::Context, app: &mut App) -> String {
+        fn walk(shape: &egui::Shape, out: &mut String) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    out.push_str(t.galley.text());
+                    out.push('\n');
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+            ..Default::default()
+        };
+        let mut out = String::new();
+        for clipped in ctx.run_ui(input, |ui| app.frame(ui)).shapes {
+            walk(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    /// Samples and CSW pulse lengths have no flag byte or checksum; reading their
+    /// first and last byte as one reported a bad checksum on a sound block.
+    #[test]
+    fn the_editor_finds_flag_and_checksum_only_in_loader_bytes() {
+        use tapeti_core::types::Body;
+        let data = vec![22, 22, 22, 22, 0, 0x10, 0x27, 0, 0];
+        let with = |id| {
+            let mut body = create_body(id);
+            match &mut body {
+                Body::Standard { data: d, .. } | Body::Direct { data: d, .. } | Body::Csw { data: d, .. } => {
+                    *d = data.clone()
+                }
+                _ => unreachable!(),
+            }
+            Block::new(body)
+        };
+        let (ctx, mut app) = app_with(vec![with(0x10), with(0x15), with(0x18)]);
+        for (i, rom) in [(0, true), (1, false), (2, false)] {
+            app.store.set_cursor(0, i, SelectMode::Single);
+            draw(&ctx, &mut app);
+            let text = painted_text(&ctx, &mut app);
+            assert!(text.contains("Data length 9 bytes") || rom, "block {i}:\n{text}");
+            assert_eq!(text.contains("Flag byte"), rom, "block {i}:\n{text}");
+            assert_eq!(text.contains("Checksum byte"), rom, "block {i}:\n{text}");
+        }
+    }
+
     #[test]
     fn draws_an_empty_tape() {
         let (ctx, mut app) = app_with(Vec::new());

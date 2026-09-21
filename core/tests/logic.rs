@@ -191,6 +191,18 @@ fn detects_what_blocks_hold() {
     assert_eq!(detect_content(&[], 0).source, Source::None);
 }
 
+/// A direct recording holds packed samples, and silence is 0x00 or 0xFF: read as a
+/// ROM block, its first byte passed for a flag and its last for a checksum.
+#[test]
+fn samples_have_no_flag_or_checksum() {
+    let direct = b(Body::Direct { tstates: 79, pause: 0, used_bits: 8, data: vec![0xff; 6912] });
+    let found = detect_content(&[direct], 0);
+    assert!(!found.skip_flag && !found.skip_checksum);
+    assert_eq!(found.label, "", "not a screen, whatever its length");
+    let csw = b(Body::Csw { pause: 0, sample_rate: 44100, compression: 1, pulse_count: 1, data: vec![0, 0] });
+    assert!(!detect_content(&[csw], 0).skip_flag);
+}
+
 #[test]
 fn scores_basic_programs() {
     // A line number that runs backwards is not a program.

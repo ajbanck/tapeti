@@ -541,11 +541,10 @@ impl Form<'_> {
         let Some(data) = self.draft.data().map(<[u8]>::to_vec) else { return };
         let tok = self.tok;
         ui.vertical(|ui| {
-            let id = self.draft.id();
-            let spells_out = self.content.skip_flag
-                && self.content.skip_checksum
-                && data.len() >= 2
-                && matches!(id, 0x10 | 0x11 | 0x14 | 0x19);
+            // Flag and checksum only where the bytes are what a ROM-style loader reads: a
+            // direct recording holds samples and a CSW block pulse lengths, which have neither.
+            let rom_bytes = self.content.skip_flag && matches!(self.draft.id(), 0x10 | 0x11 | 0x14 | 0x19);
+            let spells_out = rom_bytes && self.content.skip_checksum && data.len() >= 2;
             if spells_out {
                 ui.label(format!(
                     "Block length {} bytes: flag + {} data + checksum",
@@ -555,7 +554,7 @@ impl Form<'_> {
             } else {
                 ui.label(format!("Data length {} bytes", fmt::num(data.len() as i64, self.hex)));
             }
-            if let Some(flag) = data.first() {
+            if let Some(flag) = data.first().filter(|_| rom_bytes) {
                 let what = match flag {
                     0 => " (header)",
                     255 => " (data)",
@@ -563,7 +562,7 @@ impl Form<'_> {
                 };
                 ui.label(format!("Flag byte {}{what}", fmt::byte(*flag, self.hex, self.hex_bytes)));
             }
-            if data.len() > 1 {
+            if rom_bytes && data.len() > 1 {
                 let cs = data[data.len() - 1];
                 let expected = checksum(&data[..data.len() - 1]);
                 ui.horizontal(|ui| {
