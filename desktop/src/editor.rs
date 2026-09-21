@@ -141,11 +141,26 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
             } else {
                 CREATABLE_IDS.iter().map(|i| (*i, block_name(*i).unwrap_or("Unknown").to_string())).collect()
             };
-            if w::combo(ui, ("blocktype", side), &mut id, &options, 220.0, !unknown && !locked) {
+            // Narrower than its 220 px in a narrow pane rather than past its edge.
+            let width = (full_rect.right() - ui.cursor().left() - 30.0).clamp(80.0, 220.0);
+            if w::combo(ui, ("blocktype", side), &mut id, &options, width, !unknown && !locked) {
                 draft = convert_block(&Block { uid, body: draft.clone() }, id).body;
             }
             if draft.is_data_block() {
-                w::note(ui, &tok, "Data blocks: edit the bytes with View data");
+                // Truncated at the pane's edge, measured against `full_rect`:
+                // this row's own width is whatever overflowed it last.
+                let room = (full_rect.right() - ui.cursor().left()).max(0.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(room, 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_max_width(room);
+                        let text = RichText::new("Data blocks: edit the bytes with View data")
+                            .size(11.0)
+                            .color(tok.muted);
+                        ui.add(egui::Label::new(text).truncate());
+                    },
+                );
             }
         });
         ui.separator();
@@ -187,38 +202,52 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
         let mut ui = ui.new_child(builder);
         let ui = &mut ui;
         ui.separator();
-        ui.horizontal(|ui| {
-            if let Some(pause) = pause_of(&mut draft) {
-                ui.label(RichText::new("Pause").size(12.0).color(tok.muted));
-                let mut v = *pause;
-                if w::num_u16(ui, ("pause", side), &mut v, hex, !locked) {
-                    *pause = v;
+        // The buttons first, and the pause and duration in what they leave:
+        // laid out the other way round, a narrow pane drew the buttons over the
+        // text. The text is clipped at the buttons instead.
+        let row = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 22.0));
+        ui.advance_cursor_after_rect(row);
+        let buttons_left = {
+            let builder =
+                egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center));
+            let mut ui = ui.new_child(builder);
+            revert = ui.add_enabled(dirty, egui::Button::new("Revert")).clicked();
+            let commit = ui.add_enabled(dirty && !locked, egui::Button::new("Commit"));
+            // Under an id of its own as well, so a test can ask where the
+            // footer ended up without a pointer.
+            ui.interact(commit.rect, commit_button_id(side), egui::Sense::hover());
+            if commit.clicked() {
+                if errors.is_empty() {
+                    action = Some(Action::Commit(draft.clone()));
+                } else {
+                    cannot_commit = Some(errors.clone());
                 }
-                w::note(ui, &tok, "ms after this block");
             }
-            let seconds = if draft.is_unknown() {
-                0.0
-            } else {
-                crate::tape::block_duration(&Block { uid, body: draft.clone() }) as f64 / TSTATES_PER_SEC
-            };
-            if seconds > 0.0 {
-                ui.label(RichText::new(format!("Duration {}", fmt::duration(seconds))).size(12.0));
+            ui.min_rect().left()
+        };
+        let text =
+            egui::Rect::from_min_max(row.min, egui::pos2((buttons_left - 8.0).max(row.left()), row.bottom()));
+        let builder =
+            egui::UiBuilder::new().max_rect(text).layout(egui::Layout::left_to_right(egui::Align::Center));
+        let mut ui = ui.new_child(builder);
+        ui.set_clip_rect(text.intersect(ui.clip_rect()));
+        let ui = &mut ui;
+        if let Some(pause) = pause_of(&mut draft) {
+            ui.label(RichText::new("Pause").size(12.0).color(tok.muted));
+            let mut v = *pause;
+            if w::num_u16(ui, ("pause", side), &mut v, hex, !locked) {
+                *pause = v;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                revert = ui.add_enabled(dirty, egui::Button::new("Revert")).clicked();
-                let commit = ui.add_enabled(dirty && !locked, egui::Button::new("Commit"));
-                // Under an id of its own as well, so a test can ask where the
-                // footer ended up without a pointer.
-                ui.interact(commit.rect, commit_button_id(side), egui::Sense::hover());
-                if commit.clicked() {
-                    if errors.is_empty() {
-                        action = Some(Action::Commit(draft.clone()));
-                    } else {
-                        cannot_commit = Some(errors.clone());
-                    }
-                }
-            });
-        });
+            w::note(ui, &tok, "ms after this block");
+        }
+        let seconds = if draft.is_unknown() {
+            0.0
+        } else {
+            crate::tape::block_duration(&Block { uid, body: draft.clone() }) as f64 / TSTATES_PER_SEC
+        };
+        if seconds > 0.0 {
+            ui.label(RichText::new(format!("Duration {}", fmt::duration(seconds))).size(12.0));
+        }
     });
 
     if revert {

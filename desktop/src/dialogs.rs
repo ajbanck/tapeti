@@ -185,7 +185,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         Dialog::Message { title, .. } | Dialog::Confirm { title, .. } => (title.clone(), 460.0),
         Dialog::About => ("About Tapeti".into(), 460.0),
         Dialog::Insert(_) => ("Insert block".into(), 420.0),
-        Dialog::TapeInfo(side) => (format!("{} tape info", if *side == 0 { "Left" } else { "Right" }), 460.0),
+        Dialog::TapeInfo(side) => (format!("{} tape info", if *side == 0 { "Left" } else { "Right" }), 540.0),
         Dialog::Consistency(side) => {
             (format!("Consistency check — {} tape", if *side == 0 { "left" } else { "right" }), 560.0)
         }
@@ -202,16 +202,8 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         )
         .show(ctx, |ui| {
             ui.set_width(width);
-            let closed = ui
-                .horizontal(|ui| {
-                    ui.label(RichText::new(&title).size(14.0).strong());
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let x = &crate::icons::X;
-                        crate::icons::button_with_id(ui, close_button_id(), x, "Close", true).clicked()
-                    })
-                    .inner
-                })
-                .inner;
+            let title_row =
+                ui.horizontal(|ui| ui.label(RichText::new(&title).size(14.0).strong())).response.rect;
             ui.add_space(6.0);
             let body = match &mut dialog {
                 Dialog::Message { lines, .. } => lines_with_ok(ui, lines),
@@ -226,6 +218,20 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 Dialog::Snapshot(s) => snapshot_body(ui, app, s, &tok),
                 Dialog::DataFile(s) => data_file_body(ui, app, s, &tok),
             };
+            // The ✕ goes in last, at the right edge the body left: a body wider
+            // than `width` (tape info's SHA-1) widens the dialog, and an ✕ laid
+            // out with the title stayed where the edge had been.
+            let right = ui.min_rect().right().max(title_row.right());
+            let at = egui::Rect::from_center_size(
+                egui::pos2(right - 12.0, title_row.center().y),
+                egui::vec2(24.0, 20.0),
+            );
+            let closed = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(at), |ui| {
+                    crate::icons::button_with_id(ui, close_button_id(), &crate::icons::X, "Close", true)
+                        .clicked()
+                })
+                .inner;
             // The ✕ wins over the body, which reports `Keep` on every frame in
             // which nothing was clicked in it. Assigning both to one variable is
             // what made the ✕ do nothing at all.

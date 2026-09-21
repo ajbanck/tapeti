@@ -449,10 +449,13 @@ impl App {
             egui::pos2(rect.right() - 1.0, rect.bottom() - 1.0),
         );
         ui.painter().rect_filled(band, egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }, tok.surface_2);
-        let editor_rect = Rect::from_min_size(
-            egui::pos2(rect.left() + 12.0, ui.cursor().top() + 6.0),
-            vec2(rect.width() - 24.0, editor_h),
-        );
+        // Never lower than `.editor .footer`'s 8 px padding above the card's
+        // border: the rows above this do not add up to exactly HEAD_H, and the
+        // Commit button ended up on the border.
+        let top = ui.cursor().top() + 6.0;
+        let editor_h = editor_h.min(rect.bottom() - 9.0 - top).max(0.0);
+        let editor_rect =
+            Rect::from_min_size(egui::pos2(rect.left() + 12.0, top), vec2(rect.width() - 24.0, editor_h));
         let builder = egui::UiBuilder::new()
             .id_salt(("editor", side))
             .max_rect(editor_rect)
@@ -464,85 +467,118 @@ impl App {
     fn pane_head(&mut self, ui: &mut Ui, side: Side) {
         let tok = self.tokens;
         let mut run: Option<&'static str> = None;
-        let active = self.store.active == side;
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            // The web's .pane-title gap; the toolbar below sets its own.
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let t = self.store.tape(side);
-            crate::widgets::side_tag(ui, if side == 0 { "L" } else { "R" }, active, &tok);
-            ui.label(RichText::new(&t.name).size(13.0).strong());
-            if t.dirty() {
-                icons::inline(ui, &icons::DOT, tok.warn, 8.0).on_hover_text("Unsaved changes");
-            }
-            if !t.blocks.is_empty() {
-                let v = required_version(&t.blocks);
-                crate::widgets::pill(ui, &format!("TZX {}.{:02}", v.major, v.minor), &tok)
-                    .on_hover_text("TZX version this tape will be saved as");
-            }
+        // The toolbar is laid out first and the title gets what it leaves, as
+        // `.pane-title` is `min-width: 0` beside a toolbar that never shrinks:
+        // laid out after the title, a narrow pane drew the icons over the name.
+        let row = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 22.0));
+        ui.advance_cursor_after_rect(row);
+        let tools_left = {
+            let builder = egui::UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center));
+            let mut ui = ui.new_child(builder);
+            let ui = &mut ui;
             // Right to left, so the order here is the reverse of the web
             // toolbar's: folder, save | insert, play, emulator, programs, info | more.
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0; // the web's .toolbar gap
-                let has = !self.store.tape(side).blocks.is_empty();
-                // What is per tape and has no button here: the overflow menu,
-                // `paneMenu` on the web.
-                let more = icons::button(ui, &icons::MORE, "More for this tape", true);
-                egui::Popup::menu(&more).show(|ui| {
-                    for id in menutable::PANE_MENU {
-                        if id.is_empty() {
-                            ui.separator();
-                            continue;
-                        }
-                        let Some(it) = menutable::item(id) else { continue };
-                        let button = egui::Button::new(it.label).shortcut_text(crate::fmt::accel(it.keys));
-                        if ui.add_enabled(commands::enabled(self, id, side), button).clicked() {
-                            run = Some(it.id);
-                            ui.close();
-                        }
+            ui.spacing_mut().item_spacing.x = 2.0; // the web's .toolbar gap
+            let has = !self.store.tape(side).blocks.is_empty();
+            // What is per tape and has no button here: the overflow menu,
+            // `paneMenu` on the web.
+            let more = icons::button(ui, &icons::MORE, "More for this tape", true);
+            egui::Popup::menu(&more).show(|ui| {
+                for id in menutable::PANE_MENU {
+                    if id.is_empty() {
+                        ui.separator();
+                        continue;
                     }
-                });
-                crate::widgets::vsep(ui, &tok);
-                if icons::button(ui, &icons::INFO, "Tape info…", has).clicked() {
-                    run = Some("tape-info");
-                }
-                if icons::button(ui, &icons::LIST, "Programs…", has).clicked() {
-                    run = Some("programs");
-                }
-                if icons::button(ui, &icons::LAUNCH, "Open tape in emulator", has).clicked() {
-                    run = Some("emu-tape");
-                }
-                let playing = self.player.playing();
-                let (icon, hover) = if playing {
-                    (&icons::STOP, "Stop playback")
-                } else {
-                    (&icons::PLAY, "Play from cursor")
-                };
-                if icons::button(ui, icon, hover, has).clicked() {
-                    run = Some(if playing { "stop" } else { "play-cursor" });
-                }
-                if icons::button(ui, &icons::PLUS, "Insert block…", true).clicked() {
-                    run = Some("insert");
-                }
-                // Right to left: the rule the web draws between save and insert.
-                crate::widgets::vsep(ui, &tok);
-                let save_hover = if self.store.tape(side).path.is_some() { "Save" } else { "Save as TZX" };
-                if icons::button(ui, &icons::SAVE, save_hover, has).clicked() {
-                    run = Some("save");
-                }
-                if icons::button(ui, &icons::FOLDER, "Open tape…", true).clicked() {
-                    run = Some("open");
-                }
-                // `.playing-pill`, in the header of the pane that is playing.
-                if self.progress.playing && self.progress.side == Some(side) {
-                    ui.add_space(6.0);
-                    let time = RichText::new(crate::fmt::time(self.progress.elapsed)).size(12.0).monospace();
-                    ui.label(time.color(tok.accent));
+                    let Some(it) = menutable::item(id) else { continue };
+                    let button = egui::Button::new(it.label).shortcut_text(crate::fmt::accel(it.keys));
+                    if ui.add_enabled(commands::enabled(self, id, side), button).clicked() {
+                        run = Some(it.id);
+                        ui.close();
+                    }
                 }
             });
-        });
+            crate::widgets::vsep(ui, &tok);
+            if icons::button(ui, &icons::INFO, "Tape info…", has).clicked() {
+                run = Some("tape-info");
+            }
+            if icons::button(ui, &icons::LIST, "Programs…", has).clicked() {
+                run = Some("programs");
+            }
+            if icons::button(ui, &icons::LAUNCH, "Open tape in emulator", has).clicked() {
+                run = Some("emu-tape");
+            }
+            let playing = self.player.playing();
+            let (icon, hover) =
+                if playing { (&icons::STOP, "Stop playback") } else { (&icons::PLAY, "Play from cursor") };
+            if icons::button(ui, icon, hover, has).clicked() {
+                run = Some(if playing { "stop" } else { "play-cursor" });
+            }
+            if icons::button(ui, &icons::PLUS, "Insert block…", true).clicked() {
+                run = Some("insert");
+            }
+            // Right to left: the rule the web draws between save and insert.
+            crate::widgets::vsep(ui, &tok);
+            let save_hover = if self.store.tape(side).path.is_some() { "Save" } else { "Save as TZX" };
+            if icons::button(ui, &icons::SAVE, save_hover, has).clicked() {
+                run = Some("save");
+            }
+            if icons::button(ui, &icons::FOLDER, "Open tape…", true).clicked() {
+                run = Some("open");
+            }
+            // `.playing-pill`, in the header of the pane that is playing.
+            if self.progress.playing && self.progress.side == Some(side) {
+                ui.add_space(6.0);
+                let time = RichText::new(crate::fmt::time(self.progress.elapsed)).size(12.0).monospace();
+                ui.label(time.color(tok.accent));
+            }
+            ui.min_rect().left()
+        };
+        let title = Rect::from_min_max(
+            egui::pos2(row.left() + 6.0, row.top()),
+            egui::pos2((tools_left - 8.0).max(row.left() + 6.0), row.bottom()),
+        );
+        self.pane_title(ui, side, title);
         if let Some(id) = run {
             commands::run(self, id, side);
+        }
+    }
+
+    /// Side tag, file name, unsaved dot and version pill, inside `rect`. Only the
+    /// name gives way (`.fname`'s ellipsis); what still does not fit is clipped
+    /// at the toolbar rather than drawn under it.
+    fn pane_title(&self, ui: &mut Ui, side: Side, rect: Rect) {
+        let tok = self.tokens;
+        let t = self.store.tape(side);
+        let builder = egui::UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Center));
+        let mut ui = ui.new_child(builder);
+        ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+        // The web's .pane-title gap.
+        ui.spacing_mut().item_spacing.x = 8.0;
+        crate::widgets::side_tag(&mut ui, if side == 0 { "L" } else { "R" }, self.store.active == side, &tok);
+        let pill = (!t.blocks.is_empty()).then(|| {
+            let v = required_version(&t.blocks);
+            format!("TZX {}.{:02}", v.major, v.minor)
+        });
+        let gap = ui.spacing().item_spacing.x;
+        let mut after = 0.0;
+        if t.dirty() {
+            after += 8.0 + gap;
+        }
+        if let Some(text) = &pill {
+            let font = egui::FontId::proportional(11.0);
+            after += ui.painter().layout_no_wrap(text.clone(), font, tok.muted).size().x + 12.0 + gap;
+        }
+        let name_w = (ui.available_width() - after).max(0.0);
+        ui.allocate_ui_with_layout(vec2(name_w, rect.height()), Layout::left_to_right(Align::Center), |ui| {
+            ui.set_max_width(name_w);
+            let name = egui::Label::new(RichText::new(&t.name).size(13.0).strong()).truncate();
+            ui.add(name);
+        });
+        if t.dirty() {
+            icons::inline(&mut ui, &icons::DOT, tok.warn, 8.0).on_hover_text("Unsaved changes");
+        }
+        if let Some(text) = &pill {
+            crate::widgets::pill(&mut ui, text, &tok).on_hover_text("TZX version this tape will be saved as");
         }
     }
 
