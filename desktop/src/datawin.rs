@@ -1224,9 +1224,7 @@ fn header_view(dw: &mut DataWin, ui: &mut Ui, hex: bool, tok: &Tokens, editable:
         return;
     };
     let mut h = hdr;
-    // The padding of the name is not the name: off for editing, back on in
-    // `encode_header`, as in the block editor.
-    h.name = h.name.trim_end().to_string();
+    h.name = crate::editor::name_to_edit(&h.name).to_string();
     let mut changed = false;
     ui.add_space(8.0);
     w::field(ui, "Type", tok, |ui| {
@@ -1644,6 +1642,21 @@ mod tests {
         assert_eq!(dw.work_data().len(), 19, "flag, 17 bytes and the checksum");
         let sum = dw.work_data()[1..18].iter().fold(0u8, |a, b| a ^ b);
         assert_eq!(dw.work_data()[18], sum, "the checksum was recomputed");
+    }
+
+    /// A header made by adding 19 bytes to an empty block has a name of ten
+    /// zeros. Only spaces used to come off, so the name field was full before
+    /// anything was typed, and each key was cut off again.
+    #[test]
+    fn a_header_of_zeros_has_an_empty_name_to_type_in() {
+        let blocks = vec![Block::new(Body::Standard { pause: 1000, data: vec![0; 19] })];
+        let uid = blocks[0].uid;
+        let dw = DataWin::new(&blocks, 0, vec![uid]);
+        let h = decode_header(dw.work_data()).expect("19 zeros are a Program header");
+        assert_eq!(crate::editor::name_to_edit(&h.name), "");
+        assert_eq!(crate::editor::name_to_edit("demo      "), "demo");
+        let typed = encode_header(&HeaderInfo { name: "demo".into(), ..h });
+        assert_eq!(&typed[2..12], b"demo      ", "padded with spaces on the way back");
     }
 
     /// The Dec/Hex switch belongs to the screen it is on: a data window opens on

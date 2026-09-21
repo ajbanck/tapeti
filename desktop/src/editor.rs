@@ -34,6 +34,15 @@ pub fn commit_button_id(side: Side) -> egui::Id {
     egui::Id::new(("tapeti-editor-commit", side))
 }
 
+/// A header's name as its field shows it. The name is padded to 10 bytes and
+/// the padding is not the name: while it is there, the 10-character field has
+/// no room to type in. `encode_header` pads it again on the way back. Zeros
+/// are padding as well — a header made by adding 19 bytes to an empty block
+/// has ten of them, and every key typed into its name was cut off again.
+pub fn name_to_edit(name: &str) -> &str {
+    name.trim_end_matches([' ', '\0'])
+}
+
 /// What a row's trailing − and ↑ take, their spacing and the scroll area's own
 /// bar included. A row that overspends this widens the `Ui` around it, and egui
 /// will not let the footer shrink back afterwards.
@@ -675,10 +684,7 @@ impl Form<'_> {
         let Some(hdr) = decode_header(data) else { return };
         let (hex, dis, tok) = (self.hex, self.disabled, self.tok);
         let mut h = hdr.clone();
-        // A header name is padded to 10 bytes; the padding is not the name, and
-        // an edit has no room under the 10-character limit while it is there.
-        // `encode_header` pads it again on the way back.
-        h.name = h.name.trim_end().to_string();
+        h.name = name_to_edit(&h.name).to_string();
         ui.add_space(6.0);
         w::note(ui, &tok, "Header");
         let mut changed = false;

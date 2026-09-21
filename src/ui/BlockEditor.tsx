@@ -160,7 +160,7 @@ function HeaderEditor({ draft, set, h, disabled }: FP) {
           {HEADER_TYPE_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
         </select>
         <label>Name</label>
-        <TextInput value={hdr.name.replace(/ +$/, '')} maxLength={10} width={110} disabled={disabled} onChange={(s) => upd({ name: s })} />
+        <TextInput value={hdr.name.replace(/[ \0]+$/, '')} maxLength={10} width={110} disabled={disabled} onChange={(s) => upd({ name: s })} />
         <label>Length</label>
         <NumInput value={hdr.length} max={0xffff} disabled={disabled} onChange={(v) => upd({ length: v })} />
         <label>{hdr.type === 0 ? 'Autostart line' : hdr.type === 3 ? 'Start address' : 'Variable name'}</label>

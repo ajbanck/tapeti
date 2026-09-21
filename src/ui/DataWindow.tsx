@@ -665,7 +665,7 @@ function HeaderView({ data, h, editable, onChange }: { data: Uint8Array; h: bool
     ['Type', <select value={hdr.type} disabled={!editable} onChange={(e) => upd({ type: Number((e.target as HTMLSelectElement).value) })}>
       {HEADER_TYPE_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
     </select>],
-    ['Name', <TextInput value={hdr.name.replace(/ +$/, '')} maxLength={10} width={110} disabled={!editable} onChange={(v) => upd({ name: v })} />],
+    ['Name', <TextInput value={hdr.name.replace(/[ \0]+$/, '')} maxLength={10} width={110} disabled={!editable} onChange={(v) => upd({ name: v })} />],
     ['Length', <><NumInput value={hdr.length} max={0xffff} width={90} hex={h} disabled={!editable} onChange={(v) => upd({ length: v })} /> <span class="note">bytes</span></>],
     [hdr.type === 0 ? 'Autostart line' : hdr.type === 3 ? 'Start address' : 'Variable name',
       <><NumInput value={hdr.param1} max={0xffff} width={90} hex={h} disabled={!editable} onChange={(v) => upd({ param1: v })} />
