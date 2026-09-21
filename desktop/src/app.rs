@@ -1040,6 +1040,27 @@ mod tests {
         .drop_without_applying_deltas();
     }
 
+    /// Every dialog is one egui modal, and it has to fit the dialog shown now, not
+    /// the tallest one shown before: after tape info a one-line message used to
+    /// keep tape info's height, its OK button halfway down an empty box.
+    #[test]
+    fn a_dialog_is_as_tall_as_itself_whatever_came_before() {
+        let (ctx, mut app) = app_with(vec![Block::new(create_body(0x10))]);
+        let height = |app: &mut App| {
+            for _ in 0..10 {
+                draw(&ctx, app);
+            }
+            ctx.memory(|m| m.area_rect(egui::Id::new("tapeti-dialog"))).expect("a dialog").height()
+        };
+        app.store.dialog = Some(Dialog::message("Short", vec!["One line.".into()]));
+        let short = height(&mut app);
+        app.store.dialog = Some(Dialog::TapeInfo(0));
+        let tall = height(&mut app);
+        assert!(tall > short + 100.0, "tape info {tall}, a message {short}");
+        app.store.dialog = Some(Dialog::message("Short", vec!["One line.".into()]));
+        assert_eq!(height(&mut app), short, "the message after tape info");
+    }
+
     /// A file dropped from outside goes to the pane on its side of the splitter —
     /// over the editor as well as over the list — and to the active pane when
     /// nobody knows where it fell. It used to need egui's pointer inside a block

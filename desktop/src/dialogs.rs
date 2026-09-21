@@ -243,11 +243,18 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn footer<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+/// The rule and the button row at the bottom of a dialog.
+///
+/// The buttons go right to left inside a `horizontal`, one row high. On their own
+/// a right-to-left layout centres its row in all the height left in the dialog,
+/// and counts all of it as used: the modal then measured itself at the height it
+/// already had, so it never shrank, and every dialog kept the height of the
+/// tallest one shown before it — whitespace under a short one's buttons.
+pub fn footer<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.add_space(10.0);
     ui.separator();
     ui.add_space(6.0);
-    ui.with_layout(Layout::right_to_left(Align::Center), add).inner
+    ui.horizontal(|ui| ui.with_layout(Layout::right_to_left(Align::Center), add).inner).inner
 }
 
 fn lines_with_ok(ui: &mut Ui, lines: &[String]) -> Outcome {
