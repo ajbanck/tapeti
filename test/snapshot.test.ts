@@ -81,6 +81,7 @@ describe('snapshot import', () => {
     expect(t.blocks.length).toBe(6);
     expect(t.name).toBe('game.sna');
     expect(t.loadedVersion).toBeNull();
+    expect(t.fileHashes).toBeNull(); // the snapshot is not the tape's file
     expect(t.dirty).toBe(false);
   });
 

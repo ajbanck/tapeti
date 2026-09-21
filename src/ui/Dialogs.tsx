@@ -8,7 +8,7 @@ import { NumInput } from './fields';
 import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block, StandardBlock } from '../tzx/types';
 import { checkConsistency } from '../tzx/consistency';
 import { tapeDuration, renderWav, playbackOrder, blockDuration, TSTATES_PER_SEC } from '../tzx/audio';
-import { saveVersion, serializeTzx } from '../tzx/writer';
+import { requiredVersion, saveVersion, serializeTzx } from '../tzx/writer';
 import { describeBlock, encodeHeader } from '../tzx/describe';
 import { detectPrograms } from '../tzx/programs';
 import { jumpToProgram } from '../state/actions';
@@ -162,17 +162,18 @@ function ProgramPicker({ side }: { side: Side }) {
   );
 }
 
+const fmtVersion = (v: { major: number; minor: number }) => `${v.major}.${String(v.minor).padStart(2, '0')}`;
+
 function TapeInfo({ side }: { side: Side }) {
   const t = tapes[side].value;
   const info = useMemo(() => {
     const issues = checkConsistency(t.blocks).filter((i) => i.severity === 'error');
     const dur = issues.length ? null : tapeDuration(t.blocks);
     const v = saveVersion(t.blocks, t.loadedVersion);
+    const needed = requiredVersion(t.blocks);
     const size = serializeTzx(t.blocks, v).length;
-    const counts = new Map<number, number>();
-    for (const b of t.blocks) counts.set(b.id, (counts.get(b.id) ?? 0) + 1);
     const dataBytes = t.blocks.reduce((a, b) => a + ('data' in b ? (b as any).data.length : 0), 0);
-    return { issues, dur, v, size, counts, dataBytes };
+    return { issues, dur, v, needed, size, dataBytes };
   }, [t.blocks, t.loadedVersion]);
   const h = hex.value;
   return (
@@ -180,17 +181,19 @@ function TapeInfo({ side }: { side: Side }) {
       <table>
         <tr><td>File</td><td>{t.name}</td></tr>
         <tr><td>Blocks</td><td>{fmtNum(t.blocks.length)}</td></tr>
-        <tr><td>TZX version when saved</td><td>{info.v.major}.{String(info.v.minor).padStart(2, '0')}{t.loadedVersion && (t.loadedVersion.major !== info.v.major || t.loadedVersion.minor !== info.v.minor) && ` (loaded as ${t.loadedVersion.major}.${String(t.loadedVersion.minor).padStart(2, '0')})`}</td></tr>
+        <tr><td>TZX version of the file</td><td>{t.loadedVersion ? fmtVersion(t.loadedVersion) : 'none (not loaded from a TZX file)'}</td></tr>
+        <tr><td>TZX version the blocks need</td><td>{fmtVersion(info.needed)}</td></tr>
+        <tr><td>TZX version when saved</td><td>{fmtVersion(info.v)}</td></tr>
         <tr><td>File size</td><td>{fmtNum(info.size)} bytes</td></tr>
         <tr><td>Data payload</td><td>{fmtNum(info.dataBytes)} bytes</td></tr>
         <tr><td>Estimated length</td><td>{info.dur ? `${fmtTime(info.dur.seconds)} (${info.dur.order.length} blocks played)` : 'n/a — fix consistency errors first'}</td></tr>
+        {t.fileHashes ? <>
+          <tr><td>CRC32</td><td><code>{t.fileHashes.crc32}</code></td></tr>
+          <tr><td>MD5</td><td><code>{t.fileHashes.md5}</code></td></tr>
+          <tr><td>SHA-1</td><td><code>{t.fileHashes.sha1}</code></td></tr>
+        </> : <tr><td>Checksums</td><td>none (not read from a TZX or TAP file)</td></tr>}
       </table>
-      <p><b>Blocks by type</b></p>
-      <table>
-        {[...info.counts.entries()].sort((a, b) => a[0] - b[0]).map(([id, n]) => (
-          <tr key={id}><td>{id.toString(16).toUpperCase().padStart(2, '0')} {BLOCK_NAMES[id] ?? 'Unknown'}</td><td>{fmtNum(n)}</td></tr>
-        ))}
-      </table>
+      {t.fileHashes && t.dirty && <p class="note">The checksums are of the file as opened or last saved; the tape has changed since.</p>}
       {info.issues.length > 0 && <p class="error">{info.issues.length} consistency error(s) — see Check consistency.</p>}
       <p class="note">Durations are computed from block timings and pauses at 3.5 MHz{h ? '' : ''}.</p>
     </Modal>

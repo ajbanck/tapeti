@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use tapeti_core::describe::file_blocks;
+use tapeti_core::hash::file_hashes;
 use tapeti_core::parser::{is_tzx, parse_tape};
 use tapeti_core::snapshot::{parse_snapshot, snapshot_to_blocks, LoaderOptions, SnapshotKind, SPEED_BPS};
 use tapeti_core::writer::{save_version, serialize_tap, serialize_tzx, Version};
@@ -85,7 +86,9 @@ pub fn load_bytes(
     } else {
         // TAP files carry no version; only a real TZX header is worth remembering.
         let version = is_tzx(bytes).then_some(Version { major, minor });
-        store.tape_mut(side).load(name.to_string(), path, parsed.blocks, version);
+        let t = store.tape_mut(side);
+        t.load(name.to_string(), path, parsed.blocks, version);
+        t.file_hashes = Some(file_hashes(bytes));
     }
     store.active = side;
     store.set_status(format!("Loaded {name}: {count} blocks, TZX v{major}.{minor:02}"));
@@ -293,6 +296,7 @@ pub fn save_tzx(store: &mut Store, side: Side, save_as: bool) {
     let name = file_name(&path);
     let t = store.tape_mut(side);
     t.loaded_version = Some(v);
+    t.file_hashes = Some(file_hashes(&bytes));
     t.name = name.clone();
     t.path = Some(path);
     t.mark_saved();
@@ -310,6 +314,7 @@ pub fn save_tap(store: &mut Store, side: Side) {
         let t = store.tape_mut(side);
         t.name = name.clone();
         t.path = Some(path);
+        t.file_hashes = Some(file_hashes(&bytes));
         t.mark_saved();
         store.set_status(format!("Saved {name}"));
     } else {
@@ -365,6 +370,7 @@ pub mod tests {
         assert_eq!(t.name, "game.sna");
         // Saving must ask where: the snapshot is not the tape's file.
         assert!(t.path.is_none() && t.loaded_version.is_none() && !t.dirty());
+        assert!(t.file_hashes.is_none(), "a snapshot's tape is no file, so it has no checksums");
         assert_eq!(stem(&t.name), "game");
 
         // Inserting goes to the cursor of the tape that is there.
@@ -410,6 +416,42 @@ pub mod tests {
 
         // Nowhere to write: the error comes back and nothing is left lying about.
         assert!(write_in_place(&dir.join("missing").join("x.tzx"), b"x", true).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The checksums are of the file: read at load, kept through edits (the note in
+    /// tape info says they no longer describe the pane), gone with an emptied tape
+    /// and back on undo, and after a save those of what was written.
+    #[test]
+    fn the_checksums_follow_the_file() {
+        use tapeti_core::hash::file_hashes;
+        use tapeti_core::types::{create_body, Block};
+        let dir = std::env::temp_dir().join(format!("tapeti-hashes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("game.tzx");
+        let file = serialize_tzx(&[Block::new(create_body(0x10))], Some(Version { major: 1, minor: 20 }));
+        std::fs::write(&path, &file).unwrap();
+
+        let mut store = Store::new(Settings::default());
+        load_bytes(&mut store, 0, "game.tzx", &file, false, Some(path.clone()));
+        let read = Some(file_hashes(&file));
+        assert_eq!(store.tape(0).file_hashes, read);
+
+        store.insert_blocks(0, 1, vec![Block::new(create_body(0x20))]);
+        assert!(store.tape(0).dirty());
+        assert_eq!(store.tape(0).file_hashes, read, "an edit does not change the file");
+        store.delete_indices(0, vec![0, 1]);
+        assert_eq!(store.tape(0).file_hashes, None, "an emptied tape is a new one");
+        store.undo(0);
+        assert_eq!(store.tape(0).file_hashes, read);
+
+        save_tzx(&mut store, 0, false);
+        let written = std::fs::read(&path).unwrap();
+        assert_ne!(written, file);
+        let saved = Some(file_hashes(&written));
+        assert_eq!(store.tape(0).file_hashes, saved);
+        store.undo(0);
+        assert_eq!(store.tape(0).file_hashes, saved, "undo past a save leaves the file as saved");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

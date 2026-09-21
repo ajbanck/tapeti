@@ -17,7 +17,7 @@ use tapeti_core::programs::detect_programs;
 use tapeti_core::snapshot::{LoaderOptions, Snapshot, DEFAULT_SPEED, SPEED_BPS};
 use tapeti_core::spectrum::screen::{render_screen, ScreenOptions, SCREEN_SIZE};
 use tapeti_core::types::{block_name, create_body, Block, CREATABLE_IDS};
-use tapeti_core::writer::{save_version, serialize_tzx};
+use tapeti_core::writer::{required_version, save_version, serialize_tzx, Version};
 
 use crate::actions::{self, Then};
 use crate::app::App;
@@ -363,32 +363,28 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
     let v = save_version(&t.blocks, t.loaded_version);
     let size = serialize_tzx(&t.blocks, Some(v)).len();
     let data_bytes: usize = t.blocks.iter().filter_map(|b| b.body.data()).map(<[u8]>::len).sum();
-    let mut counts: Vec<(u8, usize)> = Vec::new();
-    for b in &t.blocks {
-        match counts.iter_mut().find(|(id, _)| *id == b.id()) {
-            Some((_, n)) => *n += 1,
-            None => counts.push((b.id(), 1)),
-        }
-    }
-    counts.sort_unstable();
+    let version = |v: Version| format!("{}.{:02}", v.major, v.minor);
 
-    let row = |ui: &mut Ui, k: &str, v: String| {
+    let rich_row = |ui: &mut Ui, k: &str, v: RichText| {
         ui.horizontal(|ui| {
-            ui.add_sized(
-                [190.0, 18.0],
-                egui::Label::new(RichText::new(k).color(tok.muted)).halign(Align::LEFT),
-            );
+            // A fixed column, left-aligned as `.modal td` is: `add_sized` would
+            // centre the label in it whatever its own `halign` says.
+            ui.allocate_ui_with_layout(egui::vec2(190.0, 18.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.set_min_width(190.0);
+                ui.label(RichText::new(k).color(tok.muted));
+            });
             ui.label(v);
         });
     };
+    let row = |ui: &mut Ui, k: &str, v: String| rich_row(ui, k, RichText::new(v));
+    // The checksums in monospace, as `<code>` sets them on the web.
+    let hash_row = |ui: &mut Ui, k: &str, v: &str| rich_row(ui, k, RichText::new(v).monospace());
     row(ui, "File", t.name.clone());
     row(ui, "Blocks", fmt::num(t.blocks.len() as i64, hex));
-    let loaded = t
-        .loaded_version
-        .filter(|l| l.major != v.major || l.minor != v.minor)
-        .map(|l| format!(" (loaded as {}.{:02})", l.major, l.minor))
-        .unwrap_or_default();
-    row(ui, "TZX version when saved", format!("{}.{:02}{loaded}", v.major, v.minor));
+    let file = t.loaded_version.map_or_else(|| "none (not loaded from a TZX file)".into(), version);
+    row(ui, "TZX version of the file", file);
+    row(ui, "TZX version the blocks need", version(required_version(&t.blocks)));
+    row(ui, "TZX version when saved", version(v));
     row(ui, "File size", format!("{} bytes", fmt::num(size as i64, hex)));
     row(ui, "Data payload", format!("{} bytes", fmt::num(data_bytes as i64, hex)));
     row(
@@ -399,13 +395,21 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
             None => "n/a — fix consistency errors first".into(),
         },
     );
-    ui.add_space(8.0);
-    ui.label(RichText::new("Blocks by type").strong());
-    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-        for (id, n) in &counts {
-            row(ui, &format!("{id:02X} {}", block_name(*id).unwrap_or("Unknown")), fmt::num(*n as i64, hex));
+    match &t.file_hashes {
+        Some(h) => {
+            hash_row(ui, "CRC32", &h.crc32);
+            hash_row(ui, "MD5", &h.md5);
+            hash_row(ui, "SHA-1", &h.sha1);
         }
-    });
+        None => row(ui, "Checksums", "none (not read from a TZX or TAP file)".into()),
+    }
+    if t.file_hashes.is_some() && t.dirty() {
+        w::note(
+            ui,
+            tok,
+            "The checksums are of the file as opened or last saved; the tape has changed since.",
+        );
+    }
     if errors > 0 {
         ui.colored_label(tok.danger, format!("{errors} consistency error(s) — see Check consistency."));
     }

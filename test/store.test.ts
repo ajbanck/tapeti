@@ -4,7 +4,9 @@ import {
   copyUnit, paste, deleteUnit, setCursor, selectUids, commit, collapseAll,
 } from '../src/state/store';
 import { groupRanges } from '../src/tzx/programs';
-import { newTape } from '../src/state/files';
+import { newTape, loadBytes } from '../src/state/files';
+import { serializeTzx } from '../src/tzx/writer';
+import { fileHashes } from '../src/tzx/hash';
 import { createBlock, Block } from '../src/tzx/types';
 
 const ids = () => tapes[0].value.blocks.map((b) => b.id);
@@ -125,6 +127,32 @@ describe('store: undo and dirty tracking', () => {
     undo(0); // before the save: still not what is on disk
     expect(ids()).toEqual([]);
     expect(tapes[0].value.dirty).toBe(true);
+  });
+
+  it('hashes a file the way everything else does', () => {
+    expect(fileHashes(new TextEncoder().encode('abc'))).toEqual({
+      crc32: '352441c2', md5: '900150983cd24fb0d6963f7d28e17f72', sha1: 'a9993e364706816aba3e25717850c26c9cd0d89d',
+    });
+  });
+
+  it('keeps the checksums of the file it read, through edits, emptying and undo', () => {
+    const file = serializeTzx([createBlock(0x10)], { major: 1, minor: 20 });
+    loadBytes(0, 'game.tzx', file);
+    const read = fileHashes(file);
+    expect(tapes[0].value.fileHashes).toEqual(read);
+
+    insertBlocks(0, 1, [createBlock(0x20)]);
+    expect(tapes[0].value.dirty).toBe(true);
+    expect(tapes[0].value.fileHashes).toEqual(read);
+    selectUids(0, [uidAt(0), uidAt(1)]);
+    setCursor(0, 0, 'keep');
+    deleteUnit(0);
+    expect(tapes[0].value.fileHashes).toBe(null);
+    undo(0);
+    expect(tapes[0].value.fileHashes).toEqual(read);
+
+    newTape(0);
+    expect(tapes[0].value.fileHashes).toBe(null);
   });
 
   it('a tape with nothing left on it becomes a new tape, and undo brings it back', () => {

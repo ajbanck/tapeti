@@ -20,6 +20,7 @@ use crate::consistency::check_consistency;
 use crate::content::{basic_score, content_labels, detect_content, detect_content_as_loaded};
 use crate::convert::convert_block;
 use crate::describe::{block_length, checksum, decode_header, describe_block, encode_header};
+use crate::hash::file_hashes;
 use crate::parser::{parse_tap, parse_tape, parse_tzx, ParsedTape};
 use crate::pokes::{decode_pokes, encode_pokes, pokes_to_text, text_to_pokes};
 use crate::programs::{detect_programs, group_ranges, tape_title};
@@ -392,6 +393,16 @@ pub unsafe extern "C" fn core_encode_header(ptr: *const u8, len: usize) -> *mut 
 #[no_mangle]
 pub unsafe extern "C" fn core_checksum(ptr: *const u8, len: usize) -> *mut u8 {
     finish(encode_u8(checksum(slice(ptr, len))))
+}
+
+/// CRC32, MD5 and SHA-1 of a file's bytes, in that order, as lowercase hex.
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn core_file_hashes(ptr: *const u8, len: usize) -> *mut u8 {
+    let h = file_hashes(slice(ptr, len));
+    finish(encode_strings(&[h.crc32, h.md5, h.sha1]))
 }
 
 /// How much of this byte stream parses as BASIC lines, from 0 to 1.

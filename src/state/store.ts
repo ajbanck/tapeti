@@ -6,6 +6,7 @@ import { BlockCompareMode, TapeCompareMode, CompareResult, compareTapes, findMat
 import { groupRanges } from '../tzx/programs';
 import { playbackOrder } from '../tzx/audio';
 import type { SnapshotInfo, SnapshotKind } from '../tzx/snapshot';
+import type { FileHashes } from '../tzx/hash';
 
 export type Side = 0 | 1;
 
@@ -19,6 +20,8 @@ export interface TapeState {
   /** The blocks array as of the last load or save; undo/redo compare against it to keep `dirty` honest. */
   saved: Block[];
   loadedVersion: { major: number; minor: number } | null;
+  /** Checksums of the file as read or last saved; null for a tape that is no file (new, a snapshot). */
+  fileHashes: FileHashes | null;
   compare: Map<number, CompareResult>; // uid -> result colour
   undo: Snapshot[];
   redo: Snapshot[];
@@ -32,6 +35,7 @@ interface Snapshot {
    * emptying a tape resets its identity, and undo has to bring that back with the blocks. */
   name: string;
   loadedVersion: { major: number; minor: number } | null;
+  fileHashes: FileHashes | null;
   saved: Block[];
 }
 
@@ -39,7 +43,7 @@ export function emptyTape(name = 'new'): TapeState {
   const blocks: Block[] = [];
   return {
     name, blocks, cursor: -1, selected: new Set(), collapsed: new Set(), dirty: false, saved: blocks,
-    loadedVersion: null, compare: new Map(), undo: [], redo: [],
+    loadedVersion: null, fileHashes: null, compare: new Map(), undo: [], redo: [],
   };
 }
 
@@ -186,7 +190,10 @@ export function markSaved(side: Side, p: Partial<TapeState> = {}) {
   // that puts the whole thing back. A save re-bases that identity over the
   // history too: the file on disk is these blocks under this name, so undoing
   // past a save is dirty again and does not take the name back with it.
-  const id = { saved: t.blocks, name: p.name ?? t.name, loadedVersion: p.loadedVersion ?? t.loadedVersion };
+  const id = {
+    saved: t.blocks, name: p.name ?? t.name, loadedVersion: p.loadedVersion ?? t.loadedVersion,
+    fileHashes: p.fileHashes ?? t.fileHashes,
+  };
   patch(side, {
     ...p, ...id, dirty: false,
     undo: t.undo.map((s) => ({ ...s, ...id })), redo: t.redo.map((s) => ({ ...s, ...id })),
@@ -220,14 +227,17 @@ export function commit(side: Side, fn: (blocks: Block[]) => { blocks: Block[]; c
     undo: [...t.undo.slice(-100), snap],
     redo: [],
     compare: new Map(),
-    ...(emptied ? { name: 'new', loadedVersion: null, saved: r.blocks, collapsed: new Set<number>() } : {}),
+    ...(emptied ? { name: 'new', loadedVersion: null, fileHashes: null, saved: r.blocks, collapsed: new Set<number>() } : {}),
   });
   if (emptied) setStatus('Nothing left on the tape: the pane is a new tape again');
   return true;
 }
 
 function snapshot(t: TapeState): Snapshot {
-  return { blocks: t.blocks, cursor: t.cursor, selected: t.selected, name: t.name, loadedVersion: t.loadedVersion, saved: t.saved };
+  return {
+    blocks: t.blocks, cursor: t.cursor, selected: t.selected, name: t.name, loadedVersion: t.loadedVersion,
+    fileHashes: t.fileHashes, saved: t.saved,
+  };
 }
 
 export function undo(side: Side) {
@@ -244,7 +254,7 @@ export function undo(side: Side) {
 function restored(snap: Snapshot): Partial<TapeState> {
   return {
     blocks: snap.blocks, cursor: snap.cursor, selected: snap.selected, name: snap.name,
-    loadedVersion: snap.loadedVersion, saved: snap.saved, dirty: snap.blocks !== snap.saved,
+    loadedVersion: snap.loadedVersion, fileHashes: snap.fileHashes, saved: snap.saved, dirty: snap.blocks !== snap.saved,
   };
 }
 export function redo(side: Side) {

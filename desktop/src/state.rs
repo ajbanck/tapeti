@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use tapeti_core::audio::{playback_order, FlowOptions};
 use tapeti_core::compare::{compare_tapes, find_matches, BlockCompareMode, CompareResult, TapeCompareMode};
+use tapeti_core::hash::FileHashes;
 use tapeti_core::programs::group_ranges;
 use tapeti_core::types::{Block, Body, Uid};
 use tapeti_core::writer::Version;
@@ -58,6 +59,7 @@ struct Snapshot {
     name: String,
     path: Option<PathBuf>,
     loaded_version: Option<Version>,
+    file_hashes: Option<FileHashes>,
     saved_gen: u64,
 }
 
@@ -75,6 +77,9 @@ pub struct TapeState {
     /// Uids of collapsed group/loop start blocks.
     pub collapsed: HashSet<Uid>,
     pub loaded_version: Option<Version>,
+    /// Checksums of the file as read or last saved; `None` for a tape that is no
+    /// file (new, a snapshot). `load` clears them: the caller that read a file sets them.
+    pub file_hashes: Option<FileHashes>,
     /// Compare/find-match colours, by uid. Empty when there is nothing to show.
     pub compare: HashMap<Uid, Mark>,
     undo: Vec<Snapshot>,
@@ -94,6 +99,7 @@ impl TapeState {
             selected: HashSet::new(),
             collapsed: HashSet::new(),
             loaded_version: None,
+            file_hashes: None,
             compare: HashMap::new(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -142,6 +148,7 @@ impl TapeState {
             snap.name.clone_from(&self.name);
             snap.path.clone_from(&self.path);
             snap.loaded_version = self.loaded_version;
+            snap.file_hashes.clone_from(&self.file_hashes);
         }
     }
 
@@ -155,6 +162,7 @@ impl TapeState {
             name: self.name.clone(),
             path: self.path.clone(),
             loaded_version: self.loaded_version,
+            file_hashes: self.file_hashes.clone(),
             saved_gen: self.saved_gen,
         }
     }
@@ -169,6 +177,7 @@ impl TapeState {
         self.name = snap.name;
         self.path = snap.path;
         self.loaded_version = snap.loaded_version;
+        self.file_hashes = snap.file_hashes;
         self.saved_gen = snap.saved_gen;
         current
     }
@@ -180,6 +189,7 @@ impl TapeState {
         self.name = "new".to_string();
         self.path = None;
         self.loaded_version = None;
+        self.file_hashes = None;
         self.collapsed.clear();
         self.saved_gen = self.gen;
     }
@@ -204,6 +214,7 @@ impl TapeState {
             selected: HashSet::new(),
             collapsed: HashSet::new(),
             loaded_version: version,
+            file_hashes: None,
             compare: HashMap::new(),
             undo: Vec::new(),
             redo: Vec::new(),

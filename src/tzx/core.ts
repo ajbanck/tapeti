@@ -48,6 +48,7 @@ interface CoreExports {
   core_encode_header(ptr: number, len: number): number;
   core_checksum(ptr: number, len: number): number;
   core_basic_score(ptr: number, len: number): number;
+  core_file_hashes(ptr: number, len: number): number;
   core_convert_block(ptr: number, len: number, id: number): number;
   core_blocks_equal(ptr: number, len: number, mode: number): number;
   core_compare_tapes(ptr: number, len: number, split: number, blockMode: number, tapeMode: number): number;
@@ -271,6 +272,10 @@ export function encodeHeaderCore(h: HeaderInfo): Uint8Array {
 
 export function checksumCore(data: Uint8Array): number {
   return decodeU8(call('core_checksum', data));
+}
+
+export function fileHashesCore(bytes: Uint8Array): string[] {
+  return decodeStrings(call('core_file_hashes', bytes));
 }
 
 export function basicScoreCore(data: Uint8Array): number {

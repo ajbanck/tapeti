@@ -13,6 +13,7 @@ pub mod content;
 pub mod convert;
 pub mod describe;
 pub mod dump;
+pub mod hash;
 pub mod parser;
 pub mod pokes;
 pub mod programs;

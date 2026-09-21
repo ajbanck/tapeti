@@ -117,7 +117,9 @@ signal level, text, message, archive info, hardware type (full hardware list), c
 the data length differs from the header, the label says so (`SCREEN (short)`, `CODE 32768 (long)`);
 blocks without a usable header are guessed from their size and bytes (`SCREEN?`, `BASIC?`).
 
-**Tape tools**: tape info (size, TZX version, estimated playing time, block counts), consistency
+**Tape tools**: tape info (size, estimated playing time, the TZX version of the file beside the
+one its blocks need and the one saving writes, and the file's CRC32, MD5 and SHA-1, taken
+from the file as opened or last saved, not from the edited tape), consistency
 check (nesting, useless loops, bad jumps, calls without return, infinite loops, checksums),
 a SpeedLock group's parity — its pure data blocks have no checksum of their own, the loader keeps
 one over the whole group — compare tapes and find match with block-compare and tape-compare modes (magenta = differs,

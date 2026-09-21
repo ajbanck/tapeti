@@ -5,6 +5,7 @@ import { parseTape, isTzx } from '../tzx/parser';
 import { serializeTzx, serializeTap, saveVersion } from '../tzx/writer';
 import { Block, ParsedTape, StandardBlock, createBlock } from '../tzx/types';
 import { checksum, encodeHeader } from '../tzx/describe';
+import { fileHashes } from '../tzx/hash';
 import { snapshotKind, snapshotInfo, snapshotToTape, SnapshotKind, SnapshotOptions, SNAPSHOT_SPEEDS } from '../tzx/snapshot';
 import { platform, OpenedFile, TAPE_FILTERS, filtersForName, FileFilter, fileToOpened } from '../platform';
 
@@ -35,7 +36,7 @@ export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtC
     return;
   }
   if (parsed.warnings.length) showMessage(`Warnings while loading ${name}`, parsed.warnings);
-  loadParsed(side, name, parsed, insertAtCursor, isTzx(bytes));
+  loadParsed(side, name, parsed, insertAtCursor, isTzx(bytes), bytes);
   setStatus(`Loaded ${name}: ${parsed.blocks.length} blocks, TZX v${parsed.major}.${String(parsed.minor).padStart(2, '0')}`);
 }
 
@@ -83,11 +84,12 @@ export function importSnapshot(side: Side, name: string, bytes: Uint8Array, form
     showMessage('Cannot import snapshot', (e as Error).message);
     return;
   }
-  loadParsed(side, name, parsed, insertAtCursor, false);
+  loadParsed(side, name, parsed, insertAtCursor, false, null);
   setStatus(`Imported ${name}: ${parsed.blocks.length} blocks, loading at ${SNAPSHOT_SPEEDS[opts.speed]} bps`);
 }
 
-function loadParsed(side: Side, name: string, parsed: ParsedTape, insertAtCursor: boolean, fromTzx: boolean) {
+/** `file` is the bytes of the file the tape was read from; a snapshot's tape is no such file. */
+function loadParsed(side: Side, name: string, parsed: ParsedTape, insertAtCursor: boolean, fromTzx: boolean, file: Uint8Array | null) {
   if (insertAtCursor) {
     const t = tapes[side].value;
     insertBlocks(side, t.cursor < 0 ? t.blocks.length : t.cursor, parsed.blocks);
@@ -96,6 +98,7 @@ function loadParsed(side: Side, name: string, parsed: ParsedTape, insertAtCursor
       ...emptyTape(name), blocks: parsed.blocks, saved: parsed.blocks, cursor: parsed.blocks.length ? 0 : -1,
       // TAP files and snapshots carry no version; only remember it for real TZX headers
       loadedVersion: fromTzx ? { major: parsed.major, minor: parsed.minor } : null,
+      fileHashes: file && fileHashes(file),
     };
   }
   active.value = side;
@@ -121,7 +124,7 @@ export async function saveTzx(side: Side) {
   const p = await platform();
   const r = await p.saveFile({ suggestedName: stem(t.name) + '.tzx', filters: [{ name: 'TZX tape image', extensions: ['tzx'] }], bytes });
   if (!r) return;
-  markSaved(side, { loadedVersion: v, name: r.name });
+  markSaved(side, { loadedVersion: v, name: r.name, fileHashes: fileHashes(bytes) });
   setStatus(`Saved ${r.name} as TZX v${v.major}.${String(v.minor).padStart(2, '0')}`);
 }
 
@@ -138,7 +141,7 @@ export async function saveTap(side: Side) {
       'Turbo/pure data blocks were written as standard blocks (their timings are lost).',
     ]);
   } else {
-    markSaved(side, { name: r.name });
+    markSaved(side, { name: r.name, fileHashes: fileHashes(bytes) });
     setStatus(`Saved ${r.name}`);
   }
 }
