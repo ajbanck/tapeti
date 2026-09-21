@@ -6,7 +6,8 @@
 //   node scripts/make-samples.mjs
 //
 // Produces:
-//   Tapeti demo.tzx            every block type the editor can create, in one tape
+//   Tapeti demo.tzx            every block type the editor can create, in one tape that
+//                              loads and runs in an emulator
 //   Tapeti demo (variant).tzx  a variation of the same program for the compare modes
 //   Tapeti demo.tap            the TAP export of the demo tape
 import fs from 'node:fs';
@@ -173,13 +174,17 @@ try {
     block(0x11, { pause: 1500, pilotLen: 3223, data: romData(0xff, demoScreen) }),
     block(0x21, { name: 'Machine code' }),
     headerBlock({ type: 3, typeName: '', name: 'demo.bin', length: code.length, param1: 32768, param2: 32768 }),
+    // The code block built from parts, the way custom loaders do it: a pilot tone looped
+    // three times, the two sync pulses, then the data alone. Together they are a standard
+    // ROM block, so LOAD "" CODE reads it.
+    block(0x24, { count: 3 }),
+    block(0x12, { pulseLen: 2168, count: 1075 }),
+    block(0x25),
+    block(0x13, { pulses: [667, 735] }),
     block(0x14, { pause: 1000, data: romData(0xff, code) }),
     block(0x22),
+    // Everything the program loads is above; a 48K stops here.
     block(0x2a),
-    block(0x24, { count: 3 }),
-    block(0x12, { pulseLen: 2168, count: 1000 }),
-    block(0x13, { pulses: [667, 735, 667, 735] }),
-    block(0x25),
     generalized(latin1('Generalized data block, ROM timings')),
     block(0x35, {
       ident: 'POKEs           ',
