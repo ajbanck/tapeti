@@ -143,11 +143,39 @@ impl Tokens {
     }
 }
 
+/// Where macOS keeps the modifier symbols its own menus draw with.
+#[cfg(target_os = "macos")]
+const MAC_SYMBOLS: &str = "/System/Library/Fonts/Apple Symbols.ttf";
+
+/// egui's default fonts, and on macOS the system's symbol font behind them.
+///
+/// macOS spells a shortcut as ⌃⌥⇧⌘ and an arrow (`fmt::key`), and of those egui's
+/// fonts have only ⌘: the rest came out as empty boxes in every menu egui draws —
+/// the right-click menu, a pane's "…" menu. The platform menu bar never showed it,
+/// being native. Apple Symbols is on every Mac; if it is not there the fonts are
+/// egui's alone, and the boxes come back rather than anything worse.
+pub fn fonts() -> egui::FontDefinitions {
+    #[allow(unused_mut)]
+    let mut fonts = egui::FontDefinitions::default();
+    #[cfg(target_os = "macos")]
+    if let Ok(bytes) = std::fs::read(MAC_SYMBOLS) {
+        // Its ⇧ and arrows are drawn small beside egui's ⌘; only the glyphs
+        // egui lacks come from here, so scaling the font scales only those.
+        let tweak = egui::FontTweak { scale: 1.3, ..Default::default() };
+        let symbols = egui::FontData::from_owned(bytes).tweak(tweak);
+        fonts.font_data.insert("symbols".into(), std::sync::Arc::new(symbols));
+        for family in fonts.families.values_mut() {
+            family.push("symbols".into());
+        }
+    }
+    fonts
+}
+
 /// egui's default font list minus the two emoji fonts.
 ///
 /// Nothing the app draws needs them any more — the icons are geometry, and
-/// `src/icons.rs` says why — with one exception: on macOS the shortcut labels
-/// spell modifiers as ⌘⇧⌥⌃⌫, and those glyphs live in the emoji fonts.
+/// `src/icons.rs` says why. (They do not hold the macOS modifier symbols either,
+/// ⌘ aside: `fonts` brings those in.)
 ///
 /// Kept because `--measure` weighs it, and the answer is worth keeping visible:
 /// about 1 ms of a 4–6 ms first frame. egui rasterises glyphs on demand, so the

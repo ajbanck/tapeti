@@ -70,6 +70,8 @@ pub struct App {
     pub editor: [EditorState; 2],
     pub datawin: Option<DataWin>,
     pub context_menu: Option<(Side, egui::Pos2)>,
+    /// The frame the context menu opened in, whose click is the one that opened it.
+    pub context_menu_frame: u64,
     pub drag: Option<Drag>,
     pub drop_target: Option<(Side, (usize, bool))>,
     pub tokens: Tokens,
@@ -115,6 +117,7 @@ impl App {
     ) -> App {
         let tokens = theme::tokens(store.settings.theme, system_dark(ctx));
         ctx.set_visuals(tokens.visuals());
+        ctx.set_fonts(theme::fonts());
         App {
             ctx: ctx.clone(),
             text_focus: false,
@@ -126,6 +129,7 @@ impl App {
             editor: Default::default(),
             datawin: None,
             context_menu: None,
+            context_menu_frame: 0,
             drag: None,
             drop_target: None,
             tokens,
@@ -986,6 +990,66 @@ mod tests {
         app.store.set_cursor(0, 0, SelectMode::Single);
         app.context_menu = Some((0, egui::pos2(100.0, 100.0)));
         draw(&ctx, &mut app);
+    }
+
+    /// Every character of every shortcut label has a glyph in the fonts the app
+    /// sets. On macOS egui's own fonts have ⌘ and none of ⌃⌥⇧ or the arrows, and
+    /// every menu egui drew showed them as empty boxes (`theme::fonts`).
+    #[test]
+    fn every_shortcut_label_has_its_glyphs() {
+        let (ctx, _app) = app_with(Vec::new());
+        let labels: Vec<String> = menutable::flat().iter().map(|it| fmt::accel(it.keys)).collect();
+        let font = egui::FontId::proportional(13.0);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            for label in &labels {
+                for c in label.chars() {
+                    assert!(ui.fonts_mut(|f| f.has_glyph(&font, c)), "no glyph for {c:?} in {label:?}");
+                }
+            }
+        })
+        .drop_without_applying_deltas();
+    }
+
+    /// A right-click on a row opens the menu and it stays open; a click anywhere
+    /// else shuts it. The first half did not hold: the release that opened the
+    /// menu counted as a click outside it — always, and then, once the menu's rect
+    /// was asked instead, whenever the click point had a fraction the menu's
+    /// corner, snapped to physical pixels, landed past. On a 2x screen that was
+    /// two clicks in three, so this clicks at fractions of a point, as a mouse does.
+    #[test]
+    fn a_right_click_opens_the_context_menu_and_a_click_elsewhere_shuts_it() {
+        let frame = |ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>| {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                events,
+                ..Default::default()
+            };
+            input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(2.0);
+            ctx.run_ui(input, |ui| app.frame(ui)).drop_without_applying_deltas();
+        };
+        let press = |ctx: &egui::Context, app: &mut App, at: egui::Pos2, button: egui::PointerButton| {
+            for pressed in [true, false] {
+                let button =
+                    egui::Event::PointerButton { pos: at, button, pressed, modifiers: Modifiers::NONE };
+                frame(ctx, app, vec![egui::Event::PointerMoved(at), button]);
+            }
+        };
+        for (dx, dy) in [(0.0, 0.0), (0.3, 0.7), (0.9, 0.2), (0.6, 0.9)] {
+            let ids = [0x10u8, 0x15, 0x10];
+            let (ctx, mut app) = app_with(ids.iter().map(|id| Block::new(create_body(*id))).collect());
+            frame(&ctx, &mut app, vec![]);
+            assert_eq!(ctx.pixels_per_point(), 2.0);
+            let at = egui::pos2(200.0 + dx, 88.0 + dy);
+            press(&ctx, &mut app, at, egui::PointerButton::Secondary);
+            assert_eq!(app.store.tape(0).cursor, 1, "the right-click lands on the second row");
+            assert!(app.context_menu.is_some(), "the menu opens at {at:?}");
+            for _ in 0..3 {
+                frame(&ctx, &mut app, vec![]);
+            }
+            assert!(app.context_menu.is_some(), "and stays open");
+            press(&ctx, &mut app, egui::pos2(900.0, 700.0), egui::PointerButton::Primary);
+            assert!(app.context_menu.is_none(), "a click outside it shuts it");
+        }
     }
 
     /// Click where a widget was drawn, over two frames: egui sees the press in

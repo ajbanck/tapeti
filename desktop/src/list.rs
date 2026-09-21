@@ -324,6 +324,7 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side) {
         }
         if let Some(p) = ui.input(|inp| inp.pointer.interact_pos()) {
             app.context_menu = Some((side, p));
+            app.context_menu_frame = ui.ctx().cumulative_frame_nr();
         }
     }
     if let Some(i) = double {
@@ -523,6 +524,10 @@ pub fn context_menu(app: &mut App, ctx: &egui::Context) {
         egui::Area::new(Id::new("ctxmenu")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             egui::Frame::popup(&ctx.global_style()).fill(tok.surface).show(ui, |ui| {
                 ui.set_width(250.0);
+                // What `Popup::menu` does for the "…" menu: no fill or stroke on a
+                // row until it is hovered. Without it every row wore a button's
+                // frame and the whole menu looked selected.
+                egui::containers::menu::menu_style(ui.style_mut());
                 for id in commands::CONTEXT_MENU {
                     if id.is_empty() {
                         ui.separator();
@@ -541,7 +546,13 @@ pub fn context_menu(app: &mut App, ctx: &egui::Context) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
     }
-    if ctx.input(|i| i.pointer.any_click()) && !area.response.contains_pointer() {
+    // The click in the frame the menu opened is the right-click that opened it,
+    // never one outside it. Neither `contains_pointer` (the layer is new, so the
+    // pointer is over nothing) nor the rect (snapped to physical pixels, so a
+    // fractional click point can land just past its corner) can be asked instead.
+    let opening = ctx.cumulative_frame_nr() == app.context_menu_frame;
+    let outside = ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| !area.response.rect.contains(p));
+    if ctx.input(|i| i.pointer.any_click()) && outside && !opening {
         close = true;
     }
     if let Some(id) = chosen {
