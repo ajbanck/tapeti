@@ -59,6 +59,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [decrypt, setDecrypt] = useState(loaded.crypt !== null);
   const [cryptXor, setCryptXor] = useState(loaded.crypt?.xor ?? CRYPT_PRESETS[0].xor);
   const [cryptAdd, setCryptAdd] = useState(loaded.crypt?.add ?? CRYPT_PRESETS[0].add);
+  // Custom picked in the preset list: not derived from the values alone, which
+  // still match the preset they came from, so the list jumped back to it.
+  const [cryptCustom, setCryptCustom] = useState(false);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
   // Set once the BASIC view has rewritten the program: where VARS now is in the
@@ -236,7 +239,7 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
           <NumInput value={cryptXor} max={0xff} hex={h} width={52} onChange={setCryptXor} />
           <label>ADD</label>
           <NumInput value={cryptAdd} max={0xff} hex={h} width={52} onChange={setCryptAdd} />
-          <select value={CRYPT_PRESETS.findIndex((p) => p.xor === cryptXor && p.add === cryptAdd)} onChange={(e) => { const p = CRYPT_PRESETS[Number((e.target as HTMLSelectElement).value)]; if (p) { setCryptXor(p.xor); setCryptAdd(p.add); setDecrypt(true); } }}>
+          <select value={cryptCustom ? -1 : CRYPT_PRESETS.findIndex((p) => p.xor === cryptXor && p.add === cryptAdd)} onChange={(e) => { const p = CRYPT_PRESETS[Number((e.target as HTMLSelectElement).value)]; setCryptCustom(!p); if (p) { setCryptXor(p.xor); setCryptAdd(p.add); setDecrypt(true); } }}>
             <option value={-1}>Custom</option>
             {CRYPT_PRESETS.map((p, i) => <option key={i} value={i}>{p.name}</option>)}
           </select>

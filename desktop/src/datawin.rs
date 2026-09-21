@@ -72,6 +72,9 @@ pub struct DataWin {
     decrypt: bool,
     crypt_xor: i64,
     crypt_add: i64,
+    /// Custom picked in the preset list. Not derived from the values alone: those
+    /// still match the preset they came from, and the list jumped back to it.
+    crypt_custom: bool,
     n: i64,
     dirty: bool,
 
@@ -165,6 +168,7 @@ impl DataWin {
             decrypt: crypt.is_some(),
             crypt_xor: i64::from(crypt.map_or(CRYPT_PRESETS[0].1, |(xor, _)| xor)),
             crypt_add: i64::from(crypt.map_or(CRYPT_PRESETS[0].2, |(_, add)| add)),
+            crypt_custom: false,
             n: 1,
             dirty: false,
 
@@ -461,10 +465,12 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 let mut preset = CRYPT_PRESETS
                     .iter()
                     .position(|(_, x, a)| i64::from(*x) == dw.crypt_xor && i64::from(*a) == dw.crypt_add)
+                    .filter(|_| !dw.crypt_custom)
                     .unwrap_or(usize::MAX);
                 let mut names = vec![(usize::MAX, "Custom".to_string())];
                 names.extend(CRYPT_PRESETS.iter().enumerate().map(|(n, p)| (n, p.0.to_string())));
                 if w::combo(ui, "dw-crypt-preset", &mut preset, &names, 120.0, true) {
+                    dw.crypt_custom = preset == usize::MAX;
                     if let Some((_, x, a)) = CRYPT_PRESETS.get(preset) {
                         dw.crypt_xor = i64::from(*x);
                         dw.crypt_add = i64::from(*a);
