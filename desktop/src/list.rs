@@ -335,14 +335,6 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side) {
             crate::actions::view_data(app, side, false);
         }
     }
-
-    // Files dropped on the pane.
-    let dropped: Vec<std::path::PathBuf> =
-        ui.input(|inp| inp.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
-    if !dropped.is_empty() && pointer_here {
-        let insert = ui.input(|inp| inp.modifiers.shift);
-        crate::files::open_paths(&mut app.store, side, &dropped, insert);
-    }
 }
 
 /// Where a drop would land: an index in the tape and whether it goes after it.

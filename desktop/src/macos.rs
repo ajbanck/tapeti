@@ -17,6 +17,10 @@
 //! Paths land in a queue rather than in the store, because they arrive on
 //! AppKit's thread while a frame may be running; `App::frame` drains it, the way
 //! the Tauri shell had the front end drain its `take_pending_files`.
+//!
+//! The second thing is where a file dragged in from the Finder is let go
+//! (`pointer_at_drop`): winit reports the drop but not its position, and AppKit
+//! sends the window no mouse moves while a drag is over it.
 
 use std::ffi::CStr;
 use std::path::PathBuf;
@@ -25,7 +29,9 @@ use std::sync::Mutex;
 
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{class, ffi, msg_send, sel};
-use objc2_foundation::{NSArray, NSNotification, NSNotificationCenter, NSNotificationName, NSString, NSURL};
+use objc2_foundation::{
+    NSArray, NSNotification, NSNotificationCenter, NSNotificationName, NSPoint, NSRect, NSString, NSURL,
+};
 
 /// Tapes the OS asked for, not yet opened.
 static PENDING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -130,6 +136,34 @@ pub fn install() {
     std::mem::forget(observer);
 }
 
+/// Where the pointer is in the window, in points, and whether Shift is down —
+/// asked of AppKit, because egui's idea of both is from before the drag began.
+/// A drop carries no position (winit's `DroppedFile` is a path alone) and AppKit
+/// sends no mouse moves during a drag session, so egui's pointer is wherever it
+/// was last seen — outside the window, as often as not, where the Finder is.
+pub fn pointer_at_drop(ctx: &egui::Context) -> (Option<egui::Pos2>, bool) {
+    let inner = ctx.input(|i| i.viewport().inner_rect);
+    let (mouse, flags, primary) = unsafe {
+        let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let flags: usize = msg_send![class!(NSEvent), modifierFlags];
+        let screens: *mut AnyObject = msg_send![class!(NSScreen), screens];
+        let first: *mut AnyObject =
+            if screens.is_null() { std::ptr::null_mut() } else { msg_send![screens, firstObject] };
+        let primary: Option<NSRect> = (!first.is_null()).then(|| msg_send![first, frame]);
+        (mouse, flags, primary)
+    };
+    const SHIFT: usize = 1 << 17; // NSEventModifierFlagShift
+    let at = inner.zip(primary).map(|(inner, primary)| window_point(mouse, primary.size.height, inner.min));
+    (at, flags & SHIFT != 0)
+}
+
+/// A point in AppKit's screen space — points up from the bottom of the primary
+/// screen — in a window whose top left sits at `window` in winit's, which counts
+/// down from the top of that same screen.
+fn window_point(screen: NSPoint, primary_height: f64, window: egui::Pos2) -> egui::Pos2 {
+    egui::pos2(screen.x as f32 - window.x, (primary_height - screen.y) as f32 - window.y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +185,22 @@ mod tests {
 
         queue(paths_of(&NSArray::from_retained_slice(&[])));
         assert!(take_pending().is_empty(), "an empty event leaves nothing behind");
+    }
+
+    /// Every AppKit message the drop asks, sent for real: objc2 checks each reply
+    /// against the type it is read as, so a wrong signature fails here rather
+    /// than in the app. With no window there is nowhere to place the pointer.
+    #[test]
+    fn asking_appkit_where_the_pointer_is_answers_without_a_window() {
+        let (at, _shift) = pointer_at_drop(&egui::Context::default());
+        assert_eq!(at, None);
+    }
+
+    #[test]
+    fn a_screen_point_lands_in_the_window_counted_from_its_top_left() {
+        // A 1080-point screen, the window's content 40 points in and 100 down.
+        let window = egui::pos2(40.0, 100.0);
+        assert_eq!(window_point(NSPoint::new(40.0, 980.0), 1080.0, window), egui::pos2(0.0, 0.0));
+        assert_eq!(window_point(NSPoint::new(540.0, 480.0), 1080.0, window), egui::pos2(500.0, 500.0));
     }
 }

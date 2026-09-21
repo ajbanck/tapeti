@@ -50,6 +50,27 @@ struct Perf {
     last_update: f64,
 }
 
+/// Where the pointer is at a file drop, and whether Shift (insert rather than
+/// open) is held. On macOS egui's own answer is stale, so AppKit is asked
+/// (`macos::pointer_at_drop`); the tests draw no window, and keep egui's.
+fn pointer_at_drop(ctx: &egui::Context) -> (Option<egui::Pos2>, bool) {
+    #[cfg(all(target_os = "macos", not(test)))]
+    return crate::macos::pointer_at_drop(ctx);
+    #[cfg(not(all(target_os = "macos", not(test))))]
+    ctx.input(|i| (i.pointer.hover_pos(), i.modifiers.shift))
+}
+
+/// The pane a file dropped at `at` goes to: the column either side of the
+/// splitter, editor included, not only the block list. If where it fell is not
+/// known at all, the active pane has it rather than nobody.
+fn drop_side(at: Option<egui::Pos2>, splitter_x: f32, active: Side) -> Side {
+    match at {
+        Some(p) if p.x < splitter_x => 0,
+        Some(_) => 1,
+        None => active,
+    }
+}
+
 fn stats(v: &[f64]) -> (f64, f64, f64) {
     let mut s = v.to_vec();
     s.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -314,6 +335,15 @@ impl App {
                 .layout(Layout::top_down(Align::Min));
             let mut child = ui.new_child(builder);
             self.pane(&mut child, side, rect);
+        }
+        // Files dropped from outside, once both panes are drawn: loading one
+        // replaces a tape whose rows this frame has already laid out.
+        let dropped: Vec<std::path::PathBuf> =
+            ui.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if !dropped.is_empty() {
+            let (at, shift) = pointer_at_drop(ui.ctx());
+            let side = drop_side(at, bar.center().x, self.store.active);
+            crate::files::open_paths(&mut self.store, side, &dropped, shift);
         }
 
         let r = ui.interact(bar, ui.id().with("vsplitter"), Sense::click_and_drag());
@@ -1008,6 +1038,52 @@ mod tests {
             }
         })
         .drop_without_applying_deltas();
+    }
+
+    /// A file dropped from outside goes to the pane on its side of the splitter —
+    /// over the editor as well as over the list — and to the active pane when
+    /// nobody knows where it fell. It used to need egui's pointer inside a block
+    /// list, and on macOS that pointer is from before the drag: most drops went
+    /// nowhere.
+    /// What egui-winit hands over for a file let go on the window (its own
+    /// `NativeFile` is private to it).
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+
+    #[test]
+    fn a_dropped_file_goes_to_the_pane_it_fell_on() {
+        let dir = std::env::temp_dir().join(format!("tapeti-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dropped.tzx");
+        let blocks = [Block::new(create_body(0x10)), Block::new(create_body(0x20))];
+        std::fs::write(&path, tapeti_core::writer::serialize_tzx(&blocks, None)).unwrap();
+
+        let drop_at = |at: Option<egui::Pos2>, active: Side| {
+            let (ctx, mut app) = app_with(Vec::new());
+            app.store.active = active;
+            draw(&ctx, &mut app);
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                ..Default::default()
+            };
+            input.events.extend(at.map(egui::Event::PointerMoved));
+            input.dropped_files.push(std::sync::Arc::new(Dropped(path.clone())));
+            ctx.run_ui(input, |ui| app.frame(ui)).drop_without_applying_deltas();
+            [app.store.tape(0).blocks.len(), app.store.tape(1).blocks.len()]
+        };
+        assert_eq!(drop_at(Some(egui::pos2(900.0, 100.0)), 0), [0, 2], "on the right list");
+        assert_eq!(drop_at(Some(egui::pos2(200.0, 600.0)), 1), [2, 0], "on the left editor");
+        assert_eq!(drop_at(None, 1), [0, 2], "nowhere known: the active pane");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A right-click on a row opens the menu and it stays open; a click anywhere
