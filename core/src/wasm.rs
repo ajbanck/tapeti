@@ -633,7 +633,8 @@ pub unsafe extern "C" fn core_has_flash(ptr: *const u8, len: usize, offset: i32)
 }
 
 /// List a BASIC program area. `flags`: 1 show numbers, 2 128k tokens, 4 Spectrum
-/// format, 16 colour and position codes left out (8 is the source text's).
+/// format, 16 colour and position codes left out, 64 hidden numbers in hex (8 and
+/// 32 are the source text's).
 ///
 /// # Safety
 /// `ptr` must point at `len` readable bytes.
@@ -812,6 +813,7 @@ fn basic_options(flags: u32) -> BasicOptions {
         basic128: flags & 2 != 0,
         speccy_format: flags & 4 != 0,
         drop_colours: flags & 16 != 0,
+        hex_numbers: flags & 64 != 0,
     }
 }
 

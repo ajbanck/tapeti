@@ -82,7 +82,8 @@ signal level, text, message, archive info, hardware type (full hardware list), c
   block opens on it.
 - View as Screen (with FLASH animation, hide attributes, Save to SCR / PNG).
 - BASIC listing with hidden-number detection, "Show numbers", Speccy 32-column formatting, "Drop
-  colours" (the colour and position codes left out) and 128k tokens; variables area listing.
+  colours" (the colour and position codes left out) and 128k tokens; variables area listing. On
+  the window's Hex switch the hidden numbers from 0 to 65535 are listed in hex (`USR 0{5CD0}`).
 - **Edit** turns the program into text and **Apply** turns it back: one program line per line,
   keywords in capitals (or any case, if you ask), numbers given their hidden five-byte form as the
   Spectrum's editor would, and `{...}` for what a keyboard cannot type — `{1F}` a byte, `{A}` a

@@ -298,6 +298,8 @@ export interface BasicOptions {
   speccyFormat: boolean; // 32 columns, control codes interpreted
   /** Leave the colour and position codes out of the listing altogether. */
   dropColours?: boolean;
+  /** Hidden numbers in hex (the data window's Dec/Hex switch): whole numbers 0-65535 only. */
+  hexNumbers?: boolean;
 }
 
 /** One entry of the Spectrum's variables area. */

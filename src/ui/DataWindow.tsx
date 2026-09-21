@@ -501,14 +501,16 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
   const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setProg(startAddr), [startAddr]);
   const progOff = prog - startAddr;
-  const lines = useMemo(() => listBasic(data, Math.max(0, progOff), data.length, opts), [data, progOff, opts]);
+  // This window's Dec/Hex switch; the editable text keeps its `{=…}` decimal.
+  const listOpts = useMemo(() => ({ ...opts, hexNumbers: h }), [opts, h]);
+  const lines = useMemo(() => listBasic(data, Math.max(0, progOff), data.length, listOpts), [data, progOff, listOpts]);
   const autoVars = useMemo(() => {
     if (varsAddr >= 0) return varsAddr;
     const last = lines[lines.length - 1];
     return last ? startAddr + last.offset + 4 + last.length : prog;
   }, [lines, varsAddr, startAddr, prog]);
   const variables = useMemo(() => (vars ? listVariables(data, autoVars - startAddr, data.length) : []), [data, autoVars, startAddr, vars]);
-  const text = useMemo(() => basicToText(lines.filter((l) => l.offset + 4 + l.length <= autoVars - startAddr || varsAddr < 0), opts), [lines, opts, autoVars]);
+  const text = useMemo(() => basicToText(lines.filter((l) => l.offset + 4 + l.length <= autoVars - startAddr || varsAddr < 0), listOpts), [lines, listOpts, autoVars]);
 
   // The program area as offsets of the view: what Edit shows and Apply replaces.
   const from = Math.min(Math.max(0, progOff), data.length);

@@ -1019,6 +1019,8 @@ fn basic(
         dw.prog = start;
     }
     let prog_off = (dw.prog - start).max(0) as usize;
+    // This window's Dec/Hex switch; the editable text keeps its `{=…}` decimal.
+    dw.basic.hex_numbers = dw.hex;
     let lines = list_basic(data, prog_off.min(data.len()), data.len(), dw.basic);
     let auto_vars = if dw.vars_addr >= 0 {
         dw.vars_addr

@@ -54,6 +54,18 @@ describe('BASIC as text', () => {
   });
 });
 
+describe('the listing', () => {
+  it('shows hidden numbers in hex when asked to', () => {
+    const { body, progLen } = program();
+    const text = (hexNumbers: boolean) => {
+      const opts = { showNumbers: true, basic128: false, speccyFormat: false, hexNumbers };
+      return basicToText(listBasic(body, 0, progLen, opts), opts);
+    };
+    expect(text(false)).toContain('USR 32768{32768}');
+    expect(text(true)).toContain('USR 32768{8000}');
+  });
+});
+
 describe('disassembly as text', () => {
   it('has address, bytes and instruction', () => {
     const text = disassemblyText(new Uint8Array([0xf3, 0xcd, 0x62, 0x05, 0xc9]), 0, 0x8000, 10, { hex: true, romLabels: true });

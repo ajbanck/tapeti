@@ -432,3 +432,31 @@ fn a_listing_can_leave_the_colours_out() {
     assert_eq!(text(BasicOptions::default()), "  10 PRINT \"[INK 2][AT 1,2]hi\"[,]");
     assert_eq!(text(BasicOptions { drop_colours: true, ..BasicOptions::default() }), "  10 PRINT \"hi\"[,]");
 }
+
+#[test]
+fn hidden_numbers_can_be_listed_in_hex() {
+    // 10 PRINT 0,.5,1,70000 — hidden 23760, 0.5, -1 and 70000 behind them.
+    let mut body = vec![0xf5, b'0', 0x0e, 0x00, 0x00, 0xd0, 0x5c, 0x00, b','];
+    body.extend_from_slice(&[b'.', b'5', 0x0e, 0x80, 0x00, 0x00, 0x00, 0x00, b',']);
+    body.extend_from_slice(&[b'1', 0x0e, 0x00, 0xff, 0xff, 0xff, 0x00, b',']);
+    body.extend_from_slice(b"70000");
+    body.extend_from_slice(&[0x0e, 0x91, 0x08, 0xb8, 0x00, 0x00, 0x0d]);
+    let mut line = vec![0x00, 0x0a, body.len() as u8, 0x00];
+    line.extend_from_slice(&body);
+    let text = |opts| basic_to_text(&list_basic(&line, 0, line.len(), opts), opts);
+
+    let dec = BasicOptions { show_numbers: true, ..BasicOptions::default() };
+    let listed = text(dec);
+    for want in ["0{23760}", "{0.5}", "{-1}", "{70000}"] {
+        assert!(listed.contains(want), "{want} in {listed}");
+    }
+    // Hex for the whole numbers an address or a byte can be, nothing else.
+    let hex = BasicOptions { hex_numbers: true, ..dec };
+    let listed = text(hex);
+    for want in ["0{5CD0}", "{0.5}", "{-1}", "{70000}"] {
+        assert!(listed.contains(want), "{want} in {listed}");
+    }
+    // A mismatch is shown with show_numbers off too, and in hex as well.
+    let listed = text(BasicOptions { hex_numbers: true, ..BasicOptions::default() });
+    assert!(listed.contains("0{5CD0}"), "{listed}");
+}

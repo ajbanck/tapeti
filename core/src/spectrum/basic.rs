@@ -61,6 +61,20 @@ pub struct BasicOptions {
     pub speccy_format: bool,
     /// Leave the colour and position codes out of the listing altogether.
     pub drop_colours: bool,
+    /// Hidden numbers in hex, the data window's Dec/Hex switch: whole numbers
+    /// from 0 to 65535 only, the addresses and bytes hex is for. A fraction, a
+    /// negative or a larger value stays decimal. The digits in front of the
+    /// braces are the program's own text and stay what they are.
+    pub hex_numbers: bool,
+}
+
+/// A hidden number as the listing shows it between braces.
+fn hidden_number(v: f64, opts: BasicOptions) -> String {
+    if opts.hex_numbers && v.fract() == 0.0 && (0.0..=65535.0).contains(&v) {
+        format!("{:X}", v as u32)
+    } else {
+        format_number(v)
+    }
 }
 
 /// Decode a 5-byte Sinclair floating point number.
@@ -264,7 +278,7 @@ pub fn list_basic(data: &[u8], start: usize, end: usize, opts: BasicOptions) -> 
                 let differs = textual.is_some_and(|t| (t - v).abs() > 1e-6 * 1f64.max(v.abs()));
                 if opts.show_numbers || differs {
                     line.tokens.push(BasicToken {
-                        text: format!("{{{}}}", format_number(v)),
+                        text: format!("{{{}}}", hidden_number(v, opts)),
                         kind: TokenKind::Number,
                     });
                 }
