@@ -348,16 +348,16 @@ if (process.platform === 'darwin') {
   if (packaging) made.push(...macPackages(app));
   console.log(`
 Run it — the bundle, so the menu bar says Tapeti:
-  "${app}/Contents/MacOS/tapeti" "public/samples/Tapeti demo.tzx"
+  "${app}/Contents/MacOS/tapeti" "test/samples/Tapeti demo.tzx"
 
 A second tape opens in the right pane:
   "${app}/Contents/MacOS/tapeti" tape-a.tzx tape-b.tzx`);
 } else if (process.platform === 'win32') {
   if (packaging) made.push(...windowsPackages());
-  console.log(`\nRun it with:\n  "${bin}" "public\\samples\\Tapeti demo.tzx"`);
+  console.log(`\nRun it with:\n  "${bin}" "test\\samples\\Tapeti demo.tzx"`);
 } else {
   if (packaging) made.push(...linuxPackages());
-  console.log(`\nRun it with:\n  "${bin}" "public/samples/Tapeti demo.tzx"`);
+  console.log(`\nRun it with:\n  "${bin}" "test/samples/Tapeti demo.tzx"`);
 }
 
 if (made.length) {

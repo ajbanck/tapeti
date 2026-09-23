@@ -79,11 +79,11 @@ function expectSameBuffer(got: ArrayLike<number>, want: ArrayLike<number>, what:
   }
 }
 
-const sample = (name: string) => new Uint8Array(fs.readFileSync(path.resolve('public/samples', name)));
+const sample = (name: string) => new Uint8Array(fs.readFileSync(path.resolve('test/samples', name)));
 
 describe('the Rust core against the TypeScript parser it replaced', () => {
   it('agrees on the sample tapes', () => {
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       const tape = sameTape(sample(name));
       expect(tape.blocks.length).toBeGreaterThan(0);
       expect(tape.warnings).toEqual([]);
@@ -234,7 +234,7 @@ describe('the Rust writer against the TypeScript writer it replaced', () => {
   });
 
   it('writes the sample tapes the same way', () => {
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       sameOutput(core.parseTape(sample(name)).blocks);
     }
   });
@@ -248,7 +248,7 @@ describe('the Rust writer against the TypeScript writer it replaced', () => {
   });
 
   it('round-trips the sample tapes byte for byte', () => {
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       const bytes = sample(name);
       const tape = core.parseTape(bytes);
       const out = name.endsWith('.tap')
@@ -297,7 +297,7 @@ describe('the Rust descriptions, detection and structure against the TypeScript 
   });
 
   it('describes the blocks of the sample tapes the same way', () => {
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       for (const b of core.parseTape(sample(name)).blocks) {
         expect(coreDescribe.describeBlock(b, false)).toBe(refDescribe.describeBlock(b, false));
         expect(coreDescribe.describeBlock(b, true)).toBe(refDescribe.describeBlock(b, true));
@@ -322,7 +322,7 @@ describe('the Rust descriptions, detection and structure against the TypeScript 
   });
 
   it('detects the same content for every block of every sample tape', () => {
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       const blocks = core.parseTape(sample(name)).blocks;
       const labels = coreContent.contentLabels(blocks);
       blocks.forEach((b, i) => {
@@ -403,7 +403,7 @@ describe('the Rust descriptions, detection and structure against the TypeScript 
     for (const blocks of cases) {
       for (const base of [0, 1]) expect(coreCheck(blocks, base)).toEqual(refCheck(blocks, base));
     }
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       const blocks = core.parseTape(sample(name)).blocks;
       expect(coreCheck(blocks)).toEqual(refCheck(blocks));
     }
@@ -453,7 +453,7 @@ describe('the Rust descriptions, detection and structure against the TypeScript 
       expect(corePrograms.detectPrograms(blocks)).toEqual(refPrograms.detectPrograms(blocks));
       expect(corePrograms.tapeTitle(blocks)).toEqual(refPrograms.tapeTitle(blocks));
     }
-    for (const name of fs.readdirSync(path.resolve('public/samples'))) {
+    for (const name of fs.readdirSync(path.resolve('test/samples'))) {
       const blocks = core.parseTape(sample(name)).blocks;
       expect([...corePrograms.groupRanges(blocks)]).toEqual([...refPrograms.groupRanges(blocks)]);
       expect(corePrograms.detectPrograms(blocks)).toEqual(refPrograms.detectPrograms(blocks));

@@ -1,20 +1,21 @@
-// Generates the sample tapes in public/samples/ from scratch, using the app's own
+// Generates the test tapes in test/samples/ from scratch, using the app's own
 // TZX writer. Nothing in them is copied from a real tape: the BASIC program, the
 // screen, the machine code and the loader timings are all made up here, so the
-// samples can be redistributed under the project licence.
+// tapes can be redistributed under the project licence. They are fixtures for the
+// tests and the smoke test, not demos: the recording and CSW blocks hold a toy
+// signal, and nothing here has been shown to load in an emulator.
 //
 //   node scripts/make-samples.mjs
 //
 // Produces:
-//   Tapeti demo.tzx            every block type the editor can create, in one tape that
-//                              loads and runs in an emulator
+//   Tapeti demo.tzx            every block type the editor can create, in one tape
 //   Tapeti demo (variant).tzx  a variation of the same program for the compare modes
 //   Tapeti demo.tap            the TAP export of the demo tape
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'vite';
 
-const OUT = path.resolve('public/samples');
+const OUT = path.resolve('test/samples');
 const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 try {
   const { serializeTzx, serializeTap } = await vite.ssrLoadModule('/src/tzx/writer.ts');

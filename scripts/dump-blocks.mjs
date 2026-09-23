@@ -2,7 +2,7 @@
 // the frozen implementation the differential tests compare the core's parser
 // against; `core/src/dump.rs` prints the same format:
 //
-//   node scripts/dump-blocks.mjs public/samples/*.tzx public/samples/*.tap
+//   node scripts/dump-blocks.mjs test/samples/*.tzx test/samples/*.tap
 //
 // Writes core/tests/fixtures/<name>.dump for each tape, which `cargo test` in
 // core/ diffs against dump.rs. Regenerate only when a tape is added or the

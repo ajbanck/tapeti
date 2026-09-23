@@ -225,7 +225,7 @@ fn sample_programs() -> Vec<Vec<u8>> {
 
     let mut found = Vec::new();
     for name in ["Tapeti demo.tzx", "Tapeti demo (variant).tzx"] {
-        let bytes = std::fs::read(format!("../public/samples/{name}")).unwrap();
+        let bytes = std::fs::read(format!("../test/samples/{name}")).unwrap();
         found.extend(programs(&tapeti_core::parser::parse_tape(&bytes).unwrap().blocks));
     }
     let mut snap = Snapshot::default();

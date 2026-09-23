@@ -1,4 +1,4 @@
-file public/samples/Tapeti demo.tzx
+file test/samples/Tapeti demo.tzx
 tape 1.20
 0 32 entries=0/"Tapeti demo";1/"Tapeti project";2/"scripts/make-samples.mjs";3/"2026";5/"Demonstration";7/"ROM loader, turbo, pure data, generalized data";255/"Synthetic tape: every block type the editor can create. No copyrighted content."
 1 10 pause=1000 data=000064656d6f20202020202081001400810017

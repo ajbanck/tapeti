@@ -25,7 +25,7 @@
     "desktop:test": "cd desktop && cargo test",
     "desktop:package": "node scripts/build-desktop.mjs --package",
     "clean": "cargo clean --manifest-path desktop/Cargo.toml && cargo clean --manifest-path core/Cargo.toml",
-    "core:fixtures": "node scripts/dump-blocks.mjs \"public/samples/Tapeti demo.tzx\" \"public/samples/Tapeti demo (variant).tzx\" \"public/samples/Tapeti demo.tap\""
+    "core:fixtures": "node scripts/dump-blocks.mjs \"test/samples/Tapeti demo.tzx\" \"test/samples/Tapeti demo (variant).tzx\" \"test/samples/Tapeti demo.tap\""
   },
   "dependencies": {
     "@preact/signals": "^2.11.2",

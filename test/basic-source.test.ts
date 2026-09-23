@@ -11,7 +11,7 @@ import { StandardBlock } from '../src/tzx/types';
 
 /** The first BASIC program of the demo tape: its body, and where VARS starts in it. */
 function program(): { body: Uint8Array; progLen: number } {
-  const tape = parseTape(new Uint8Array(fs.readFileSync('public/samples/Tapeti demo.tzx')));
+  const tape = parseTape(new Uint8Array(fs.readFileSync('test/samples/Tapeti demo.tzx')));
   const i = tape.blocks.findIndex((_, n) => detectContent(tape.blocks, n).kind === 'basic');
   const data = (tape.blocks[i] as StandardBlock).data;
   return { body: data.subarray(1, data.length - 1), progLen: detectContent(tape.blocks, i).progLen! };

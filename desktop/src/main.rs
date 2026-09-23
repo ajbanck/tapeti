@@ -46,8 +46,8 @@ use tapeti_core::{consistency, content, describe, programs, writer};
 use settings::Settings;
 use state::Store;
 
-/// Where a tape comes from when none is named on the command line.
-const DEFAULT_TAPE: &str = "public/samples/Tapeti demo.tzx";
+/// Where a tape comes from when `--measure` or `--bench` names none.
+const DEFAULT_TAPE: &str = "test/samples/Tapeti demo.tzx";
 
 /// The window icon, compiled in: the bundles' own icon, at the size a title bar
 /// and a task bar want.
@@ -142,7 +142,7 @@ fn startup_paths(o: &Opts) -> Vec<PathBuf> {
     }
 }
 
-/// The sample tape, looked for up the tree from the working directory and next to
+/// The test tape, looked for up the tree from the working directory and next to
 /// the crate, so both `cargo run` and a bundle built here find it.
 fn default_tape() -> Option<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();

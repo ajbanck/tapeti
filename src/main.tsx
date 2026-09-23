@@ -17,7 +17,8 @@ initCore()
 function start() {
   render(<App />, document.getElementById('app')!);
 
-  // Optional: open tapes given as URL parameters, e.g. ?open=samples/foo.tzx&right=samples/bar.tzx
+  // Optional: open tapes given as URL parameters, e.g. ?open=tapes/foo.tzx&right=tapes/bar.tzx
+  // (the dev server serves test/samples/ at samples/, which is what the smoke test opens).
   const params = new URLSearchParams(location.search);
   for (const [key, side] of [['open', 0], ['right', 1]] as const) {
     const url = params.get(key);

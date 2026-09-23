@@ -1,5 +1,5 @@
 // Headless UI smoke test. Start `npm run dev` first, then `npm run smoke`.
-// Loads the two generated sample tapes (scripts/make-samples.mjs), exercises the list, editor, data window, menus and undo,
+// Loads two of the test tapes (scripts/make-samples.mjs; the dev server serves test/samples/ at /samples/), exercises the list, editor, data window, menus and undo,
 // fails on console errors, and writes screenshots to scratch/.
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';

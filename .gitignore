@@ -6,11 +6,11 @@ desktop/target
 desktop/dist
 src/tzx/core.wasm.ts
 
-# Private tapes stay out of the repo; only the generated samples are tracked
+# Private tapes stay out of the repo; only the generated test tapes are tracked
 *.tzx
 *.tap
 *.TZX
 *.TAP
-!public/samples/*.tzx
-!public/samples/*.tap
+!test/samples/*.tzx
+!test/samples/*.tap
 .DS_Store
