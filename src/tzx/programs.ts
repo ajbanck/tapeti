@@ -1,8 +1,9 @@
 // Tape structure: group/loop ranges and the programs (games) a collection tape
-// holds. The logic is the Rust core in core/ (programs.rs); this module is the
-// signature the UI has always used.
+// holds. The logic is the Rust core in core/ (programs.rs); this module keeps
+// the signature the UI imports.
 //
-// The previous implementation lives on as test/reference/programs.ts.
+// test/reference/programs.ts is the frozen implementation the differential
+// tests compare this against.
 import { Block, Program } from './types';
 import { detectProgramsCore, groupRangesCore, tapeTitleCore } from './core';
 import { perTape } from './cache';

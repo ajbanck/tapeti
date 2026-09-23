@@ -7,9 +7,9 @@ import { initCore } from './tzx/core';
 applyTheme(theme.value);
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(theme.value));
 
-// Compiling wasm is asynchronous and everything in start() can parse a tape, so the
-// core is instantiated first: a 49 KB module already in the bundle, a few milliseconds.
-// Written as a callback rather than top-level await, which Safari 14.1 does not have.
+// start() can parse a tape immediately, so the core is instantiated first; the module
+// is inlined in the bundle, so this costs no request. Written as a callback rather than
+// top-level await, which Safari 14.1 does not have.
 initCore()
   .catch((e) => console.error('The tape core failed to load', e))
   .then(start);

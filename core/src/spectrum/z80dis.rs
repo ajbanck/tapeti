@@ -19,7 +19,7 @@ pub struct DisLine {
     pub addr: u32,
     pub bytes: Vec<u8>,
     pub text: String,
-    /// Absolute target of a jump/call, if any (for ROM labels).
+    /// Absolute target of a jump or call, if any: what the label beside the operand is looked up by.
     pub target: Option<u32>,
 }
 

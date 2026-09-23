@@ -1,6 +1,6 @@
 //! Audio tests: the playback flow, the pulses each block makes, the sample
 //! rendering and the WAV encoding. `test/core.test.ts` compares these against
-//! the TypeScript they replaced, sample for sample.
+//! `test/reference/audio.ts`, sample for sample.
 
 use tapeti_core::audio::{
     block_duration, decode_csw_rle, emit_block, encode_wav, playback_order, playback_timeline, render_length,
@@ -37,7 +37,7 @@ fn follows_loops_jumps_and_calls() {
         b(Body::PureTone { pulse_len: 1, count: 1 }),
         b(Body::Return),
     ];
-    // Each target is played, then the block after the call - and the walk keeps
+    // Each target is played, then the block after the call. The walk keeps
     // going from there, so the tail of the tape plays again.
     assert_eq!(playback_order(&blocks, FlowOptions::default()), vec![0, 2, 3, 3, 1, 2, 3]);
 

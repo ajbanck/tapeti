@@ -1,5 +1,5 @@
-//! Writer tests: the round trips that `test/tzx.test.ts` has always relied on,
-//! plus the version rules and the TAP export, ported.
+//! Writer tests: the round trips of `test/tzx.test.ts`, the version rules and the
+//! TAP export.
 
 use tapeti_core::parser::{parse_tap, parse_tzx};
 use tapeti_core::types::{ArchiveEntry, Block, Body, HardwareEntry, PilotRun, SymDef};
@@ -107,7 +107,7 @@ fn computes_the_lowest_possible_version() {
     assert_eq!(v(Body::LoopStart { count: 2 }), Version { major: 1, minor: 10 });
     assert_eq!(v(Body::Stop48), Version { major: 1, minor: 12 });
     assert_eq!(v(Body::SignalLevel { level: 1 }), Version { major: 1, minor: 20 });
-    // An archive block's field types and line breaks decide on their own.
+    // An archive entry's kind and any line breaks in its text set its own version floor.
     let archive = |kind: u8, text: &str| {
         required_version(&[b(Body::Archive { entries: vec![ArchiveEntry { kind, text: text.into() }] })])
     };

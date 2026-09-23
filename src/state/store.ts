@@ -186,14 +186,13 @@ export function patch(side: Side, p: Partial<TapeState>) {
 /** Record that the current blocks are what is on disk (called after a successful save). */
 export function markSaved(side: Side, p: Partial<TapeState> = {}) {
   const t = tapes[side].value;
-  // A snapshot remembers the tape's identity, so that emptying it and undoing
-  // that puts the whole thing back. A save re-bases that identity over the
-  // history too: the file on disk is these blocks under this name, so undoing
-  // past a save is dirty again and does not take the name back with it.
   const id = {
     saved: t.blocks, name: p.name ?? t.name, loadedVersion: p.loadedVersion ?? t.loadedVersion,
     fileHashes: p.fileHashes ?? t.fileHashes,
   };
+  // A save rebases the tape's identity (name, version, hashes) across the whole undo/redo
+  // history, not just the current state: undoing past it leaves the blocks dirty again,
+  // but the name does not revert with it.
   patch(side, {
     ...p, ...id, dirty: false,
     undo: t.undo.map((s) => ({ ...s, ...id })), redo: t.redo.map((s) => ({ ...s, ...id })),
@@ -270,7 +269,7 @@ export function redo(side: Side) {
 // ---- selection --------------------------------------------------------
 
 /** Move the cursor. 'single' selects only that block, 'toggle'/'range' extend the selection,
- *  'keep' leaves the selection alone (right-click inside a selection). */
+ * and 'keep' leaves the selection alone: a right-click inside a selection uses it. */
 export function setCursor(side: Side, index: number, mode: 'single' | 'toggle' | 'range' | 'keep' = 'single') {
   const t = tapes[side].value;
   active.value = side;
@@ -301,9 +300,8 @@ export function selectAll(side: Side) {
 }
 
 /**
- * What is selected is not, and what is not is — over the rows the list shows.
- * A collapsed group or loop is one row, so it comes out selected or not as a
- * whole: inverting never leaves a block selected that has nothing to show it on.
+ * Works over the rows the list shows, not individual blocks: a collapsed group or loop
+ * flips as one row, so inverting never selects a block with no row to show it on.
  */
 export function invertSelection(side: Side) {
   const t = tapes[side].value;
@@ -480,7 +478,7 @@ export function groupSelection(side: Side, name: string) {
   });
 }
 
-/** As groupSelection, with a loop: twice round, which the loop's editor changes. */
+/** As `groupSelection`, with a loop: twice round, which the loop's editor changes. */
 export function loopSelection(side: Side) {
   const t = tapes[side].value;
   const idx = unitIndices(t, t.cursor);
@@ -500,11 +498,9 @@ export function loopSelection(side: Side) {
 const stepping: ({ blocks: Block[]; order: number[]; pos: number } | null)[] = [null, null];
 
 /**
- * Move the cursor to the block that plays after the one it is on, following
- * loops, jumps and calls as a player would: a way to see that a tape runs in the
- * order meant without playing it. Walking on from where the last step landed
- * keeps count of the loop passes; from anywhere else it starts at that block's
- * first turn.
+ * Moves the cursor to the block that plays next, following loops, jumps and calls, so a
+ * tape's order can be checked without playing it. Stepping on from the last landing keeps
+ * counting loop passes; starting elsewhere begins at that block's first turn.
  */
 export function stepNext(side: Side) {
   const t = tapes[side].value;

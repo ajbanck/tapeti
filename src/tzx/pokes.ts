@@ -1,7 +1,8 @@
 // POKEs text syntax <-> the standardized 'POKEs' custom info block. The parsing
 // and formatting are the Rust core in core/ (pokes.rs).
 //
-// The previous implementation lives on as test/reference/pokes.ts.
+// test/reference/pokes.ts is the frozen implementation the differential tests
+// compare this against.
 import { Poke, PokesInfo, Trainer } from './types';
 import { decodePokesCore, encodePokesCore, pokesToTextCore, textToPokesCore } from './core';
 
@@ -19,7 +20,7 @@ export function pokesToText(info: PokesInfo, hex: boolean): string {
   return pokesToTextCore(info, hex);
 }
 
-/** Parse the editor's text; a line that makes no sense throws, as before. */
+/** Parses the editor's text; a line that makes no sense throws. */
 export function textToPokes(text: string, hex: boolean): PokesInfo {
   return textToPokesCore(text, hex);
 }

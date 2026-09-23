@@ -1,7 +1,7 @@
 // Decoder for the byte format the Rust core answers in; `core/src/wire.rs` is
 // the encoder and documents the layout. Fields are read in the order the block
-// literals below declare them, which is the order `parser.ts` used to build
-// them in, so key order (and therefore anything comparing JSON) is unchanged.
+// literals below declare them, matching `test/reference/parser.ts`'s order, so
+// key order (and therefore anything comparing JSON) stays the same.
 import { Reader, Writer } from './bytes';
 import {
   ArchiveEntry, AsLoaded, BasicLine, BasicToken, BitData, Block, CompareResult, ContentInfo, ContentKind,
@@ -12,7 +12,7 @@ import {
 export const WIRE_VERSION = 1;
 const UNKNOWN_TAG = 0xff;
 
-/** The header every answer starts with; throws on an error payload. */
+// The header every answer starts with; throws on an error payload.
 function readHeader(r: Reader): void {
   const version = r.u8();
   if (version !== WIRE_VERSION) {
@@ -212,12 +212,11 @@ function block(r: Reader): Block {
 /**
  * A block list in the format `core/src/wire.rs` decodes.
  *
- * With `withData: false` the byte payloads are left out — the whole point of a
- * tape is its data, so sending it across for a call that only looks at block
- * types costs more than the call. Only for entry points that provably ignore
- * the data (`core_required_version`, `core_save_version`); the differential
- * tests compare them against the reference on blocks that do carry data, so a
- * core that started reading it would fail there.
+ * `withData: false` leaves the byte payloads out: for a call that only looks at
+ * block types, copying them costs more than the call. Only for entry points that
+ * provably ignore the data (`core_required_version`, `core_save_version`); the
+ * differential tests compare those against the reference on blocks that do
+ * carry data, so a core that started reading it would fail there.
  */
 export function encodeBlocks(blocks: Block[], opts: { withData?: boolean } = {}): Uint8Array {
   const w = new Writer();
@@ -227,7 +226,7 @@ export function encodeBlocks(blocks: Block[], opts: { withData?: boolean } = {})
   return w.toUint8Array();
 }
 
-/** How a block's byte payloads go on the wire. */
+// How a block's byte payloads go on the wire.
 type PutBytes = (w: Writer, b: Uint8Array) => void;
 
 function putBytes(w: Writer, b: Uint8Array): void {

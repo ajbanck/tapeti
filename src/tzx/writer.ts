@@ -1,9 +1,7 @@
-// TZX and TAP writing. The implementation is the Rust core in core/ (writer.rs);
-// this module is the signature the rest of the app has always used, and it
-// encodes the blocks onto the wire for each call — see src/tzx/core.ts.
-//
-// The previous TypeScript implementation lives on as test/reference/writer.ts,
-// which test/core.test.ts checks the core against.
+// TZX and TAP writing. The implementation is the Rust core in core/ (writer.rs); this
+// module keeps the signature the rest of the app imports and encodes the blocks onto
+// the wire for each call: see src/tzx/core.ts. test/reference/writer.ts is the frozen
+// implementation the differential tests compare this against.
 import { Block } from './types';
 import {
   requiredVersionCore,

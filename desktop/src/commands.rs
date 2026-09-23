@@ -35,8 +35,7 @@ pub fn enabled(app: &App, id: &str, side: Side) -> bool {
     menutable::item(id).is_some_and(|i| i.need.met(&state))
 }
 
-/// The label a menu shows for `id`. Only one is dynamic, the way `commands.ts`
-/// makes only one a function.
+/// The label a menu shows for `id`.
 pub fn label(app: &App, id: &str, side: Side) -> String {
     if id == "toggle-collapse" {
         let t = app.store.tape(side);
@@ -72,9 +71,8 @@ pub fn checked(app: &App, id: &str) -> bool {
 }
 
 /// The Edit commands, when a text field has the keyboard: they act on the field
-/// rather than on the tape, which is the rule `handleNativeMenu` follows in
-/// `src/ui/App.tsx`. On macOS the platform menu owns ⌘X/C/V/A/Z, so without this
-/// the keystroke would never reach the field it was aimed at.
+/// rather than on the tape. On macOS the platform menu owns ⌘X/C/V/A/Z, so without
+/// this the keystroke would never reach the field it was aimed at.
 ///
 /// egui's `TextEdit` reads these off the input queue, and the queue is still
 /// empty when the menu is drained at the top of the frame, so the field sees
@@ -205,8 +203,8 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
     true
 }
 
-/// The block context menu, `contextMenu` in `src/ui/MenuBar.tsx`: the short
-/// list, not the whole Block menu. An empty string is a separator.
+/// The block context menu: the short list, not the whole Block menu. An empty
+/// string is a separator.
 pub const CONTEXT_MENU: &[&str] = &[
     "view-data",
     "",
@@ -248,8 +246,7 @@ pub fn accelerator(item: &menutable::Item) -> Option<(Modifiers, Key)> {
     key.map(|k| (mods, k))
 }
 
-/// Keys with no menu accelerator, the tail of `KEY_COMMANDS` in `commands.ts`
-/// plus the two the web view keeps for itself.
+/// Keys that run a command with no modifier held and have no accelerator in the menu table.
 pub const PLAIN_KEYS: &[(Key, &str)] = &[
     (Key::Delete, "delete"),
     (Key::Backspace, "delete"),
@@ -409,8 +406,6 @@ mod tests {
             .collect()
     }
 
-    /// Every id the web table declares is dispatched here — nothing falls
-    /// through to the "unknown command" arm.
     #[test]
     fn every_command_id_is_dispatched() {
         let ids = command_ids();
@@ -463,8 +458,6 @@ mod tests {
         assert!(!enabled(&app, "toggle-collapse", 0), "a plain block cannot be collapsed");
     }
 
-    /// With a text field focused, the Edit commands go to the field, not the
-    /// tape: the rule `handleNativeMenu` follows on the web.
     #[test]
     fn edit_commands_reach_a_focused_text_field_first() {
         let mut app = app();

@@ -130,7 +130,7 @@ fn emit_pause(sink: &mut dyn PulseSink, ms: u16) {
 fn emit_symbol(sink: &mut dyn PulseSink, sym: &SymDef) {
     match sym.flags & 3 {
         1 => {
-            // same as current level: no edge -> first pulse prolongs previous; emulate by holding
+            // No edge here: the first pulse extends the previous level, so hold instead of toggling.
             if let Some(first) = sym.pulses.first() {
                 sink.hold(u64::from(*first));
                 for p in &sym.pulses[1..] {

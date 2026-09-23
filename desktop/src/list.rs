@@ -1,9 +1,9 @@
 //! The block list, the port of `src/ui/TapePane.tsx`.
 //!
 //! The rows are built from the core once per version of the tape, not once per
-//! frame: `describe_block` over 3,000 blocks is 0.9 ms in process and a frame is
-//! 16. What the frame does is decide which of them are visible (a collapsed
-//! group hides its body) and paint the ones on screen.
+//! frame: `describe_block` over 3,000 blocks takes 0.9 ms, against a 16 ms frame
+//! budget. Each frame only picks which rows are visible (a collapsed group
+//! hides its body) and paints them.
 //!
 //! Drag and drop is the one place where immediate mode shows: there is no
 //! `dataTransfer`, so the drag lives in the app struct and every pane looks at
@@ -39,7 +39,7 @@ pub struct Row {
     pub cat: usize,
     /// Last index of the group or loop starting here.
     pub range_end: Option<usize>,
-    /// Metadata and flow blocks, drawn dimmer as `.row.info` is on the web.
+    /// Metadata and flow blocks, drawn dimmer (`.row.info`).
     pub info: bool,
 }
 
@@ -54,7 +54,7 @@ pub struct RowCache {
     pub issues: HashMap<usize, Vec<Issue>>,
 }
 
-/// `category()` in `src/ui/TapePane.tsx`, as an index into `Tokens::cat`.
+/// This block's badge colour, as an index into `Tokens::cat`.
 fn category(b: &Block) -> usize {
     if b.body.is_unknown() {
         return 5;
@@ -184,13 +184,10 @@ fn range_issues(cache: &RowCache, start: usize, end: usize, zero: bool) -> Vec<I
 
 /// The whole list of one pane.
 pub fn show(app: &mut App, ui: &mut Ui, side: Side) {
-    // `App::frame` refreshes the caches too, but a command can run between
-    // there and here — the pane's own Open button, a few lines above this in
-    // `App::pane`, or the in-window menu bar. Loading a tape then leaves rows
-    // built for the tape that *was* open to be indexed against the one that is
-    // open now, and a shorter tape panics on the first group or loop the old
-    // rows remember. `refresh` compares generations, so asking twice in a frame
-    // costs a comparison when nothing has moved.
+    // `App::frame` already refreshed the caches, but a command run since (the
+    // pane's own Open button, the in-window menu bar) can replace the tape. Rows
+    // built for the old tape would then be indexed against the new one, and a
+    // shorter tape panics on the first group or loop the old rows remember.
     refresh(app);
     let tok = app.tokens;
     let visible = visible_rows(app, side);
@@ -256,8 +253,8 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side) {
                 draw_row(app, &painter, ui, rect, side, i, &tok);
             }
         }
-        // Clicking the empty space below the last row clears the cursor, the way
-        // the "No tape loaded" placeholder counts as list background on the web.
+        // Clicking the empty space below the last row clears the cursor: it counts
+        // as list background, like the "No tape loaded" placeholder.
         let rest = ui.available_rect_before_wrap();
         if rest.height() > 1.0 {
             let r = ui.allocate_rect(rest, Sense::click());
@@ -338,7 +335,7 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side) {
 }
 
 /// Where a drop would land: an index in the tape and whether it goes after it.
-/// Below the last row it lands at the end, as it does on the web.
+/// Below the last row it lands at the end.
 fn drop_target(app: &App, side: Side, visible: &[usize], hovered: Option<(usize, bool)>) -> (usize, bool) {
     let len = app.store.tape(side).blocks.len();
     let (index, after) = hovered.unwrap_or((visible.last().copied().unwrap_or(0), true));
@@ -396,8 +393,7 @@ fn draw_row(app: &App, p: &egui::Painter, ui: &mut Ui, rect: Rect, side: Side, i
     let selected = t.selected.contains(&b.uid);
     let playing = app.progress.side == Some(side) && app.playing_row(side) == Some(i);
 
-    // `.row`, `.row.selected`, `.row.cursor`, `.row:hover` — and nothing else:
-    // the web list has no zebra stripe, so neither has this one.
+    // `.row`, `.row.selected`, `.row.cursor`, `.row:hover`: no zebra stripe, on purpose.
     if cursor {
         p.rect_filled(rect, CornerRadius::ZERO, tok.accent_soft);
         p.rect_filled(
@@ -484,13 +480,12 @@ fn draw_row(app: &App, p: &egui::Painter, ui: &mut Ui, rect: Rect, side: Side, i
         }
     }
 
-    // `.kind` is a bordered pill, not bare text — and it takes the accent on
-    // the cursor row, the way `.row.cursor .kind` does.
+    // `.kind` is a bordered pill, not bare text: it takes the accent colour on
+    // the cursor row (`.row.cursor .kind`).
     if !row.kind.is_empty() {
         let (fg, edge) = if cursor { (tok.accent, tok.accent) } else { (tok.muted, tok.border_strong) };
-        // `.kind`'s own `font:` shorthand nests `var(--font)`, which is itself a
-        // shorthand, so the declaration never applied: the pill has always been
-        // set in the list's monospace, at the list's size.
+        // `.kind`'s CSS `font:` shorthand nests `var(--font)`, itself a shorthand, so
+        // it never applies: the pill is drawn in the list's monospace, at the list's size.
         let galley = p.layout_no_wrap(row.kind.clone(), mono.clone(), fg);
         let size = galley.size() + vec2(12.0, 6.0);
         let pill = Rect::from_min_size(pos2(rect.right() - 88.0 - size.x, y - size.y / 2.0), size);
@@ -499,14 +494,13 @@ fn draw_row(app: &App, p: &egui::Painter, ui: &mut Ui, rect: Rect, side: Side, i
     }
     p.text(pos2(rect.right() - 10.0, y), Align2::RIGHT_CENTER, &row.len, mono, tok.muted);
 
-    // The badge's tooltip names the block type, as its `title` does on the web.
     if ui.rect_contains_pointer(badge) {
         let name = block_name(b.id()).unwrap_or("Unknown block");
         ui.interact(badge, Id::new(("badge", side, i)), Sense::hover()).on_hover_text(name);
     }
 }
 
-/// The context menu the right button opens, `contextMenu` in `MenuBar.tsx`.
+/// Draws the right-click menu, if one is open, and handles its clicks.
 pub fn context_menu(app: &mut App, ctx: &egui::Context) {
     let Some((side, pos)) = app.context_menu else { return };
     let tok = app.tokens;
@@ -538,10 +532,10 @@ pub fn context_menu(app: &mut App, ctx: &egui::Context) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
     }
-    // The click in the frame the menu opened is the right-click that opened it,
-    // never one outside it. Neither `contains_pointer` (the layer is new, so the
-    // pointer is over nothing) nor the rect (snapped to physical pixels, so a
-    // fractional click point can land just past its corner) can be asked instead.
+    // The click in the frame the menu opened is the click that opened it, never
+    // one outside. Neither `contains_pointer` (the layer is new, so the pointer is
+    // over nothing) nor the rect (snapped to physical pixels, so a fractional click
+    // can land just past its corner) can be asked instead.
     let opening = ctx.cumulative_frame_nr() == app.context_menu_frame;
     let outside = ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| !area.response.rect.contains(p));
     if ctx.input(|i| i.pointer.any_click()) && outside && !opening {
@@ -588,13 +582,8 @@ mod tests {
         assert_eq!(visible_rows(&app, 0), vec![0, 3], "only the header and what follows the group");
     }
 
-    /// A command can run after `App::frame` has refreshed the row caches and
-    /// before the list is drawn: the pane's Open button is a few lines above
-    /// `show` in `App::pane`, and the in-window menu bar fires earlier still.
-    /// Loading a *shorter* tape there left `visible_rows` walking rows the old
-    /// tape had and indexing `blocks` with them — a panic on the first group or
-    /// loop past the end of the new tape, which is every tape with a group in
-    /// it followed by a small one.
+    /// Guards the trap described where `show` calls `refresh`: a mid-frame tape
+    /// swap to a shorter one, before rows are rebuilt for it.
     #[test]
     fn the_list_survives_a_tape_replaced_mid_frame() {
         let ctx = egui::Context::default();
@@ -606,9 +595,8 @@ mod tests {
         let mut app = App::build(&ctx, Menu::headless(), store, std::time::Instant::now(), 0, false);
         refresh(&mut app);
 
-        // What opening a tape from the pane's own toolbar does, at the point in
-        // the frame where it does it: the caches are already built for the tape
-        // that is being replaced.
+        // Mimics loading a tape from the pane's own toolbar: mid-frame, after the
+        // caches were already built for the tape being replaced.
         let short: Vec<Block> = [0x10u8, 0x20].iter().map(|id| Block::new(create_body(*id))).collect();
         app.store.tape_mut(0).load("short.tzx".into(), None, short, None);
 
@@ -631,7 +619,7 @@ mod tests {
         assert_eq!(ids(&app, 0), vec![0x21, 0x10, 0x22, 0x20]);
     }
 
-    /// Dropping inside the run being dragged is the one drop the web ignores
+    /// Dropping inside the run being dragged is the one drop that is ignored
     /// outright; every other drop commits, even when it puts the blocks back
     /// where they were.
     #[test]

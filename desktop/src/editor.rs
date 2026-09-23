@@ -1,9 +1,7 @@
 //! The per-type block editor, the port of `src/ui/BlockEditor.tsx`.
 //!
-//! This is the area that decided the toolkit. The form edits a *draft* `Body` —
-//! a plain Rust value — and Commit replaces the block with it; in a markup
-//! toolkit every one of these fields would have needed a property, a setter and
-//! a callback to cross the boundary. Here the field is the data.
+//! The form edits a draft `Body` value directly; Commit replaces the block with
+//! it, with no per-field property, setter or callback to keep in sync.
 
 use std::collections::HashMap;
 
@@ -34,11 +32,10 @@ pub fn commit_button_id(side: Side) -> egui::Id {
     egui::Id::new(("tapeti-editor-commit", side))
 }
 
-/// A header's name as its field shows it. The name is padded to 10 bytes and
-/// the padding is not the name: while it is there, the 10-character field has
-/// no room to type in. `encode_header` pads it again on the way back. Zeros
-/// are padding as well — a header made by adding 19 bytes to an empty block
-/// has ten of them, and every key typed into its name was cut off again.
+/// A header's name as its field shows it, trailing spaces and NULs trimmed so
+/// the 10-character field has room to type in; `encode_header` pads it back to
+/// 10 bytes. A header padded with zero bytes (for example 19 bytes added to an
+/// empty block) would otherwise fill the field and block every keystroke.
 pub fn name_to_edit(name: &str) -> &str {
     name.trim_end_matches([' ', '\0'])
 }
@@ -48,10 +45,9 @@ pub fn name_to_edit(name: &str) -> &str {
 /// will not let the footer shrink back afterwards.
 const BUTTONS_W: f32 = 78.0;
 
-/// A row that puts what does not fit on the next line instead of clipping it —
-/// what `flex-wrap` does in the web editor. egui clips overflow and shows no
-/// scrollbar, so in a narrow pane the screen thumbnail was simply swallowed:
-/// half an image against the pane edge, or nothing at all.
+/// A row that wraps overflow onto the next line instead of clipping it: egui's
+/// default clips with no scrollbar, which would swallow the screen thumbnail
+/// in a narrow pane.
 fn wrapping_row<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP).with_main_wrap(true), add).inner
 }
@@ -132,10 +128,9 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
     let mut revert = false;
     let mut cannot_commit: Option<Vec<String>> = None;
 
-    // The rect the pane gave us, kept aside: a form row that overflows widens
-    // the `Ui` around it and `set_max_width` will not shrink it back (egui
-    // unions the new max rect with the content's), so the footer is laid out
-    // against this instead — never off the pane and under its neighbour.
+    // The rect the pane gave us, kept aside: a form row that overflows widens the
+    // `Ui` around it and `set_max_width` cannot shrink it back (egui unions the
+    // new max rect with the content's), so the footer is laid out against this.
     let full_rect = ui.max_rect();
     ui.set_min_height(height);
     ui.vertical(|ui| {
@@ -200,9 +195,8 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
             }
         });
 
-        // ---- footer, pinned to the bottom of the panel: `.editor .body` is
-        // `flex: 1`, so Commit and Revert are in the same place whatever the
-        // form above them is.
+        // ---- footer, pinned to the bottom of the panel, so Commit and Revert
+        // are in the same place whatever the form above them is.
         let foot_h = 32.0;
         let top = ui.cursor().top().max(full_rect.bottom() - foot_h);
         let foot = egui::Rect::from_min_size(
@@ -213,9 +207,9 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
         let mut ui = ui.new_child(builder);
         let ui = &mut ui;
         ui.separator();
-        // The buttons first, and the pause and duration in what they leave:
-        // laid out the other way round, a narrow pane drew the buttons over the
-        // text. The text is clipped at the buttons instead.
+        // The buttons first, and the pause and duration in what they leave: laid
+        // out the other way round, a narrow pane would draw the buttons over the
+        // text. The text clips at the buttons instead.
         let row = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 22.0));
         ui.advance_cursor_after_rect(row);
         let buttons_left = {
@@ -669,15 +663,14 @@ impl Form<'_> {
                 if lines.len() > 40 {
                     text.push_str(&format!("\n… {} more line(s)", lines.len() - 40));
                 }
-                // `.preview` and its `pre`: the rest of the row but no less than
-                // 240 px (else a row of its own), top-down, framed, unwrapped and
-                // scrolling both ways. Straight in the wrapping row, the label was
-                // laid out as one row of it: the first line, cut short, and nothing
-                // under it.
+                // Sized to the rest of the row, floored at 240 px (else a row of
+                // its own); framed, top-down, unwrapped, scrolling both ways. Put
+                // straight in the wrapping row, the label is laid out as one row
+                // of it: the first line, cut short, and nothing under it.
                 let tok = self.tok;
-                // Measured against the pane, not the row: the row's rect may
-                // have been widened by something that overflowed it, the
-                // preview's own width of the last frame included.
+                // Measured against the pane, not the row: the row's rect may have
+                // been widened by something that overflowed it, including this
+                // preview's own width from the last frame.
                 let row_w = self.right - ui.max_rect().left();
                 let avail = self.right - ui.cursor().left();
                 let width = if avail >= 240.0 { avail } else { row_w };
@@ -857,7 +850,7 @@ impl Form<'_> {
             ui.horizontal_top(|ui| {
                 w::combo(ui, ("archtype", i), &mut e.kind, &opts, 180.0, !dis);
                 let rows = if e.text.contains('\n') { 3 } else { 1 };
-                // Room for the − and ↑ that follow, as the web's flex row leaves.
+                // Room for the trailing − and ↑ buttons that follow.
                 let width = (ui.available_width() - BUTTONS_W).max(80.0);
                 w::multiline_w(ui, &mut e.text, rows, width, !dis);
                 truncate(&mut e.text, 255);
@@ -1139,7 +1132,7 @@ fn target_note(cursor: usize, offset: i64, len: usize, zero: bool) -> String {
     }
 }
 
-/// `NumberList`'s parser: whitespace, commas and semicolons all separate.
+/// Parser for a list of numbers: whitespace, commas and semicolons all separate.
 fn parse_numbers(text: &str, min: i64, max: i64, hex: bool) -> Result<Vec<i64>, String> {
     let parts: Vec<&str> = text.split([' ', '\t', '\r', '\n', ',', ';']).filter(|s| !s.is_empty()).collect();
     let mut out = Vec::with_capacity(parts.len());

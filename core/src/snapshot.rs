@@ -3,43 +3,33 @@
 //!
 //! The method and the Z80 code are TAPER's (`tpsnap.c`, Copyleft (C) 1997-2001
 //! ThunderWare Research Center, written by Martijn van der Heide, GPL 2 or
-//! later). What happens on the Spectrum:
-//!
-//! 1. The BASIC program clears the screen and calls the start of its own
-//!    variables area, where a relocator copies a 512 byte loader to `BE00`.
-//! 2. The loader walks a table with one entry per 16K page: page it in, load the
-//!    block *backwards* so it ends at the top of the page, then unpack it
-//!    forwards into the same page. The packing is the .z80 file's own
-//!    `ED ED count value` run-length scheme.
-//! 3. The last stage moves itself and a prepared stack frame into the bottom
-//!    three lines of the screen, puts back what the loader was sitting on
-//!    (loaded with the ROM routine, or cleared when the snapshot has zeroes
-//!    there), pops every register off the frame and jumps into the program.
-//!
-//! So the bottom three pixel lines and the bottom attribute row of the screen
-//! are lost, as is whatever the snapshot had in its paged-in ROMs.
+//! later). A relocator in the BASIC program's variables area copies a 512 byte
+//! loader to `BE00`. For each 16K page the loader pages it in, loads the block
+//! backwards so it ends at the top of the page, and unpacks it forwards in place,
+//! the packing being the .z80 file's own `ED ED count value` scheme. A last stage
+//! moves itself and a stack frame into the bottom three screen lines, puts back
+//! what the loader sat on, pops every register and jumps into the program. The
+//! bottom three pixel lines and the bottom attribute row are lost, as is whatever
+//! the snapshot had in its paged-in ROMs.
 //!
 //! Where this differs from TAPER, on purpose:
-//! - the packer is checked against the unpacker's two blind spots (a block that
-//!   ends in a lone `ED`, and output overtaking input) and the page goes out
-//!   unpacked when it fails; TAPER copied the last four bytes raw, which the
-//!   unpacker can misread;
-//! - an unpacked page may be shorter than 16K (the one under the loader is),
-//!   so the loader works its length out from where it ends instead of assuming
-//!   16384;
-//! - a 128K tape always carries the block that replaces the loader, because the
-//!   128K loader always waits for it;
-//! - pages of zeroes are sent rather than skipped: memory is not empty when the
-//!   loader starts;
-//! - the relocator starts with `DI`, since an interrupt between its `CALL` and
-//!   the `POP` that reads the return address back would overwrite it;
-//! - IFF1, not IFF2, decides between `EI` and `DI`; the .sna border comes from
-//!   the header; v3 headers of 55 bytes and 128K .sna files are read;
-//! - the loader no longer resets port 7FFD before its last stage (every table
-//!   entry already leaves the 48K ROM selected), which is what makes room for the
-//!   two changes above in the 128K loader;
-//! - the BASIC lines carry their real lengths and no colour codes that stop a
-//!   LIST, so the program can be read like any other.
+//! - the packer checks the unpacker's two blind spots, a lone `ED` at the end and output
+//!   overtaking input, and a page that trips one goes out unpacked; TAPER copied the last
+//!   four bytes raw, which the unpacker can misread
+//! - an unpacked page may be shorter than 16K (the one under the loader is), so the loader
+//!   works its length out from where it ends
+//! - a 128K tape always carries the block that replaces the loader, because the 128K
+//!   loader always waits for it
+//! - pages of zeroes are sent rather than skipped: memory is not empty when the loader starts
+//! - the relocator starts with `DI`, since an interrupt between its `CALL` and the `POP`
+//!   that reads the return address back would overwrite it
+//! - IFF1, not IFF2, decides between `EI` and `DI`; the .sna border comes from the header;
+//!   v3 headers of 55 bytes and 128K .sna files are read
+//! - the loader never resets port 7FFD before its last stage (every table entry already
+//!   leaves the 48K ROM selected), which makes room in the 128K loader for the two
+//!   changes above
+//! - the BASIC lines carry their real lengths and no colour codes that stop a LIST, so the
+//!   program reads like any other
 
 use crate::describe::{checksum, encode_header, HeaderInfo, HEADER_TYPE_NAMES};
 use crate::types::{Block, Body};
@@ -58,8 +48,9 @@ const TURBO_ORG: u16 = 0xbf55;
 const AY_FRAME_AT: u16 = 0x54e0;
 const AY_STAGE_AT: u16 = 0x55e0;
 const LAST_STAGE_AT: u16 = 0x56e0;
-/// Flag byte of the page blocks, and of the block that replaces the loader.
+/// Flag byte of a page block.
 pub const FLAG_PAGE: u8 = 0xaa;
+/// Flag byte of the block that replaces the loader.
 pub const FLAG_FINAL: u8 = 0x55;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -685,7 +676,7 @@ pub fn snapshot_to_blocks(snap: &Snapshot, opts: &LoaderOptions) -> Result<Vec<B
     let zeroes = vec![0u8; PAGE];
     let page5 = snap.pages[5].as_deref().ok_or("The snapshot has no screen memory")?;
     let under_loader = &snap.pages[2].as_deref().unwrap_or(&zeroes)[PAGE - loader_len..];
-    // The 128K loader always fetches this block, so there it always exists.
+    // The 128K loader always waits for this block, so a 128K tape always sends it.
     let reload = snap.is_128k || under_loader.iter().any(|b| *b != 0);
 
     // ---- the pages, in loading order ----

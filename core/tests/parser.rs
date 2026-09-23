@@ -1,9 +1,9 @@
 //! Parser tests. Two halves:
 //!
-//! * `fixtures` — every dump in `tests/fixtures/`, generated from the
-//!   TypeScript parser by `node scripts/dump-blocks.mjs`, must be reproduced
-//!   byte for byte by this crate. That is the differential test.
-//! * the rest — the hand-built cases from `test/tzx.test.ts`, ported.
+//! * `matches_the_typescript_dumps`: every dump in `tests/fixtures/`, written from the
+//!   frozen `test/reference/parser.ts` by `node scripts/dump-blocks.mjs`, must be
+//!   reproduced byte for byte by this crate. That is the differential test.
+//! * the rest: the hand-built cases of `test/tzx.test.ts`.
 
 use std::path::{Path, PathBuf};
 use tapeti_core::dump::dump_tape;

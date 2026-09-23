@@ -64,9 +64,8 @@ impl Default for Settings {
             path: None,
             theme: Theme::System,
             hex_bytes: false,
-            // Blocks are numbered from 0 unless the option is turned off: the
-            // block number is an index into the tape, and that is where the
-            // file format, the jump targets and every other tool start.
+            // On by default: the block number is an index into the tape, which the file
+            // format, jump targets and every other tool assume starts at 0.
             zero_based: true,
             backup: false,
             emulator_program: String::new(),
@@ -141,8 +140,7 @@ impl Settings {
         s
     }
 
-    /// Best effort: an unwritable config directory is not worth an error dialog,
-    /// exactly as the `try { localStorage… } catch {}` on the web side decides.
+    /// Best effort: an unwritable config directory is not worth an error dialog.
     pub fn save(&self) {
         let Some(path) = self.path.clone() else { return };
         if let Some(dir) = path.parent() {

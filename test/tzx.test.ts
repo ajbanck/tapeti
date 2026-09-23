@@ -5,8 +5,8 @@ import { createBlock, Block, CREATABLE_IDS, isUnknown } from '../src/tzx/types';
 import { decodeHeader, encodeHeader, describeBlock } from '../src/tzx/describe';
 import { checkConsistency } from '../src/tzx/consistency';
 import { tapeDuration, playbackOrder, renderTape, renderLength, encodeWav, TSTATES_PER_SEC, playbackTimeline, positionAt, blockDuration, LEAD_TSTATES } from '../src/tzx/audio';
-// The sinks moved into the Rust core; the frozen TypeScript still has them, and
-// this file's reference rendering is built on that.
+// `SampleSink` and `PulseSink` exist only in `test/reference/audio.ts`, the frozen
+// implementation; the sample rendering tests below build their reference on them.
 import { emitBlock, SampleSink, PulseSink } from './reference/audio';
 import { disassemble } from '../src/spectrum/z80dis';
 import { listBasic, decodeNumber } from '../src/spectrum/basic';
@@ -19,7 +19,6 @@ function header(name: string, type = 3, length = 100, p1 = 32768, p2 = 0) {
 describe('TZX round trip', () => {
   it('serializes every creatable block and parses it back identically', () => {
     const blocks: Block[] = CREATABLE_IDS.map((id) => createBlock(id));
-    // Give data blocks some content
     for (const b of blocks) {
       if ('data' in b) (b as any).data = new Uint8Array([0x00, 3, 65, 66, 67, 0x55]);
     }
@@ -150,8 +149,8 @@ describe('flow', () => {
 });
 
 describe('sample rendering', () => {
-  // Reference implementation: the original sink that collected samples in a plain array
-  // and filtered afterwards. The rewritten sink must produce identical output.
+  // A reference renderer: samples collected in a plain array and filtered afterwards.
+  // `renderTape` must match it sample for sample.
   function reference(blocks: Block[], opts: { sampleRate: number; mode: 'square' | 'mic'; amplitude?: number }): Float32Array {
     const samples: number[] = [];
     let level: 0 | 1 = 0;

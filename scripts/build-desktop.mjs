@@ -1,6 +1,5 @@
 // Builds Tapeti, the desktop app (desktop/), and packages it for the platform it
-// is run on. Stage 5 of the Rust migration: this replaced `tauri build`, so it
-// is what CI calls too — one script, so a release is the same steps a person runs.
+// is run on. CI calls this script too, so a release is the same steps a person runs.
 //
 //   node scripts/build-desktop.mjs [--debug] [--package] [--universal] [--no-build]
 //
@@ -50,11 +49,9 @@ const profile = release ? 'release' : 'debug';
 const packaging = has('--package');
 const universal = has('--universal');
 
-// The version this packages is the crate's, which is the one the app itself reports
-// through CARGO_PKG_VERSION — in the About dialog, in the macOS About panel and at
-// the top of a crash log. Taking it from package.json instead, as this did until
-// stage 6, meant a bundle could be named after a number the app inside it did not
-// say. desktop/tests/version.rs fails if package.json and core/ have drifted from it.
+// The version this packages is the crate's: the one the app itself reports through
+// CARGO_PKG_VERSION, in the About dialog, the macOS About panel and a crash log's
+// header. desktop/tests/version.rs fails if package.json and core/ have drifted from it.
 const version = cargoVersion(join(crate, 'Cargo.toml'));
 const exe = process.platform === 'win32' ? 'tapeti.exe' : 'tapeti';
 
@@ -69,9 +66,8 @@ function cargoVersion(path) {
   throw new Error(`no [package] version in ${path}`);
 }
 
-// Homebrew's cargo is on PATH and is enough for a host build; scripts/build-wasm.mjs
-// explains why the wasm build picks the rustup shim instead. A cross build (the
-// universal one) needs whichever cargo has the other target installed.
+// A host build takes the cargo on PATH. A cross build (the universal one) needs
+// whichever cargo has the other target installed: set CARGO.
 const cargo = process.env.CARGO || 'cargo';
 const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { stdio: 'inherit', ...opts });
 const mb = (p) => (statSync(p).size / 1024 / 1024).toFixed(1);
@@ -113,7 +109,7 @@ console.log(`\nBinary: ${bin} (${mb(bin)} MB)`);
 // ---- macOS ----------------------------------------------------------------
 
 /** `Tapeti.app`: the document types live in its Info.plist, and nothing else can
- *  declare them — this is what makes a tape open Tapeti when it is double-clicked. */
+ *  declare them. That is what makes a tape open Tapeti when it is double-clicked. */
 function macApp() {
   const app = out('Tapeti.app');
   rmSync(app, { recursive: true, force: true });
@@ -187,8 +183,8 @@ function macApp() {
   return app;
 }
 
-/** A .dmg and a .zip of the bundle. `hdiutil create` lays the image out itself, so
- *  unlike the DMG packager Tauri used it opens no Finder window. */
+/** A .dmg and a .zip of the bundle. `hdiutil create` lays the image out itself and
+ *  opens no Finder window. */
 function macPackages(app) {
   const arch = universal ? 'universal' : process.arch === 'x64' ? 'x86_64' : 'aarch64';
   const dmg = out(`Tapeti-v${version}-macos-${arch}.dmg`);
@@ -266,8 +262,9 @@ function linuxPackages() {
 // ---- Windows --------------------------------------------------------------
 
 /** WiX v4+ source: one component with the exe, a Start menu shortcut, the two
- *  file associations and an "Open with" entry for snapshots. Windows has no bundle to declare them in, so they are
- *  registry entries an installer writes — which is why there is an .msi at all. */
+ *  file associations and an "Open with" entry for snapshots. Windows has no bundle
+ *  to declare them in: they are registry entries an installer writes, which is why
+ *  there is an .msi at all. */
 function wxs() {
   return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -368,10 +365,7 @@ if (made.length) {
   for (const f of made) console.log(`  ${f} (${mb(f)} MB)`);
 }
 
-// One line, and the binary's own --help carries the flags. Everything that used to
-// be printed here was scaffolding for a question that has since been answered: the
-// measuring flags for numbers that are now in CLAUDE.md, and a symlink
-// into /Applications for an "open with" path confirmed on 2026-09-18.
+// One line: the binary's own `--help` carries the flags.
 console.log(`
 Screenshots, measuring and the rest:
   "${bin}" --help`);

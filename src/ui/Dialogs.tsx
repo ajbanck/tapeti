@@ -80,9 +80,9 @@ export function Dialogs() {
 const BASIC_PROGRAM = 0;
 
 /**
- * A BASIC program with nothing in it yet: the Program header (no autostart line)
- * and the data block behind it. The data window's BASIC view fills it in, and
- * keeps the header's lengths right as it does. `empty_program` in the core.
+ * A BASIC program with nothing in it yet: the Program header, with no autostart
+ * line, and the data block behind it. The data window's BASIC view fills it in
+ * and keeps the header's lengths right as it does. `empty_program` in the core.
  */
 function emptyProgram(): Block[] {
   const header = encodeHeader({ type: 0, typeName: 'Program', name: 'program', length: 0, param1: 0x8000, param2: 0 });
@@ -266,7 +266,10 @@ function WavExport({ side }: { side: Side }) {
   );
 }
 
-/** A file that is no tape was inserted: it becomes a data block, with the header SAVE "name" CODE would have put in front. */
+/**
+ * A file that is no tape was inserted: it becomes a data block, with the header
+ * SAVE "name" CODE would have put in front.
+ */
 function DataFileInsert({ d }: { d: Extract<Dialog, { kind: 'datafile' }> }) {
   const [name, setName] = useState(headerName(d.name));
   const [address, setAddress] = useState(d.bytes.length === 6912 ? 16384 : 32768);

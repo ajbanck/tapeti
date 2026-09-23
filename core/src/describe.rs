@@ -1,4 +1,5 @@
-//! Block descriptions and ROM headers, the port of `src/tzx/describe.ts`.
+//! Block descriptions and ROM headers, the port of `src/tzx/describe.ts`. `is_metadata`'s
+//! TypeScript twin, `isMetadata`, is pinned to it by a differential test over every block ID.
 
 use crate::bytes::{latin1_to_string, string_to_latin1};
 use crate::types::{block_name, Block, Body};
@@ -82,7 +83,7 @@ pub fn default_load_address(len: usize) -> u16 {
     }
 }
 
-/// The ten characters a header has for a name, from a file's: its stem, in ASCII.
+/// The ten characters a header name allows, taken from a file's stem and restricted to ASCII.
 pub fn header_name(file: &str) -> String {
     let base = file.rsplit(['/', '\\']).next().unwrap_or(file);
     let stem = base.rsplit_once('.').map_or(base, |(s, _)| s);
@@ -261,9 +262,7 @@ pub fn block_length(b: &Block) -> u32 {
     }
 }
 
-/// Metadata blocks are not part of the tape signal. The TypeScript keeps its
-/// own copy of this predicate for the UI (`isMetadata` in `describe.ts`), and a
-/// differential test pins the two together for every block ID.
+/// Metadata blocks are not part of the tape signal.
 pub fn is_metadata(b: &Block) -> bool {
     match &b.body {
         Body::GroupStart { .. }

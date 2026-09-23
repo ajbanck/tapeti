@@ -53,7 +53,7 @@ function Menu({ title, items, open, onOpen, onClose }: { title: string; items: M
   );
 }
 
-/** A separator, a command id, or a command with a label override. */
+// A separator, a command id, or a command with a label override.
 type Entry = CommandId | { id: CommandId; label?: string } | 'sep';
 
 function items(side: Side, entries: Entry[]): MenuItem[] {

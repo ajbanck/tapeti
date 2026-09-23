@@ -81,9 +81,8 @@ pub fn num(
     enabled: bool,
 ) -> bool {
     let id = ui.make_persistent_id(id);
-    // While the field has focus the typed text is what the user sees, however
-    // half-finished; the rest of the time it is the value, formatted in the
-    // current base.
+    // While focused, the field shows the typed text as-is, however unfinished;
+    // otherwise it shows the value formatted in the current base.
     let editing = ui.memory(|m| m.has_focus(id));
     let mut text = match editing {
         true => ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| fmt::num(*value, hex)),
@@ -172,10 +171,10 @@ pub fn multiline(ui: &mut Ui, value: &mut String, rows: usize, enabled: bool) ->
     multiline_w(ui, value, rows, f32::INFINITY, enabled)
 }
 
-/// The same, given an explicit width. A field that asks for the rest of the row
-/// leaves nothing for the buttons after it — and egui does not clip that, it
-/// widens the enclosing `Ui`, which then carries the editor footer out of the
-/// pane. Anything with a trailing button says how wide it wants to be.
+/// The same, given an explicit width. A field that fills the rest of the row
+/// leaves no room for a button after it: egui does not clip an overflowing
+/// widget, it widens the enclosing `Ui`, which then carries the editor footer
+/// out of the pane. Give anything with a trailing button an explicit width.
 pub fn multiline_w(ui: &mut Ui, value: &mut String, rows: usize, width: f32, enabled: bool) -> Response {
     ui.add_enabled(
         enabled,

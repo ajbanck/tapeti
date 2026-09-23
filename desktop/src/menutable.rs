@@ -90,8 +90,10 @@ use Need::{Always, Blocks, Clipboard, Collapsible, Cursor, Playing, Redo, Undo};
 
 /// The one grouping, on every platform and in the browser: `MENUS` in
 /// `src/ui/MenuBar.tsx` lists the same ids under the same titles, and
-/// `tests/menu.rs` fails if they drift. Every menu runs on the active pane; what
-/// is aimed at one pane in particular is a button in that pane's header.
+/// `tests/menu.rs` fails if they drift.
+///
+/// Every menu runs on the active pane; what is aimed at one pane in particular is a
+/// button in that pane's header.
 pub const MENUS: &[MenuDef] = &[
     MenuDef {
         title: "File",

@@ -1,12 +1,13 @@
 // Block descriptions and ROM headers. The logic is the Rust core in core/
-// (describe.rs); this module is the signature the UI has always used.
+// (describe.rs); this module keeps the signature the UI imports.
 //
 // The list asks for a description and a length per row, so both are cached per
 // block object: blocks are immutable, an edit makes a new one, and a WeakMap
 // keyed on the object cannot go stale. Without it every render would send the
 // tape across the wasm boundary again.
 //
-// The previous implementation lives on as test/reference/describe.ts.
+// test/reference/describe.ts is the frozen implementation the differential
+// tests compare this against.
 import { Block, DataBlock, HeaderInfo, isUnknown } from './types';
 import { checksumCore, decodeHeaderCore, describeBlockCore, encodeHeaderCore } from './core';
 

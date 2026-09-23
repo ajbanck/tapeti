@@ -1,4 +1,4 @@
-//! Sequential little-endian reads, the port of `Reader` in `src/tzx/bytes.ts`.
+//! Sequential little-endian reads and writes, the port of `src/tzx/bytes.ts`.
 
 /// Reader errors carry the same text as the TypeScript ones, because the parser
 /// puts them in user-visible warnings.
@@ -93,9 +93,8 @@ pub fn string_to_latin1(s: &str) -> Vec<u8> {
     s.chars().map(|c| c as u32 as u8).collect()
 }
 
-/// Sequential little-endian writes, the port of `Writer` in `src/tzx/bytes.ts`.
-/// Widths wrap the way the TypeScript ones do, so an over-long block writes the
-/// same truncated length here as it did there.
+/// Sequential little-endian writes. Widths wrap the way the TypeScript ones do: an over-long
+/// block writes the same truncated length here as there.
 #[derive(Default)]
 pub struct Writer {
     pub buf: Vec<u8>,

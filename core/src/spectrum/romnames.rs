@@ -1,7 +1,8 @@
 //! Names the disassembler puts beside numbers: the 48K ROM's system variables,
 //! the error reports behind `RST 08`, the calculator's literals behind `RST 28`,
-//! and symbols of the user's own. The names are the ones "The Complete Spectrum
-//! ROM Disassembly" uses.
+//! and symbols of the user's own.
+//!
+//! The names are the ones "The Complete Spectrum ROM Disassembly" uses.
 
 use std::collections::HashMap;
 

@@ -22,12 +22,10 @@
 //! A number typed outside a string gets its five byte form behind it, as the
 //! Spectrum's own editor does; so do the parameters of a DEF FN.
 //!
-//! **Lines that were not touched keep their bytes.** [`edit_basic`] compares each
-//! line of the text with what [`basic_source`] wrote for the program being
-//! edited, and only tokenises the ones that differ. That is what makes editing a
-//! protected loader safe: the odd line lengths, the numbers the ROM would have
-//! rounded differently and the bytes no keyboard produces all survive, unless
-//! they are on the line being changed.
+//! **Lines that were not touched keep their bytes.** [`edit_basic`] tokenises only
+//! the lines whose text differs from what [`basic_source`] wrote. That keeps editing
+//! a protected loader safe: odd line lengths, numbers the ROM would round differently
+//! and bytes no keyboard produces survive on every line left alone.
 
 use super::basic::{decode_number, format_number};
 use super::charset::{token_name, TOKENS};
@@ -154,7 +152,7 @@ fn line_source(body: &[u8], opts: SourceOptions) -> String {
         if c == 0x0d {
             break;
         }
-        // (Cut short, it is no number, and goes out as the byte it is.)
+        // A 0E with fewer than five bytes behind it is no number: it goes out as the byte it is.
         if c == 0x0e && !in_string && !in_rem && q + 5 <= body.len() {
             let v = decode_number(body, q);
             let shown = if after_bin {
@@ -241,7 +239,7 @@ fn line_source(body: &[u8], opts: SourceOptions) -> String {
         in_name = false;
     }
     // A space that ends the line would be trimmed off the text: spell it out.
-    // (The one a keyword brings along is the listing's, and may go.)
+    // The space a keyword brings along is the listing's, not the program's, and may go.
     if !after_token && out.ends_with(' ') {
         out.pop();
         out.push_str("{20}");
@@ -585,8 +583,10 @@ fn tokenise_with(text: &str, keywords: &[(String, u8)], opts: SourceOptions) -> 
 }
 
 /// The program area that `text` stands for, given the one it was made from:
-/// `data[start..end]`. Lines still as [`basic_source`] wrote them keep their
-/// bytes; the rest is tokenised. Lines stay in the order they are written in.
+/// `data[start..end]`.
+///
+/// Lines still as [`basic_source`] wrote them keep their bytes; the rest is
+/// tokenised. Lines stay in the order they are written in.
 pub fn edit_basic(
     data: &[u8],
     start: usize,
@@ -740,8 +740,8 @@ mod tests {
 
     #[test]
     fn untouched_lines_keep_bytes_no_keyboard_makes() {
-        // A number the ROM rounded its own way, and a line length that lies.
-        // (Last, because a length like that takes in everything after it.)
+        // A number the ROM rounded its own way, and a line length that lies: it goes
+        // last, because a length like that takes in everything after it.
         let mut odd = vec![0, 30, 0xff, 0xff, 0xf5, b'1'];
         odd.extend_from_slice(&[0x0e, 0x7d, 0x4c, 0xcc, 0xcc, 0xcc, 0x0d]);
         let plain = tokenise_line("20 CLS", OPTS).unwrap();

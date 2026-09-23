@@ -23,7 +23,7 @@ export const LEAD_TSTATES = TSTATES_PER_SEC / 2;
 export type { Pulse };
 
 export interface FlowOptions {
-  /** Called when a "stop the tape" (pause 0) or 48k stop is reached. */
+  /** Stop at a "stop the tape if in 48k mode" block. */
   stopAt48k?: boolean;
   /** Safety valve for infinite loops via jumps. */
   maxSteps?: number;
@@ -62,7 +62,7 @@ const playable = perTape((blocks: Block[]): Block[] => {
   let changed = false;
   const out = blocks.map((b) => {
     // isUnknown first: an unknown block's id is a plain number, so `b.id !== 0x18`
-    // does not narrow it away (see CLAUDE.md).
+    // does not narrow it away.
     if (isUnknown(b) || b.id !== 0x18 || b.compression !== 2) return b;
     changed = true;
     return { ...b, compression: 1, data: cswRleData(b.data, 2) };
@@ -136,7 +136,7 @@ export function renderWav(blocks: Block[], opts: RenderOptions, bits: 8 | 16 = 1
   return renderWavCore(tape, order, opts.sampleRate, opts.mode === 'mic', opts.amplitude ?? 0.8, bits);
 }
 
-/** Encode samples as a 16-bit mono PCM WAV file. */
+/** Encode samples as an 8- or 16-bit mono PCM WAV file (16-bit by default). */
 export function encodeWav(samples: Float32Array, sampleRate: number, bits: 8 | 16 = 16): Uint8Array {
   return encodeWavCore(samples, sampleRate, bits);
 }

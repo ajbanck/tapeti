@@ -1,7 +1,6 @@
 // Rendering a Spectrum screen dump. The renderer is the Rust core in core/
-// (spectrum/screen.rs).
-//
-// The previous implementation lives on as test/reference/spectrum/screen.ts.
+// (spectrum/screen.rs). test/reference/spectrum/screen.ts is the frozen
+// implementation the differential tests compare this against.
 import { hasFlashCore, renderScreenCore } from '../tzx/core';
 
 export const SCREEN_SIZE = 6912;

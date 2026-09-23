@@ -1,10 +1,10 @@
 // Tape parsing. The implementation is the Rust core in core/, compiled to wasm
-// and loaded by core.ts; this module is the signature the rest of the app has
-// always used. `initCore()` must have resolved before any of these are called —
-// src/main.tsx awaits it before the first render, tests in test/setup.ts.
+// and loaded by core.ts; this module keeps the signature the app imports.
+// `initCore()` must have resolved before any of these are called: src/main.tsx
+// awaits it before the first render, tests in test/setup.ts.
 //
-// The previous TypeScript implementation lives on as test/reference/parser.ts,
-// which test/core.test.ts checks the core against.
+// test/reference/parser.ts is the frozen implementation the differential
+// tests compare this against.
 import { ParsedTape } from './types';
 import { parseTapCore, parseTapeCore, parseTzxCore } from './core';
 
@@ -33,9 +33,8 @@ export function parseTape(buf: Uint8Array): ParsedTape {
 }
 
 /**
- * Bits per symbol of an alphabet of `alphabetSize` symbols. Still TypeScript
- * because the writer, the audio renderer and the consistency check use it; it
- * moves to the core with them in stage 2.
+ * Bits per symbol of an alphabet of `alphabetSize` symbols. Stays in TypeScript
+ * because the frozen reference implementations in test/reference/ import it.
  */
 export function bitsPerSymbol(alphabetSize: number): number {
   if (alphabetSize <= 1) return 1;

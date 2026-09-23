@@ -303,7 +303,7 @@ pub fn serialize_tzx(blocks: &[Block], version: Option<Version>) -> Vec<u8> {
     w.into_vec()
 }
 
-/// Serialize a single block to bytes (ID + body); used for comparison and size display.
+/// Encodes one block as ID plus body, for comparison and size display.
 pub fn serialize_block(b: &Block) -> Vec<u8> {
     let mut w = Writer::new();
     write_block(&mut w, b);

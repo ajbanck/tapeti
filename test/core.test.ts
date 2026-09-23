@@ -1,6 +1,7 @@
-// Differential test from stage 1 of the Rust migration: the wasm core and the
-// TypeScript parser it replaced must return the same thing for the same bytes.
-// test/reference/parser.ts is that former implementation, frozen.
+// Differential test: the wasm core against `test/reference/`, the frozen TypeScript
+// implementation, over parsing, writing, descriptions, content detection, consistency,
+// programs, comparison, conversion, POKEs, bits, the Spectrum side (charset, screen,
+// BASIC, disassembler) and audio.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,14 +65,14 @@ function replacer(_k: string, v: unknown) {
 }
 
 /** Two typed arrays with the same contents, reported by the first index that differs.
- *  `toEqual` on `Array.from(...)` materialises two JS arrays and walks them as deep
- *  values, which for a tape rendered at 44.1 kHz is millions of elements and made
- *  this the slowest file in the suite — slow enough to time out on CI hardware. */
+ *  `toEqual` on `Array.from(...)` materialises both as JS arrays and walks them as deep
+ *  values; for a tape rendered at 44.1 kHz that is millions of elements and times out
+ *  on CI, so compare elements directly instead. */
 function expectSameBuffer(got: ArrayLike<number>, want: ArrayLike<number>, what: string) {
   expect(got.length, `${what}: length`).toBe(want.length);
   for (let i = 0; i < want.length; i++) {
-    // NaN !== NaN, and toEqual called them equal; no sample should be one, but the
-    // comparison this replaces would not have failed on a pair of them.
+    // NaN !== NaN; no sample should be one, but two NaNs count as equal, as `toEqual`
+    // has it.
     if (got[i] !== want[i] && !(Number.isNaN(got[i]) && Number.isNaN(want[i]))) {
       expect.fail(`${what}: differs at index ${i}: got ${got[i]}, want ${want[i]}`);
     }
@@ -129,7 +130,7 @@ describe('the Rust core against the TypeScript parser it replaced', () => {
     sameTape(new Uint8Array([4, 0, 1, 2]), 'parseTap');          // truncated block
     sameTape(new Uint8Array([2, 0, 1, 2, 9]), 'parseTap');       // trailing byte
     sameTape(new Uint8Array(0), 'parseTap');                     // empty file
-    // Auto-detection sends all of these to the TAP parser too.
+    // Auto-detection sends a file without the TZX signature to the TAP parser too.
     sameTape(new Uint8Array([19, 0, ...h, 3, 0, 0xff, 1, 0xfe]));
   });
 
@@ -183,7 +184,7 @@ describe('the Rust writer against the TypeScript writer it replaced', () => {
     return blocks;
   }
 
-  /** Blocks the old writer had to paper over: over-long text, short idents, odd glue. */
+  /** Edge cases both writers must handle the same way: over-long text, short idents, odd glue. */
   function awkwardBlocks(): Block[] {
     const blocks: Block[] = [
       createBlock(0x21), createBlock(0x30), createBlock(0x31), createBlock(0x28),

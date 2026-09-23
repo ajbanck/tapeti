@@ -1,10 +1,10 @@
 // Loader for the Rust tape core. The wasm module is inlined as base64 by
 // scripts/build-wasm.mjs, so the same code path works in the browser and in
-// vitest under node. (The desktop app links the core directly — no wasm.)
+// vitest under node. The desktop app links the core directly, with no wasm.
 //
-// Compiling wasm is asynchronous (browsers refuse a synchronous compile of
-// anything but a tiny module on the main thread), but the app parses tapes
-// synchronously, so `initCore` runs once at startup — see src/main.tsx — and
+// Compiling wasm is asynchronous: browsers refuse a synchronous compile of
+// anything but a tiny module on the main thread. The app parses tapes
+// synchronously, so `initCore` runs once at startup, in src/main.tsx, and
 // the parse functions are sync from then on.
 import { CORE_WASM_BASE64 } from './core.wasm';
 import {
@@ -239,7 +239,7 @@ export function detectContentCore(blocks: Block[], index: number): ContentInfo {
 /**
  * The same for a data window: the guess is made on the decrypted bytes when the
  * group around the block names a loader that encrypts. The whole tape goes over
- * rather than a two-block window, since the group is what decides — a data
+ * rather than a two-block window, since the group is what decides, and a data
  * window is opened by hand, not drawn per frame.
  */
 export function detectContentAsLoadedCore(blocks: Block[], index: number): AsLoaded {

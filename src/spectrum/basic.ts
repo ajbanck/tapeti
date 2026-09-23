@@ -1,8 +1,9 @@
-// The BASIC lister and the variables area. The listing is the Rust core in
-// core/ (spectrum/basic.rs), including the JavaScript number formatting the
-// view has always shown.
+// The BASIC lister and the variables area: thin wrappers over the Rust core
+// (core/src/spectrum/basic.rs), whose number formatting reimplements
+// JavaScript's `toPrecision(8)` so the two agree digit for digit.
 //
-// The previous implementation lives on as test/reference/spectrum/basic.ts.
+// test/reference/spectrum/basic.ts is the frozen implementation the
+// differential tests compare this against.
 import { BasicLine, BasicOptions, BasicToken, VariableEntry } from '../tzx/types';
 import { basicSourceCore, editBasicCore, basicToTextCore, decodeNumberCore, formatNumberCore, listBasicCore, listVariablesCore } from '../tzx/core';
 

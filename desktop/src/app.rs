@@ -180,7 +180,7 @@ impl App {
     }
 
     /// The row the playing marker sits on: a block inside a collapsed range
-    /// marks the range's header, as the web list does.
+    /// marks the range's header.
     pub fn playing_row(&self, side: Side) -> Option<usize> {
         if self.progress.side != Some(side) || self.progress.block < 0 {
             return None;
@@ -376,8 +376,7 @@ impl App {
         ui.painter().hline(head.x_range(), head.bottom() - 0.5, egui::Stroke::new(1.0, tok.border));
         if active {
             // `.pane.active` takes the *soft* accent, not the accent: a full
-            // strength ring round half the window is a shout, and the web
-            // never did it.
+            // strength ring round half the window would be a shout.
             ui.painter().rect_stroke(
                 rect,
                 egui::CornerRadius::same(8),
@@ -450,8 +449,8 @@ impl App {
         );
         ui.painter().rect_filled(band, egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }, tok.surface_2);
         // Never lower than `.editor .footer`'s 8 px padding above the card's
-        // border: the rows above this do not add up to exactly HEAD_H, and the
-        // Commit button ended up on the border.
+        // border: the rows above do not add up to exactly HEAD_H, so a smaller
+        // offset draws the Commit button on the border.
         let top = ui.cursor().top() + 6.0;
         let editor_h = editor_h.min(rect.bottom() - 9.0 - top).max(0.0);
         let editor_rect =
@@ -469,19 +468,19 @@ impl App {
         let mut run: Option<&'static str> = None;
         // The toolbar is laid out first and the title gets what it leaves, as
         // `.pane-title` is `min-width: 0` beside a toolbar that never shrinks:
-        // laid out after the title, a narrow pane drew the icons over the name.
+        // laid out after the title, a narrow pane would draw the icons over the name.
         let row = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 22.0));
         ui.advance_cursor_after_rect(row);
         let tools_left = {
             let builder = egui::UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center));
             let mut ui = ui.new_child(builder);
             let ui = &mut ui;
-            // Right to left, so the order here is the reverse of the web
-            // toolbar's: folder, save | insert, play, emulator, programs, info | more.
+            // Laid out right to left, so read left to right the icons are:
+            // folder, save | insert, play, emulator, programs, info | more.
             ui.spacing_mut().item_spacing.x = 2.0; // the web's .toolbar gap
             let has = !self.store.tape(side).blocks.is_empty();
-            // What is per tape and has no button here: the overflow menu,
-            // `paneMenu` on the web.
+            // The overflow menu: everything here is per tape and has no toolbar
+            // button of its own.
             let more = icons::button(ui, &icons::MORE, "More for this tape", true);
             egui::Popup::menu(&more).show(|ui| {
                 for id in menutable::PANE_MENU {
@@ -516,7 +515,7 @@ impl App {
             if icons::button(ui, &icons::PLUS, "Insert block…", true).clicked() {
                 run = Some("insert");
             }
-            // Right to left: the rule the web draws between save and insert.
+            // Right to left: this separator ends up between Save and Insert.
             crate::widgets::vsep(ui, &tok);
             let save_hover = if self.store.tape(side).path.is_some() { "Save" } else { "Save as TZX" };
             if icons::button(ui, &icons::SAVE, save_hover, has).clicked() {
@@ -552,7 +551,7 @@ impl App {
         let builder = egui::UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Center));
         let mut ui = ui.new_child(builder);
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-        // The web's .pane-title gap.
+        // `.pane-title`'s gap.
         ui.spacing_mut().item_spacing.x = 8.0;
         crate::widgets::side_tag(&mut ui, if side == 0 { "L" } else { "R" }, self.store.active == side, &tok);
         let pill = (!t.blocks.is_empty()).then(|| {
@@ -643,18 +642,17 @@ impl App {
         if self.theme_applied != Some(want) {
             self.tokens = theme::tokens(want.0, want.1);
             ctx.set_visuals(self.tokens.visuals());
-            // The WM draws the title bar from `_GTK_THEME_VARIANT`, and winit's
-            // X11 fallback for "no preference" is dark: a black bar over a light
-            // window. So name the variant rather than leaving it unset.
-            //
-            // macOS in "system" mode is the exception: naming one pins
-            // `NSWindow.appearance`, and winit's observer then stops reporting
-            // appearance changes for a window the app has customised, so
-            // "system" would freeze at whatever it was at launch. Unpinned the
-            // title bar already follows the desktop, and going back to "system"
-            // unpins it, which makes the observer emit the theme it missed.
+            // Name the variant rather than leaving it unset: the WM draws the title
+            // bar from `_GTK_THEME_VARIANT`, and winit's X11 fallback for "no
+            // preference" is dark, a black bar over a light window.
             ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(
                 if cfg!(target_os = "macos") && want.0 == Theme::System {
+                    // Naming one here would pin `NSWindow.appearance`, and winit's
+                    // observer then stops reporting appearance changes for a window
+                    // the app has customised, so "system" would freeze at launch's
+                    // theme. Unpinned, the title bar follows the desktop, and going
+                    // back to "system" unpins it, which makes the observer emit the
+                    // theme it missed.
                     egui::SystemTheme::SystemDefault
                 } else if self.tokens.dark {
                     egui::SystemTheme::Dark
@@ -799,8 +797,8 @@ mod tests {
     use crate::settings::Settings;
     use tapeti_core::types::{create_body, Block, CREATABLE_IDS};
 
-    /// A tape with one block of every type the editor can create, which is what
-    /// makes one frame cover all 25 forms.
+    /// A tape with one block of every type the editor can create, so one frame
+    /// exercises every form.
     fn every_block() -> Vec<Block> {
         CREATABLE_IDS.iter().map(|id| Block::new(create_body(*id))).collect()
     }
@@ -814,9 +812,9 @@ mod tests {
     }
 
     /// Draw one frame against a bare context: no window, no event loop, but the
-    /// same code the window runs — `run_ui` hands over the root `Ui` that eframe
-    /// would. A layout panic or an out-of-range index shows up here instead of
-    /// on screen.
+    /// same code the window runs. `run_ui` hands over the root `Ui` that eframe
+    /// would, so a layout panic or an out-of-range index shows up here instead
+    /// of on screen.
     fn draw(ctx: &egui::Context, app: &mut App) {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
@@ -857,8 +855,7 @@ mod tests {
         out
     }
 
-    /// Samples and CSW pulse lengths have no flag byte or checksum; reading their
-    /// first and last byte as one reported a bad checksum on a sound block.
+    /// Samples and CSW pulse lengths have no flag byte or checksum.
     #[test]
     fn the_editor_finds_flag_and_checksum_only_in_loader_bytes() {
         use tapeti_core::types::Body;
@@ -950,10 +947,10 @@ mod tests {
     }
 
     /// Typing in the dump, through the frame that the window runs: a standard
-    /// block opens with "hide flag byte" and "hide checksum byte" ticked, and
-    /// the two keys must still land — on the first body byte, not on the flag.
-    /// The window used to turn read-only the moment any modifier was on, which
-    /// is every ordinary tape block.
+    /// block opens with "hide flag byte" and "hide checksum byte" ticked, so the
+    /// keys must land on the first body byte, not the flag. Read-only must not
+    /// trigger just because a modifier is active: those two are on for every
+    /// ordinary block.
     #[test]
     fn typing_in_the_dump_edits_the_byte_the_view_shows() {
         let data = vec![0xff, 0x11, 0x22, 0x33, 0xaa];
@@ -1059,8 +1056,9 @@ mod tests {
     }
 
     /// Every character of every shortcut label has a glyph in the fonts the app
-    /// sets. On macOS egui's own fonts have ⌘ and none of ⌃⌥⇧ or the arrows, and
-    /// every menu egui drew showed them as empty boxes (`theme::fonts`).
+    /// sets. On macOS egui's own fonts have ⌘ but none of ⌃⌥⇧ or the arrows, so
+    /// `theme::fonts` adds a font with them; without it those glyphs draw as
+    /// empty boxes.
     #[test]
     fn every_shortcut_label_has_its_glyphs() {
         let (ctx, _app) = app_with(Vec::new());
@@ -1076,9 +1074,9 @@ mod tests {
         .drop_without_applying_deltas();
     }
 
-    /// Every dialog is one egui modal, and it has to fit the dialog shown now, not
-    /// the tallest one shown before: after tape info a one-line message used to
-    /// keep tape info's height, its OK button halfway down an empty box.
+    /// Every dialog is one egui modal that must fit the dialog shown now, not the
+    /// tallest one shown before: reusing a previous height would strand a short
+    /// message's OK button halfway down an empty box.
     #[test]
     fn a_dialog_is_as_tall_as_itself_whatever_came_before() {
         let (ctx, mut app) = app_with(vec![Block::new(create_body(0x10))]);
@@ -1097,11 +1095,6 @@ mod tests {
         assert_eq!(height(&mut app), short, "the message after tape info");
     }
 
-    /// A file dropped from outside goes to the pane on its side of the splitter —
-    /// over the editor as well as over the list — and to the active pane when
-    /// nobody knows where it fell. It used to need egui's pointer inside a block
-    /// list, and on macOS that pointer is from before the drag: most drops went
-    /// nowhere.
     /// What egui-winit hands over for a file let go on the window (its own
     /// `NativeFile` is private to it).
     #[derive(Debug)]
@@ -1116,6 +1109,8 @@ mod tests {
         }
     }
 
+    /// Exercises `drop_side` and `pointer_at_drop` end to end, including a drop
+    /// over the editor rather than the list.
     #[test]
     fn a_dropped_file_goes_to_the_pane_it_fell_on() {
         let dir = std::env::temp_dir().join(format!("tapeti-drop-{}", std::process::id()));
@@ -1143,12 +1138,10 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A right-click on a row opens the menu and it stays open; a click anywhere
-    /// else shuts it. The first half did not hold: the release that opened the
-    /// menu counted as a click outside it — always, and then, once the menu's rect
-    /// was asked instead, whenever the click point had a fraction the menu's
-    /// corner, snapped to physical pixels, landed past. On a 2x screen that was
-    /// two clicks in three, so this clicks at fractions of a point, as a mouse does.
+    /// A right-click on a row opens the menu and keeps it open; a click elsewhere
+    /// shuts it. At 2x scale a fractional click position can snap, once rounded to
+    /// physical pixels, past the menu's rect corner, so this clicks at fractions of
+    /// a point, as a real mouse does.
     #[test]
     fn a_right_click_opens_the_context_menu_and_a_click_elsewhere_shuts_it() {
         let frame = |ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>| {
@@ -1210,9 +1203,7 @@ mod tests {
     /// itself on the size it measured the frame before, so the first frame after
     /// a dialog opens draws it somewhere it will not stay.
     fn settled(ctx: &egui::Context, app: &mut App, id: egui::Id) -> Rect {
-        // The first frames of a new dialog are drawn where the *previous* one
-        // sat, because a modal reuses the position it remembers until it has
-        // measured this content, so a couple of frames go by before comparing.
+        // Skip the frames where the modal still shows the previous dialog's position.
         let mut last = None;
         for _ in 0..3 {
             draw(ctx, app);
@@ -1229,8 +1220,8 @@ mod tests {
     }
 
     /// The ✕ in a dialog's title row, clicked. Every dialog is drawn by the same
-    /// frame, so About stands for all of them — and About is where the ✕ was
-    /// found to do nothing, because the body's answer overwrote it.
+    /// frame, so About stands for all of them; a body drawn after it can overwrite
+    /// what the ✕ does.
     #[test]
     fn the_close_control_closes_a_dialog() {
         let (ctx, mut app) = app_with(every_block());
@@ -1242,12 +1233,11 @@ mod tests {
         }
     }
 
-    /// The editor footer belongs to its own pane. A form row that overflowed
-    /// used to widen the `Ui` around it, and egui will not shrink a `Ui` back
-    /// below what it has already laid out — so Commit and Revert were laid out
-    /// against the wider rect and drawn *past* the pane, under its neighbour,
-    /// where the neighbour's background then painted over them. Every block
-    /// type, because only some of them have a form wide enough to do it.
+    /// The editor footer belongs to its own pane: a form row that overflows
+    /// widens the `Ui` around it, and egui never shrinks a `Ui` back below what
+    /// it has already laid out, so Commit and Revert would draw past the pane's
+    /// edge, under the neighbour's background. Every block type, since only some
+    /// have a form wide enough to overflow.
     #[test]
     fn the_editor_footer_stays_inside_its_pane() {
         let (ctx, mut app) = app_with(every_block());
@@ -1271,12 +1261,10 @@ mod tests {
         }
     }
 
-    /// Commands that cannot run in a test: the first six open a native file
-    /// dialog and would block until someone dismissed it, the rest reach for an
-    /// audio device or launch another program. Everything else in the table is
-    /// swept below, so a command added later is covered without being listed
-    /// here — and if it turns out to need a dialog, this is the list to add it
-    /// to.
+    /// Commands that cannot run headless: the first six open a native file dialog
+    /// and would block until dismissed; the rest reach for an audio device or
+    /// launch another program. Every other command is swept below without being
+    /// listed here; a new one that needs a dialog belongs in this list.
     const NOT_HEADLESS: &[&str] = &[
         "open",
         "insert-file",
@@ -1301,12 +1289,10 @@ mod tests {
         }
     }
 
-    /// Every command, run where the menu bar runs one: during the frame, after
-    /// the row caches have been rebuilt and before the panes are drawn. That is
-    /// the point a tape can be swapped out from under a cache that has already
-    /// been built for the old one, and until `Menu::fire_next_frame` there was
-    /// no way to reach it from a test at all — the list panic that this guards
-    /// against went out in a release because of it.
+    /// Every command, run where the menu bar runs it: during the frame, after the
+    /// row caches rebuild and before the panes draw. This is the point a tape can
+    /// be swapped out from under a cache already built for the old one;
+    /// `Menu::fire_next_frame` is what lets a test reach that point at all.
     #[test]
     fn every_command_survives_being_run_in_the_middle_of_a_frame() {
         for item in crate::menutable::flat() {

@@ -41,7 +41,7 @@ impl Scope {
 pub enum Then {
     NewTape(Side),
     Open(Side),
-    /// Check the extracted blocks, then extract (or ask again).
+    /// Check the extracted blocks, then extract if they are clean, otherwise confirm first.
     ExtractStart(Side),
     ExtractGo(Side),
     EmulatorGo(Side, Scope),
@@ -74,7 +74,7 @@ pub fn confirm_discard(app: &mut App, side: Side, then: Then) {
 
 // ---- timings -----------------------------------------------------------------
 
-/// "Set selection timings to current" copies all timings (not the pause) to the
+/// "Set selection timings to current" copies all timings, not the pause, to the
 /// selected data blocks.
 pub fn set_selection_timings(app: &mut App, side: Side) {
     let t = app.store.tape(side);

@@ -1,9 +1,8 @@
-//! Changing a block's type while keeping whatever fields carry over (the block
-//! editor's type menu). The port of `src/tzx/convert.ts`.
+//! Changing a block's type while keeping whatever fields carry over (the block editor's type menu).
 //!
-//! The TypeScript copies fields by name — "if the new type has `pause` and the
-//! old one had a number there, carry it". Here that becomes an explicit read
-//! and write per field, which is longer but says out loud what carries over.
+//! Port of `src/tzx/convert.ts`, which copies fields by name: if the new type has `pause` and the
+//! old one had a number there, it carries over. Here that is an explicit read and write per field
+//! instead, longer but explicit about what carries over.
 
 use crate::types::{create_body, Block, Body, PilotRun, RomTimings, SymDef};
 

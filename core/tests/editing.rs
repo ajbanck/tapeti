@@ -1,5 +1,5 @@
-//! Tests for the third group of stage 2: converting block types, comparing
-//! blocks and tapes, the bit operations and the POKEs block.
+//! Tests for converting block types, comparing blocks and tapes, the bit
+//! operations and the POKEs block.
 
 use tapeti_core::bits::{
     add_bits, drop_bits, flip_bytes, join_bits, shift_left_bits, shift_right_bits, total_bits, BitData,

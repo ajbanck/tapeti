@@ -1,6 +1,8 @@
 //! What a data block contains: a ROM header, a BASIC program, a screen, machine
-//! code, an array or plain data. The port of `src/tzx/content.ts`: it uses the
-//! preceding header when there is one, otherwise heuristics on the bytes.
+//! code, an array or plain data.
+//!
+//! The port of `src/tzx/content.ts`: it uses the preceding header when there is one,
+//! otherwise heuristics on the bytes.
 
 use crate::bits::{crypt_preset_for, decrypt_bytes};
 use crate::describe::{decode_header, HeaderInfo};
@@ -100,8 +102,8 @@ pub fn block_body(data: &[u8], skip_flag: bool, skip_checksum: bool) -> &[u8] {
     d
 }
 
-/// Does the byte stream look like a BASIC program area? Returns the fraction of
-/// bytes that parse as lines.
+/// Fraction of the byte stream that parses as BASIC program lines, as a measure of
+/// how much it looks like a BASIC program area.
 pub fn basic_score(d: &[u8]) -> f64 {
     let mut p = 0usize;
     let mut lines = 0u32;
@@ -145,7 +147,6 @@ fn data_of(b: &Block) -> Option<&[u8]> {
     }
 }
 
-/// Header-carrying block types: standard, turbo and generalized.
 fn may_hold_header(b: &Block) -> bool {
     matches!(b.body, Body::Standard { .. } | Body::Turbo { .. } | Body::Generalized { .. })
 }
@@ -158,7 +159,7 @@ pub fn detect_content(blocks: &[Block], index: usize) -> ContentInfo {
         return ContentInfo { kind: ContentKind::Empty, ..ContentInfo::default() };
     }
 
-    // ROM header block?
+    // This block may be a ROM header itself.
     if let Some(own) = decode_header(data) {
         if may_hold_header(b) {
             return ContentInfo {
@@ -215,8 +216,8 @@ pub fn detect_content(blocks: &[Block], index: usize) -> ContentInfo {
                     };
                 }
                 3 => {
-                    // A 6912-byte CODE block is a screen even when loaded elsewhere (loaders often
-                    // load it out of sight and copy it to 16384); view it at the screen address
+                    // A 6912-byte CODE block is a screen even when loaded elsewhere: loaders often
+                    // load it out of sight and copy it to 16384. View it at the screen address
                     // either way.
                     if looks_like_screen(usize::from(hdr.length)) {
                         let label = if hdr.param1 == 16384 {
@@ -308,8 +309,10 @@ pub fn crypt_preset_at(blocks: &[Block], index: usize) -> Option<(u8, u8)> {
 
 /// Block `index` as its loader stored it: the content guess, made on the
 /// decrypted bytes when the group around it names a loader that encrypts, and
-/// the values it used. This is what a data window opens with; `detect_content`
-/// stays the answer about the bytes as they lie on the tape.
+/// the values it used.
+///
+/// This is what a data window opens with; `detect_content` stays the answer about
+/// the bytes as they lie on the tape.
 pub fn detect_content_as_loaded(blocks: &[Block], index: usize) -> (ContentInfo, Option<(u8, u8)>) {
     let Some((xor, add)) = crypt_preset_at(blocks, index) else {
         return (detect_content(blocks, index), None);

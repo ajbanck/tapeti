@@ -69,8 +69,7 @@ impl Player {
         self.stream.is_some() && !self.shared.done.load(Ordering::Relaxed)
     }
 
-    /// Called once a frame: advances the block marker and notices the end of the
-    /// tape, the way the `requestAnimationFrame` tick does on the web.
+    /// Called once a frame; advances the block marker and notices the end of the tape.
     pub fn poll(&mut self) -> Progress {
         if self.stream.is_none() {
             return Progress::default();
@@ -157,7 +156,7 @@ fn build_stream(
 ) -> Result<cpal::Stream, CpalError> {
     let err = |e| eprintln!("audio: {e}");
     let cfg: cpal::StreamConfig = config.config();
-    // One mono buffer fanned out to every channel; `next` is the frame cursor
+    // One mono buffer fanned out to every channel; `at` is the frame cursor
     // the UI reads back as elapsed time.
     macro_rules! stream {
         ($t:ty, $conv:expr) => {{

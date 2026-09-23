@@ -1,7 +1,8 @@
 // Comparing blocks and tapes. The comparison is the Rust core in core/
-// (compare.rs); this module is the signature the store has always used.
+// (compare.rs); this module keeps the signature the store imports.
 //
-// The previous implementation lives on as test/reference/compare.ts.
+// test/reference/compare.ts is the frozen implementation the differential
+// tests compare this against.
 import { Block, BlockCompareMode, CompareResult, TapeCompareMode } from './types';
 import { blocksEqualCore, compareTapesCore, findMatchesCore } from './core';
 
@@ -21,7 +22,7 @@ export function compareTapes(
 
 /** Find all blocks in `haystack` matching `needle`. */
 export function findMatches(needle: Block, haystack: Block[], mode: BlockCompareMode): number[] {
-  // The core compares by index where the TypeScript compared object identity,
-  // so tell it where the needle sits in the haystack, if it is in there at all.
+  // The core compares by index, not object identity, so pass where `needle`
+  // sits in `haystack` (-1 if it is not there).
   return findMatchesCore(needle, haystack, mode, haystack.indexOf(needle));
 }

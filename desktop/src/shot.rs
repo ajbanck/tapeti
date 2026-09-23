@@ -1,18 +1,14 @@
 //! Headless screenshots: what the app would draw, as a PNG, with no window.
 //!
-//! `npm run smoke` drives the browser build through headless Chrome and leaves
-//! screenshots in `scratch/`. The desktop build had no equivalent — `app.rs`
-//! draws real frames in its tests, but nothing looks at the pixels, so "the row
-//! is not rendering properly" could only be answered by someone with the app on
-//! screen. This closes that: egui hands over tessellated triangles and its font
-//! atlas, and neither needs a GPU to become an image.
+//! `npm run smoke` screenshots the browser build through headless Chrome into
+//! `scratch/`; this is the desktop build's equivalent, rasterising egui's
+//! tessellated triangles and font atlas without a GPU.
 //!
 //! The rasteriser is the small half of what `egui_glow` does: one texture, no
-//! shaders, premultiplied `Color32` throughout (epaint's convention), and the
-//! blend egui asks for, `dst = src + dst·(1 − src.a)`. Colours are multiplied in
-//! gamma space rather than linear, which the real painter does not do, so a
-//! screenshot is a faithful picture of *layout and text* and approximate about
-//! the last few values of a blend.
+//! shaders, premultiplied `Color32` (epaint's convention), and the blend egui
+//! asks for, `dst = src + dst·(1 − src.a)`. Colours multiply in gamma space
+//! rather than linear, unlike the real painter, so a screenshot is faithful
+//! about *layout and text* but approximate in a blend's last few values.
 
 use std::collections::HashMap;
 
@@ -52,8 +48,7 @@ impl Canvas {
         );
     }
 
-    /// How many pixels differ from another canvas of the same size: what a test
-    /// asks when the question is whether something was drawn at all.
+    /// How many pixels differ from another canvas of the same size.
     #[cfg(test)]
     pub fn diff(&self, other: &Canvas) -> usize {
         self.pixels.iter().zip(&other.pixels).filter(|(a, b)| a != b).count()
@@ -245,10 +240,8 @@ mod tests {
     }
 
     /// The editor lays its thumbnail beside the fields, and egui clips what does
-    /// not fit without so much as a scrollbar — so in a narrow pane the preview
-    /// used to be half an image against the pane edge, or nothing at all. The row
-    /// wraps now, and this is the check that it still does at a width nobody
-    /// develops at.
+    /// not fit without a scrollbar. The row wraps to avoid that; this checks it
+    /// still does at a width nobody develops at.
     #[test]
     fn the_screen_preview_survives_a_narrow_pane() {
         for width in [1400.0, 1000.0, 820.0] {
@@ -264,9 +257,9 @@ mod tests {
         }
     }
 
-    /// A screenshot with something in it: not a blank canvas, and not one flat
-    /// colour either — which is what a broken font atlas or an empty mesh list
-    /// would produce, and what nobody would notice in a test that only draws.
+    /// A screenshot with something in it: not blank, and not one flat colour
+    /// either. A broken font atlas or an empty mesh list would produce exactly
+    /// that, and a test that only draws would not notice.
     #[test]
     fn draws_pixels_of_more_than_one_colour() {
         let ctx = egui::Context::default();

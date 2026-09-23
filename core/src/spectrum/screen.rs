@@ -28,7 +28,7 @@ pub const DEFAULT_ATTR: u8 = 0x38;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScreenOptions {
     pub hide_attributes: bool,
-    /// true = swap ink/paper for FLASH cells
+    /// True swaps ink and paper for cells with the FLASH attribute set.
     pub flash_phase: bool,
 }
 

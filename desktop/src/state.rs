@@ -1,14 +1,13 @@
 //! The application state, the port of `src/state/store.ts`.
 //!
-//! Preact signals become plain fields: egui redraws from this struct every
-//! frame, so there is nothing to subscribe to. Blocks stay immutable — an edit
-//! builds a new `Vec<Block>` — which is what makes the undo snapshot a cheap
-//! clone of a vector of `Rc`-free values whose payloads the compiler moves
-//! rather than copies.
+//! Preact signals become plain fields: egui redraws this struct every frame,
+//! so nothing needs to subscribe. Blocks stay immutable: an edit builds a new
+//! `Vec<Block>`, so an undo snapshot is a cheap clone of a vector of
+//! `Rc`-free values that the compiler moves rather than copies.
 //!
-//! `dirty` is identity in TypeScript (`snap.blocks !== t.saved`). Here every
-//! version of the blocks array carries a generation number, so undoing back to
-//! the saved version clears `dirty` exactly as it does on the web.
+//! `dirty` is identity in TypeScript (`snap.blocks !== t.saved`); here every
+//! version of the blocks array carries a generation number, so undoing back
+//! to the saved version clears `dirty` as it does on the web.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -37,10 +36,9 @@ fn next_gen() -> u64 {
     NEXT_GEN.fetch_add(1, Ordering::Relaxed)
 }
 
-/// What a block's row is tinted with after Compare tapes or Find match. The
-/// core's `CompareResult` has no `Match`: find-match is a different question
-/// asked of the same comparison, and the web store spells its answer the same
-/// way, as a third colour.
+/// What a block's row is tinted with after Compare tapes or Find match.
+/// `CompareResult` has no `Match`: find-match is a different question asked
+/// of the same comparison, answered as a third colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
     Diff,
@@ -131,16 +129,16 @@ impl TapeState {
         self.cursor_block().is_some()
     }
 
-    /// Record that the current blocks are what is on disk. A snapshot remembers
-    /// the tape's identity, so that emptying it and undoing that puts the whole
-    /// thing back; a save re-bases that identity over the history too, because
-    /// the file on disk is these blocks under this name. Undoing past a save is
-    /// dirty again, and does not take the name back with it.
     /// A tape that came from nowhere it could be saved back to: rescued after a crash.
     pub fn mark_unsaved(&mut self) {
         self.saved_gen = 0;
     }
 
+    /// Record that the current blocks are what is on disk. A snapshot remembers
+    /// the tape's identity, so that emptying it and undoing that puts the whole
+    /// thing back; a save re-bases that identity over the history too, because
+    /// the file on disk is these blocks under this name. Undoing past a save is
+    /// dirty again, and does not take the name back with it.
     pub fn mark_saved(&mut self) {
         self.saved_gen = self.gen;
         for snap in self.undo.iter_mut().chain(self.redo.iter_mut()) {
@@ -221,15 +219,14 @@ impl TapeState {
         };
     }
 
-    /// Start index -> end index of every group and loop, the map shape
-    /// `groupRanges` has on the TypeScript side.
+    /// Start index -> end index of every group and loop.
     pub fn ranges(&self) -> HashMap<usize, usize> {
         group_ranges(&self.blocks).into_iter().map(|(s, e)| (s as usize, e as usize)).collect()
     }
 
-    /// `unitIndices`: what acts as one unit for drag, delete and copy when
-    /// `index` is the grabbed block — the selection if the block is selected,
-    /// else the block itself, always expanded to whole collapsed groups.
+    /// What acts as one unit for drag, delete and copy when `index` is the
+    /// grabbed block: the selection if the block is selected, else the block
+    /// itself, always expanded to whole collapsed groups.
     pub fn unit_indices(&self, index: i32) -> Vec<usize> {
         let ranges = self.ranges();
         let mut set: HashSet<usize> = HashSet::new();
@@ -278,7 +275,7 @@ impl Edit {
     }
 }
 
-/// How a click changes the selection, the `setCursor` modes.
+/// How a click changes the selection.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SelectMode {
     Single,
@@ -358,7 +355,7 @@ impl Store {
         self.status_at = Some(Instant::now());
     }
 
-    /// The status line, cleared six seconds after it was set, as `setStatus` does.
+    /// The status line, cleared six seconds after it was set.
     pub fn status(&mut self) -> &str {
         if let Some(at) = self.status_at {
             if at.elapsed().as_secs_f32() > 6.0 {
@@ -716,11 +713,10 @@ impl Store {
 
     // ---- stepping through the play order --------------------------------------
 
-    /// Move the cursor to the block that plays after the one it is on, following
-    /// loops, jumps and calls as a player would: a way to see that a tape runs
-    /// in the order meant without playing it. Walking on from where the last
-    /// step landed keeps count of the loop passes; from anywhere else it starts
-    /// at that block's first turn.
+    /// Move the cursor to the block that plays next, following loops, jumps and
+    /// calls as a player would, without playing the tape. Continuing from where
+    /// the last step landed keeps the loop-pass count; starting anywhere else
+    /// begins at that block's first turn.
     pub fn step_next(&mut self, side: Side) {
         let t = &self.tapes[side];
         let carried = self.stepping[side].take().filter(|st| {
@@ -843,12 +839,6 @@ mod tests {
         assert_eq!(ids(&store, 0), vec![0x10]);
     }
 
-    /// The point of the generation counter: undoing back to the saved version
-    /// clears `dirty`, and redoing sets it again.
-    /// Deleting the last block leaves a pane with a file name on it and nothing
-    /// under it, which promises a tape that is not there and would save as an
-    /// empty file. It becomes a new tape instead — and undo brings the old one
-    /// back whole, name and all.
     #[test]
     fn emptying_a_tape_makes_it_a_new_one() {
         let mut store = store_with(&[0x10, 0x20]);
@@ -877,8 +867,6 @@ mod tests {
         assert!(!store.tape(0).dirty());
     }
 
-    /// A snapshot remembers what the tape was saved against, so saving has to
-    /// reach the ones already on the stack: undoing past a save is dirty again.
     #[test]
     fn undoing_past_a_save_is_dirty() {
         let mut store = store_with(&[0x10, 0x20]);

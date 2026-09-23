@@ -1,7 +1,8 @@
 // Changing a block's type while keeping whatever fields carry over (block editor
 // type menu). The field matrix is the Rust core in core/ (convert.rs).
 //
-// The previous implementation lives on as test/reference/convert.ts.
+// test/reference/convert.ts is the frozen implementation the differential
+// tests compare this against.
 import { Block, isUnknown } from './types';
 import { convertBlockCore } from './core';
 

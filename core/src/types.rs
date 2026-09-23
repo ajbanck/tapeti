@@ -2,14 +2,10 @@
 //!
 //! Where TypeScript puts `id` and `uid` on every block object, Rust splits the
 //! two: [`Block`] holds the `uid` the UI uses for selection and keys, and
-//! [`Body`] is the tagged union, with the block ID implied by the variant (and
-//! carried explicitly only by [`Body::Unknown`]). `isUnknown` therefore becomes
-//! a match, so the `UnknownBlock.id` narrowing trap from CLAUDE.md cannot
-//! happen here.
-//!
-//! Only the block model is ported in stage 0. `BLOCK_NAMES`, `CREATABLE_IDS`,
-//! the hardware tables and `createBlock` are UI-facing and come with the later
-//! stages.
+//! [`Body`] is the tagged union with the block ID implied by the variant,
+//! except [`Body::Unknown`], which carries it explicitly. Matching on `Body`
+//! avoids the TypeScript trap where narrowing on `UnknownBlock.id` does not
+//! exclude other IDs, because `id` there is typed as plain `number`.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -289,9 +285,8 @@ pub fn create_body(id: u8) -> Body {
     }
 }
 
-/// The spec's name for a block ID, as `BLOCK_NAMES` in `types.ts` lists them.
-/// Only the ones the descriptions need; the UI keeps the full table until it
-/// moves to Rust in stage 4.
+/// The spec's name for a block ID: the entries of `BLOCK_NAMES` in `types.ts` that the
+/// descriptions need. The UI reads its own copy.
 pub fn block_name(id: u8) -> Option<&'static str> {
     Some(match id {
         0x10 => "Standard speed data",
@@ -344,8 +339,8 @@ impl Block {
         self.body.id()
     }
 
-    /// Deep copy with a new uid, the port of `cloneBlock`. (`deepClone` has no
-    /// counterpart: `Clone` is the deep copy here.)
+    /// Deep copy with a new uid, the port of `cloneBlock`. `Clone` is the deep
+    /// copy here, so there is no `deepClone` counterpart.
     pub fn clone_fresh(&self) -> Self {
         Block::new(self.body.clone())
     }

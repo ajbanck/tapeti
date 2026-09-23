@@ -1,6 +1,7 @@
-//! The C ABI the wasm build exposes to JavaScript. No wasm-bindgen: the whole
-//! interface is a byte buffer in and a byte buffer out, so the module loads
-//! with a plain `WebAssembly.instantiate` and needs no generated glue.
+//! The C ABI the wasm build exposes to JavaScript.
+//!
+//! No wasm-bindgen: the whole interface is a byte buffer in and a byte buffer out, so
+//! the module loads with a plain `WebAssembly.instantiate` and needs no generated glue.
 //!
 //! JavaScript owns both buffers: it calls [`core_alloc`], writes the tape,
 //! calls [`core_parse_tape`], reads the `u32` payload length at the returned
@@ -213,7 +214,7 @@ pub unsafe extern "C" fn core_save_version(
 }
 
 /// Decode a block list from JavaScript, run `f` over it and lay the answer out
-/// the way [`respond`] does.
+/// the way `respond` does.
 unsafe fn with_blocks(ptr: *const u8, len: usize, f: impl Fn(&[Block]) -> Vec<u8>) -> *mut u8 {
     let input: &[u8] = if ptr.is_null() || len == 0 { &[] } else { std::slice::from_raw_parts(ptr, len) };
     let payload = match decode_blocks(input) {
@@ -312,7 +313,9 @@ pub unsafe extern "C" fn core_detect_content(ptr: *const u8, len: usize, index: 
 
 /// The same for a data window: the guess is made on the decrypted bytes when the
 /// group around the block names a loader that encrypts, and the answer says with
-/// which values. The whole tape goes over, since the group is what decides.
+/// which values.
+///
+/// The whole tape goes over, since the group is what decides.
 ///
 /// # Safety
 /// `ptr` must point at `len` bytes of wire-encoded block list.
@@ -469,9 +472,10 @@ pub unsafe extern "C" fn core_compare_tapes(
     })
 }
 
-/// Blocks of the payload matching its first block, which is the needle. `skip`
-/// is where the needle sits in the haystack, or `0xffff_ffff` when it is not in
-/// it; the haystack starts at the payload's second block.
+/// Blocks of the payload matching its first block, which is the needle.
+///
+/// `skip` is where the needle sits in the haystack, or `0xffff_ffff` when it is not
+/// in it; the haystack starts at the payload's second block.
 ///
 /// # Safety
 /// `ptr` must point at `len` bytes of wire-encoded block list.
@@ -602,9 +606,10 @@ fn tape_mode(id: u32) -> TapeCompareMode {
 // ---- the Spectrum side ----------------------------------------------------
 
 /// All 256 characters of one of the character tables: 0 with tokens expanded,
-/// 1 without, 2 the hex dump's single-cell version. The app builds the table
-/// once instead of asking per byte. Takes an unused buffer so every entry point
-/// has the same shape on the JavaScript side.
+/// 1 without, 2 the hex dump's single-cell version.
+///
+/// The app builds the table once instead of asking per byte. Takes an unused buffer
+/// so every entry point has the same shape on the JavaScript side.
 ///
 /// # Safety
 /// `ptr`/`len` are ignored.
@@ -760,7 +765,7 @@ unsafe fn disassembly(
     Ok(disassemble_with(&data, offset as usize, base, count as usize, opts, &symbols))
 }
 
-/// Disassemble `count` instructions; see [`disassembly`] for `flags`.
+/// Disassemble `count` instructions; see `disassembly` for `flags`.
 ///
 /// # Safety
 /// `ptr` must point at `len` readable bytes.
@@ -945,7 +950,7 @@ pub unsafe extern "C" fn core_decode_csw_rle(ptr: *const u8, len: usize) -> *mut
 }
 
 /// Decode a block list plus a playback order, run `f` over them and lay the
-/// answer out the way [`respond`] does.
+/// answer out the way `respond` does.
 unsafe fn with_order(ptr: *const u8, len: usize, f: impl Fn(&[Block], &[u32]) -> Vec<u8>) -> *mut u8 {
     let payload = match decode_blocks_and_order(slice(ptr, len)) {
         Ok((blocks, order)) => f(&blocks, &order),

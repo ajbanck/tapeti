@@ -39,9 +39,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const hasUsedBits = single && typeof (block as any).usedBits === 'number';
   // Samples (direct recording) and pulse lengths (CSW) have no flag or checksum to hide.
   const romBytes = single && block.id !== 0x15 && block.id !== 0x18;
-  // The group a block sits in can name the loader that wrote it, and a loader
-  // that encrypts leaves bytes nothing reads: the guess is then made on the
-  // decrypted data, and the window opens with Decrypt on and its values set.
+  // The group a block sits in can name the loader that wrote it. An encrypting loader's bytes
+  // are unreadable undecrypted, so the guess here is made on the decrypted data, and the window
+  // opens with Decrypt on and its values set.
   const loaded = useMemo(() => {
     const t = tapes[side].value;
     return detectContentAsLoaded(t.blocks, t.blocks.findIndex((b) => b.uid === block.uid));
@@ -59,23 +59,22 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   const [decrypt, setDecrypt] = useState(loaded.crypt !== null);
   const [cryptXor, setCryptXor] = useState(loaded.crypt?.xor ?? CRYPT_PRESETS[0].xor);
   const [cryptAdd, setCryptAdd] = useState(loaded.crypt?.add ?? CRYPT_PRESETS[0].add);
-  // Custom picked in the preset list: not derived from the values alone, which
-  // still match the preset they came from, so the list jumped back to it.
+  // Custom, picked in the preset list, is not derived from the values: values that still match
+  // a preset would otherwise snap the list back to it.
   const [cryptCustom, setCryptCustom] = useState(false);
   const [n, setN] = useState(1);
   const [dirty, setDirty] = useState(false);
-  // Set once the BASIC view has rewritten the program: where VARS now is in the
-  // block's body, which is what the header in front has to say on OK.
+  // Set once the BASIC view rewrites the program: the new VARS offset in the block's body,
+  // which OK writes into the header in front.
   const [newVars, setNewVars] = useState<number | null>(null);
   // This window's own Dec/Hex switch: the main window's says nothing about it,
   // and it starts at Dec every time a data window is opened.
   const [h, setH] = useState(false);
   const isLocked = locked.value;
   const modifiers = flip || reverse || hideFlag || hideCs || decrypt;
-  // Typing over a byte works through the modifiers: the index travels back
-  // (see setByte). Drop/Add/Shift and the last-byte mask change the length and
-  // the bit alignment of the raw stream, whose ends and bit order the modifiers
-  // have moved, so those stay off while any modifier is on.
+  // Typing over a byte works back through the modifiers (see setByte). Drop/Add/Shift and the
+  // last-byte mask act on the raw stream's length and bit alignment, whose ends and bit order
+  // the modifiers have already moved, so those stay off while any modifier is on.
   const editable = single && !isLocked;
   const structural = editable && !modifiers;
 
@@ -95,13 +94,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     setWork(fn(work));
     setDirty(true);
   };
-  /**
-   * Write back a byte the view shows. The view is the raw data with the
-   * modifiers applied, so index and value travel the other way: reverse mirrors
-   * the index, "hide flag byte" shifts it past byte 0 ("hide checksum byte"
-   * only shortens the end, so it does not move anything), decryption is undone
-   * by encrypting, and flip is its own inverse on the value.
-   */
+  // The view is the raw data with the modifiers applied, so index and value travel back: reverse
+  // mirrors the index, hiding the flag byte shifts it past byte 0 (hiding the checksum only
+  // shortens the end), decryption is undone by encrypting, and flip is its own inverse.
   const setByte = (i: number, v: number) => {
     const j = (reverse ? view.length - 1 - i : i) + (hideFlag && work.data.length > 0 ? 1 : 0);
     if (j < 0 || j >= work.data.length) return;
@@ -112,12 +107,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     setDirty(true);
   };
 
-  /**
-   * Reversed, a screen reads from its last byte down, so the base address is the
-   * end of screen memory rather than the start. Put the old base back when the
-   * tick comes off, or the picture sits above screen memory and the view goes
-   * blank — but leave a base the user has set since alone.
-   */
+  // Reversed, a screen reads from its last byte down, so the base is the end of screen memory
+  // rather than the start. Toggling reverse off puts the old base back, or the picture sits above
+  // screen memory and the view goes blank; a base the user has set since is left alone.
   const toggleReverse = (on: boolean) => {
     setReverse(on);
     if (viewAs !== 'screen') return;
@@ -130,12 +122,9 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     }
   };
 
-  /**
-   * The BASIC view's Apply: the program between two offsets of the view becomes
-   * `program`. Flip and reverse are off (the view says so), so the view is the
-   * raw data but for a hidden flag and checksum, and a block that has a checksum
-   * gets it worked out again.
-   */
+  // The BASIC view's Apply: replaces the program between two offsets of the view with `program`.
+  // Called only with flip, reverse and decrypt off, so the view is the raw data but for a hidden
+  // flag and checksum; a block with a checksum gets it worked out again.
   const applyProgram = (from: number, to: number, program: Uint8Array) => {
     const head = hideFlag && work.data.length > 0 ? 1 : 0;
     const raw = work.data;
@@ -436,7 +425,7 @@ function Dump({ data, startAddr, editable, setByte, h }: { data: Uint8Array; sta
 
 // ---- Screen -------------------------------------------------------------------
 
-/** Screen bytes (0..6912) that the block supplies when the screen starts at `offset` in `data`. */
+// Screen bytes (0..6912) that the block supplies when the screen starts at `offset` in `data`.
 function screenOverlap(len: number, offset: number): number {
   return Math.max(0, Math.min(len, offset + SCREEN_SIZE) - Math.max(0, offset));
 }
@@ -487,7 +476,7 @@ function Screen({ data, offset: atBase }: { data: Uint8Array; offset: number }) 
 
 function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
   data: Uint8Array; startAddr: number; progLen: number | null; vars: boolean; h: boolean; fileStem: string;
-  /** Replace the view's bytes between two offsets with a program; null when the block cannot be edited here. */
+  // Replace the view's bytes between two offsets with a program; null when the block cannot be edited here.
   apply: ((from: number, to: number, program: Uint8Array) => void) | null;
 }) {
   const [prog, setProg] = useState(startAddr);
@@ -536,7 +525,7 @@ function Basic({ data, startAddr, progLen, vars, h, fileStem, apply }: {
     setErrors([]);
     setSource(null);
   };
-  /** Put the caret on a line of the text, which is where a mistake is. */
+  // Put the caret on a line of the text, which is where a mistake is.
   const goTo = (line: number) => {
     const el = area.current;
     if (!el || line < 1) return;
@@ -644,16 +633,9 @@ function TextView({ data }: { data: Uint8Array }) {
 
 // ---- Header --------------------------------------------------------------------
 
-/**
- * The 17 bytes of a standard ROM header, in the fields they stand for, so a
- * header opens on something better than its own hex dump. The same form as the
- * block editor's: this is the data window's copy of it, and it writes the same
- * re-encoded 19 bytes back, checksum and all.
- *
- * It reads the block's own bytes rather than the modified view: a header is the
- * flag, 17 bytes and the checksum, and "hide flag byte" is on by default for
- * exactly this content.
- */
+// The 17 bytes of a standard ROM header, in the fields they stand for, matching the block
+// editor's form and writing back the same re-encoded 19 bytes, checksum and all. It reads
+// the block's own bytes rather than the view, since "hide flag byte" defaults on for a header.
 function HeaderView({ data, h, editable, onChange }: { data: Uint8Array; h: boolean; editable: boolean; onChange: (d: Uint8Array) => void }) {
   const hdr = useMemo(() => decodeHeader(data), [data]);
   if (!hdr) {

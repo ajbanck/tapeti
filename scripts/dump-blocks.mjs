@@ -1,13 +1,12 @@
-// Prints the canonical block dump of a tape, as read by the TypeScript parser
-// that the Rust core replaced (test/reference/parser.ts, frozen). The Rust core
-// prints the same format (core/src/dump.rs), so these dumps are the fixtures of
-// a differential test between two independent implementations:
+// Prints the canonical block dump of a tape, using `test/reference/parser.ts`,
+// the frozen implementation the differential tests compare the core's parser
+// against; `core/src/dump.rs` prints the same format:
 //
 //   node scripts/dump-blocks.mjs public/samples/*.tzx public/samples/*.tap
 //
-// writes core/tests/fixtures/<name>.dump for each tape, which `cargo test` in
-// core/ compares the Rust parser against. The reference parser is frozen, so
-// these only need regenerating when a tape is added or the dump format changes.
+// Writes core/tests/fixtures/<name>.dump for each tape, which `cargo test` in
+// core/ diffs against dump.rs. Regenerate only when a tape is added or the
+// dump format changes.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'vite';

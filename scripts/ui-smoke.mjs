@@ -56,7 +56,6 @@ expect(hideChecks.length === 2 && !hideChecks.some(Boolean), "a direct recording
 await page.keyboard.press('Escape');
 await wait(150);
 
-// content detection + data window default view
 await right[6].click();
 await wait(150);
 expect((await page.$eval('.pane:last-child .row.cursor .kind', (e) => e.textContent)) === 'SCREEN?', 'screen block detected');
@@ -92,7 +91,6 @@ await page.keyboard.press('Escape');
 await wait(150);
 expect(!(await page.$('.datawin')), 'Escape closes the data window');
 
-// a header block opens on the view that reads it out
 const leftH = await page.$$('.pane:first-child .blocklist .row');
 await leftH[1].click();
 await page.keyboard.press('Enter');
@@ -141,7 +139,6 @@ await page.keyboard.press('Escape');
 await page.mouse.click(5, 5);
 await wait(150);
 
-// delete via menu, undo via menu
 const left = await page.$$('.pane:first-child .blocklist .row');
 await left[3].click();
 await clickMenu('Edit', 'Delete');
@@ -149,14 +146,14 @@ expect((await rows('first-child')) === 18, 'menu Delete removes a block');
 await clickMenu('Edit', 'Undo');
 expect((await rows('first-child')) === 19, 'menu Undo restores it');
 
-// hex edit + commit + undo (block 3 is BASIC, so the window opens on the BASIC tab)
+// hex edit + commit + undo (block 2 is BASIC)
 const left2 = await page.$$('.pane:first-child .blocklist .row');
 await left2[2].click();
 await page.keyboard.press('Enter');
 await page.waitForSelector('.datawin');
 expect((await page.$eval('.datawin .tab.active', (e) => e.textContent)) === 'BASIC', 'BASIC block opens on BASIC tab');
 
-// editing the program as text, with the syntax check that is on by default
+// editing the program as text
 const button = async (label) => page.evaluateHandle((l) => [...document.querySelectorAll('.datawin button')].find((x) => x.textContent.trim() === l), label);
 await (await button('Edit')).click();
 await page.waitForSelector('.datawin .basic-source');
@@ -236,7 +233,6 @@ await page.keyboard.down('Meta'); await page.keyboard.press('z'); await page.key
 await wait(200);
 expect((await rows('last-child')) === 19 && (await page.$eval('.pane:last-child .fname', (e) => e.textContent)) === 'demo.tzx', 'undo brings the tape and its name back');
 
-// dark theme render
 await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
 await wait(150);
 await page.screenshot({ path: `${OUT}/03-dark.png` });

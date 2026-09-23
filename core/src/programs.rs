@@ -5,8 +5,7 @@ use crate::describe::{decode_header, HeaderInfo};
 use crate::types::{Block, Body};
 use std::collections::HashMap;
 
-/// Pairs of start/end indices for groups and loops (nested ones included), in
-/// the order they close, which is the order the TypeScript `Map` keeps.
+/// Pairs of start/end indices for groups and loops (nested ones included), in the order they close.
 pub fn group_ranges(blocks: &[Block]) -> Vec<(u32, u32)> {
     let mut ranges: Vec<(u32, u32)> = Vec::new();
     let mut stack: Vec<(u8, usize)> = Vec::new();
@@ -101,13 +100,13 @@ pub fn tape_title(blocks: &[Block]) -> Option<String> {
     None
 }
 
-/// Split a tape into programs. A program starts at every BASIC Program header (the loader of a
-/// game), at every top-level group that contains one (grouped collections keep their names),
-/// and at every Select block target. Anything else, including headerless custom loaders and
-/// "stop the tape" blocks between the parts of a multi-load game, stays with the program it
-/// follows. Metadata right before a boundary (text, tones, loader loops) belongs to the program
-/// it introduces. A tape without any boundary is one program named after its archive info.
-/// The result always covers every block.
+/// Split a tape into programs.
+///
+/// A program starts at a BASIC Program header, at a top-level group containing one (keeping the
+/// group's name), or at a Select block's target. Anything else, including headerless loaders and
+/// stop blocks between the parts of a multi-load game, stays with the program before it. Metadata
+/// right before a boundary (text, tones, loader loops) belongs to the program it introduces. A tape
+/// with no boundary is one program named from its archive info; the result always covers every block.
 pub fn detect_programs(blocks: &[Block]) -> Vec<Program> {
     let n = blocks.len();
     if n == 0 {

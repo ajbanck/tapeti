@@ -1,7 +1,7 @@
 //! POKEs text syntax <-> the standardized 'POKEs' custom info block, the port
 //! of `src/tzx/pokes.ts`.
 //!
-//!   Each POKE on its own line:  [POKE] [page:]adr,val[/orgval]
+//!   Each POKE on its own line:  `[POKE] [page:]adr,val[/orgval]`
 //!   'val' may be '?' meaning "ask the user".
 //!   Lines starting with ';' are trainer descriptions; the first ';' lines before any
 //!   trainer form the general description.
@@ -12,8 +12,10 @@
 use crate::bytes::{latin1_to_string, string_to_latin1, ReadResult, Reader, Writer};
 
 /// The numbers are as wide as the text can spell them, not as wide as the block
-/// stores them: the editor round-trips text through here, and truncating early
-/// would silently rewrite what the user typed. Writing truncates instead.
+/// stores them.
+///
+/// The editor round-trips text through here, and truncating early would silently
+/// rewrite what the user typed. Writing truncates instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Poke {
     pub page: Option<u32>,
@@ -44,7 +46,6 @@ fn lf_to_cr(s: &str) -> String {
     s.replace('\n', "\r")
 }
 
-/// A block that runs out of bytes fails the way the TypeScript reader did.
 pub fn decode_pokes(data: &[u8]) -> ReadResult<PokesInfo> {
     let mut r = Reader::new(data);
     let dl = r.u8()? as usize;
@@ -138,14 +139,13 @@ pub fn pokes_to_text(info: &PokesInfo, hex: bool) -> String {
     lines.join("\n")
 }
 
-/// The characters a number may be written with, as the TypeScript's
-/// `[0-9a-fx$#]` with the case-insensitive flag.
+/// The characters a number may be written with: hex digits, `x`, `$` and `#`, case-insensitive.
 fn is_number_char(c: char) -> bool {
     c.is_ascii_digit() || matches!(c.to_ascii_lowercase(), 'a'..='f' | 'x') || c == '$' || c == '#'
 }
 
-/// JavaScript's `parseInt`: the longest prefix that is a number in this radix,
-/// and nothing at all if there is no such prefix.
+/// The longest prefix of `s` that is a number in this radix; trailing junk is ignored rather
+/// than rejected, and the result is `None` only when there is no such prefix at all.
 fn parse_int_prefix(s: &str, radix: u32) -> Option<u32> {
     let body = if radix == 16 {
         let lower = s.to_ascii_lowercase();

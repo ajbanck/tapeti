@@ -1,7 +1,8 @@
 // Bit-stream helpers for the data window's Drop / Add / Shift operations. The
 // operations are the Rust core in core/ (bits.rs).
 //
-// The previous implementation lives on as test/reference/bits.ts.
+// test/reference/bits.ts is the frozen implementation the differential tests
+// compare this against.
 import { BitData } from './types';
 import { bitsCore, cryptCore, flipBytesCore } from './core';
 
@@ -35,7 +36,7 @@ export function shiftRightBits(d: BitData, n: number): BitData {
   return bitsCore('shiftRight', [d], n);
 }
 
-/** Concatenate several bit streams (used by "view selected as one"). */
+/** Concatenates several bit streams. Used by "view selected as one". */
 export function joinBits(parts: BitData[]): BitData {
   return bitsCore('join', parts);
 }

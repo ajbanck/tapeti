@@ -1,26 +1,15 @@
-//! The one thing macOS asks of a document app that eframe does not surface:
-//! `application:openURLs:`.
+//! macOS glue eframe does not provide: Finder document opens, and a drag-drop position.
 //!
-//! Double-clicking a tape in the Finder does not put a path in `argv`. Launch
-//! Services sends the application a `kAEOpenDocuments` Apple Event, which AppKit
-//! turns into `application:openURLs:` on the application delegate — at launch,
-//! and again every time afterwards. winit registers that delegate itself
-//! (`WinitApplicationDelegate`) and implements only the two lifecycle methods it
-//! needs, so the message goes nowhere and the double-click does nothing.
-//!
-//! So this module adds the method to whatever class winit registered, from an
-//! observer of `NSApplicationWillFinishLaunchingNotification` — the last moment
-//! before AppKit delivers the launch event, and the first at which the delegate
-//! exists. `NSApplication` caches which selectors its delegate answers, so the
-//! delegate is set again afterwards to make it look anew.
-//!
-//! Paths land in a queue rather than in the store, because they arrive on
-//! AppKit's thread while a frame may be running; `App::frame` drains it, the way
-//! the Tauri shell had the front end drain its `take_pending_files`.
-//!
-//! The second thing is where a file dragged in from the Finder is let go
-//! (`pointer_at_drop`): winit reports the drop but not its position, and AppKit
-//! sends the window no mouse moves while a drag is over it.
+//! Double-clicking a tape does not put a path in `argv`. Launch Services sends a
+//! `kAEOpenDocuments` Apple Event, which AppKit turns into `application:openURLs:` on the app
+//! delegate, at launch and again on every later open. winit's own delegate implements only its
+//! two lifecycle methods, so the message goes nowhere: `install` adds the method from an
+//! `NSApplicationWillFinishLaunchingNotification` observer, the first moment the delegate exists
+//! and the last before AppKit delivers the launch open, and resets the delegate afterward
+//! because `NSApplication` caches which selectors it answers.
+//! Opened paths queue in `PENDING` rather than the store because they can arrive on AppKit's
+//! thread mid-frame; `App::frame` drains it. `pointer_at_drop` supplies the drop position winit
+//! does not report.
 
 use std::ffi::CStr;
 use std::path::PathBuf;
@@ -136,11 +125,11 @@ pub fn install() {
     std::mem::forget(observer);
 }
 
-/// Where the pointer is in the window, in points, and whether Shift is down —
-/// asked of AppKit, because egui's idea of both is from before the drag began.
-/// A drop carries no position (winit's `DroppedFile` is a path alone) and AppKit
-/// sends no mouse moves during a drag session, so egui's pointer is wherever it
-/// was last seen — outside the window, as often as not, where the Finder is.
+/// Where the pointer is in the window, in points, and whether Shift is down.
+///
+/// Asked of AppKit rather than egui: winit's `DroppedFile` carries no position, and AppKit sends
+/// no mouse moves during a drag, so egui's last-known pointer is often stale, outside the window
+/// where the Finder was.
 pub fn pointer_at_drop(ctx: &egui::Context) -> (Option<egui::Pos2>, bool) {
     let inner = ctx.input(|i| i.viewport().inner_rect);
     let (mouse, flags, primary) = unsafe {
@@ -157,9 +146,8 @@ pub fn pointer_at_drop(ctx: &egui::Context) -> (Option<egui::Pos2>, bool) {
     (at, flags & SHIFT != 0)
 }
 
-/// A point in AppKit's screen space — points up from the bottom of the primary
-/// screen — in a window whose top left sits at `window` in winit's, which counts
-/// down from the top of that same screen.
+/// Converts an AppKit screen point, counted up from the bottom of the primary screen, to a point
+/// in a window whose top left is at `window`, counted down from the top of that same screen.
 fn window_point(screen: NSPoint, primary_height: f64, window: egui::Pos2) -> egui::Pos2 {
     egui::pos2(screen.x as f32 - window.x, (primary_height - screen.y) as f32 - window.y)
 }
@@ -168,9 +156,9 @@ fn window_point(screen: NSPoint, primary_height: f64, window: egui::Pos2) -> egu
 mod tests {
     use super::*;
 
-    /// The handler AppKit calls, called directly: the URLs it is handed and the
-    /// queue they land in are the part of this that a test can reach without a
-    /// window and a double-click. One test, because the queue is process-wide.
+    /// Calls the handler directly: the URLs it is handed and the queue they land in are what a
+    /// test can reach without a window or double-click. One test, since `PENDING` is a shared,
+    /// process-wide static.
     #[test]
     fn open_urls_queues_the_paths_it_is_given() {
         let urls = NSArray::from_retained_slice(&[
@@ -187,9 +175,9 @@ mod tests {
         assert!(take_pending().is_empty(), "an empty event leaves nothing behind");
     }
 
-    /// Every AppKit message the drop asks, sent for real: objc2 checks each reply
-    /// against the type it is read as, so a wrong signature fails here rather
-    /// than in the app. With no window there is nowhere to place the pointer.
+    /// objc2 checks each `msg_send!` reply against the type it is read as, so a wrong AppKit
+    /// signature fails here rather than in the app. With no window, there is nowhere to place
+    /// the pointer.
     #[test]
     fn asking_appkit_where_the_pointer_is_answers_without_a_window() {
         let (at, _shift) = pointer_at_drop(&egui::Context::default());

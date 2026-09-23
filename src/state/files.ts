@@ -16,9 +16,9 @@ export function newTape(side: Side) {
 
 export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtCursor = false) {
   const format = snapshotKind(name);
-  // Inserting something that is no tape: it goes in as a data block, once the
-  // dialog has said where it loads. (Opening still reads anything as a TAP,
-  // which is what a tape with an odd extension needs.)
+  // Inserting something that is no tape goes in as a data block, once the
+  // dialog has said where it loads. Opening still reads anything as a TAP,
+  // which is what a tape with an odd extension needs.
   if (insertAtCursor && !format && !isTzx(bytes) && !/\.tap$/i.test(name)) {
     dialog.value = { kind: 'datafile', side, name, bytes };
     return;
@@ -43,7 +43,7 @@ export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtC
 /** The most a standard block's payload can be: its 16 bit length counts flag and checksum too. */
 export const MAX_FILE_BYTES = 0xffff - 2;
 
-/** The ten characters a header has for a name, from a file's: its stem, in ASCII. `header_name` in the core. */
+/** A header's ten-character name made from a file name: the stem, printable ASCII only. `header_name` in the core. */
 export function headerName(file: string): string {
   const base = file.split(/[\\/]/).pop() ?? file;
   const stem = base.includes('.') ? base.slice(0, base.lastIndexOf('.')) : base;

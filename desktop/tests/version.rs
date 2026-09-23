@@ -1,11 +1,10 @@
-//! One version number across the repo, and this crate's is it.
+//! One version number across the repo: this crate's `CARGO_PKG_VERSION`.
 //!
-//! `CARGO_PKG_VERSION` is what the app reports — the About dialog, the macOS
-//! About panel, the first line of a crash log — and since stage 6 it is also what
-//! `scripts/build-desktop.mjs` names a dmg, an msi and an AppImage after. The two
-//! other places a version is written down are not read by anything that ships, so
-//! nothing would notice them drifting except a person reading a file and believing
-//! it. This notices.
+//! `CARGO_PKG_VERSION` is what ships: the About dialog, the macOS About panel, the
+//! first line of a crash log, and what `scripts/build-desktop.mjs` names a dmg, an
+//! msi and an AppImage after. `core/Cargo.toml` and `package.json` carry the same
+//! number, but nothing that ships reads them, so only this test catches them
+//! drifting.
 
 const APP: &str = env!("CARGO_PKG_VERSION");
 
@@ -35,8 +34,8 @@ fn the_core_is_on_the_same_version() {
 
 #[test]
 fn package_json_is_on_the_same_version() {
-    // `"version": "0.3.3",` — the only key spelled that way at one indent level in
-    // a file this small, and npm writes it in exactly this shape.
+    // Matches the `"version": "…",` line, the only key npm writes in exactly that shape
+    // at one indent level in a file this small.
     let json = repo("package.json");
     let found = json
         .lines()

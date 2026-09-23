@@ -1,17 +1,12 @@
 //! The icon set, the port of `src/ui/icons.tsx`.
 //!
-//! The web app draws these as inline SVG "so the app has no icon-font
-//! dependency"; the native shell had been drawing them as emoji, which is the
-//! same dependency by another name — on a font, and on every platform shipping
-//! the same glyph for 💾. Here they are geometry: the same 24×24 stroke paths,
-//! transcribed into polylines, circles and arcs, painted by egui.
+//! Icons are geometry: the same 24×24 stroke paths as the web SVGs, transcribed into
+//! polylines, circles and arcs and painted by egui, so the app needs no icon font and no
+//! platform can be missing a glyph.
 //!
-//! It also unpins the font set: nothing outside the macOS shortcut labels needs
-//! a glyph above the Latin block any more. That turned out to be worth about a
-//! millisecond rather than the tens the cold-start question was after — the
-//! measurement is in `--measure` —
-//! so the reason to have done this is the icons themselves: one shape per
-//! meaning, the same on every platform, at any size.
+//! Nothing outside the macOS shortcut labels then needs a glyph above the Latin block, so
+//! the emoji fonts could go (`theme::latin_only_fonts`); that saves about a millisecond and
+//! is not a cold-start lever.
 
 use egui::{pos2, vec2, Color32, Pos2, Rect, Response, Sense, Shape, Stroke, Ui};
 
@@ -121,9 +116,8 @@ pub const UNLOCK: Icon = Icon(&[
     Arc { c: (12.0, 8.0), r: 4.0, from: 180.0, to: 320.0 },
 ]);
 
-/// The tick a menu puts in front of an option that is on. The web app draws it
-/// with a `✓` in CSS; here it is geometry, because the font set the app ships
-/// has no glyph for it and egui would draw a square instead.
+/// The tick a menu puts in front of an option that is on, drawn as geometry: the app's
+/// font set has no glyph for it and egui would draw a square instead.
 pub const CHECK: Icon = Icon(&[Line(&[(5.0, 12.5), (10.0, 17.5), (19.0, 6.5)])]);
 
 pub const X: Icon = Icon(&[Line(&[(6.0, 6.0), (18.0, 18.0)]), Line(&[(18.0, 6.0), (6.0, 18.0)])]);
@@ -170,7 +164,7 @@ pub const CARET_DOWN: Icon = Icon(&[Fill(&[(6.0, 9.0), (18.0, 9.0), (12.0, 17.0)
 /// The unsaved-changes dot in a pane's title.
 pub const DOT: Icon = Icon(&[Dot { c: (12.0, 12.0), r: 4.0 }]);
 
-/// The wordmark's cassette, `PATHS.cassette` in `src/ui/icons.tsx`.
+/// The wordmark's cassette.
 pub const CASSETTE: Icon = Icon(&[
     Closed(&[(2.0, 6.0), (22.0, 6.0), (22.0, 18.0), (2.0, 18.0)]),
     Circle { c: (8.0, 12.0), r: 2.0 },
@@ -178,10 +172,7 @@ pub const CASSETTE: Icon = Icon(&[
     Line(&[(8.0, 18.0), (9.0, 15.0), (15.0, 15.0), (16.0, 18.0)]),
 ]);
 
-/// The − and ↑ of the editor's list rows. The web writes them as characters;
-/// here they are paths, because egui's font set has no U+2191 and a missing
-/// glyph is a hollow box on the one platform that lacks it.
-/// An arrow leaving a box: open this somewhere else, which is the emulator.
+/// An arrow leaving a box: open in the emulator.
 pub const LAUNCH: Icon = Icon(&[
     Line(&[(14.0, 4.0), (20.0, 4.0), (20.0, 10.0)]),
     Line(&[(20.0, 4.0), (11.0, 13.0)]),
@@ -201,6 +192,8 @@ pub const LAUNCH: Icon = Icon(&[
 pub const MORE: Icon =
     Icon(&[Dot { c: (5.0, 12.0), r: 1.8 }, Dot { c: (12.0, 12.0), r: 1.8 }, Dot { c: (19.0, 12.0), r: 1.8 }]);
 
+/// The editor's list-row − and ↑. Paths, not characters: egui's font set has no glyph for
+/// U+2191, which shows as a hollow box on the platform that lacks it.
 pub const MINUS: Icon = Icon(&[Line(&[(6.0, 12.0), (18.0, 12.0)])]);
 pub const ARROW_UP: Icon =
     Icon(&[Line(&[(12.0, 19.0), (12.0, 5.0)]), Line(&[(6.0, 11.0), (12.0, 5.0), (18.0, 11.0)])]);
@@ -249,15 +242,14 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: &Icon, colour: Color32) 
     }
 }
 
-/// A toolbar button: the icon, a hover background, and the tooltip the web
-/// button carries as its `title`. A disabled one is dimmed and cannot be
-/// clicked, but still says what it would have done.
+/// A toolbar button: the icon, a hover background, and a tooltip. A disabled one is
+/// dimmed and cannot be clicked, but still says what it would have done.
 pub fn button(ui: &mut Ui, icon: &Icon, hover: &str, enabled: bool) -> Response {
     button_with_id(ui, ui.next_auto_id(), icon, hover, enabled)
 }
 
-/// The same button under an id of its own, so something that is not a pointer —
-/// a headless test — can find it and click it.
+/// The same button under its own id, so a headless test, not a pointer, can find and
+/// click it.
 pub fn button_with_id(ui: &mut Ui, id: egui::Id, icon: &Icon, hover: &str, enabled: bool) -> Response {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let rect = ui.allocate_exact_size(vec2(24.0, 20.0), Sense::hover()).0;

@@ -1,7 +1,7 @@
 // Platform adapter: the only place that knows how files get in and out of the app.
-// This build is the browser one — <input type=file> and blob downloads. The desktop
-// app is `desktop/` (Rust), which has its own file layer in `desktop/src/files.rs`;
-// the adapter is kept because the rest of the UI is written against it.
+// This build is the browser one: <input type=file> and blob downloads. The desktop
+// app is `desktop/` (Rust), with its own file layer in `desktop/src/files.rs`; the
+// UI is written against this interface.
 
 export interface OpenedFile {
   name: string;

@@ -60,7 +60,7 @@ fn read_sym_defs(r: &mut Reader, count: usize, max_pulses: u8) -> ReadResult<Vec
         for _ in 0..max_pulses {
             pulses.push(r.u16()?);
         }
-        // trim trailing zero pulses
+        // TZX pads a symbol definition with zero pulses up to `max_pulses`; drop the padding.
         while pulses.last() == Some(&0) {
             pulses.pop();
         }

@@ -1,9 +1,9 @@
 //! Getting tapes in and out of the store: the port of `src/state/files.ts`, with
 //! `rfd` where the web build has `src/platform/`.
 //!
-//! There is no platform adapter here. The web app needs one because a browser
-//! download and a native save dialog have nothing in common; a native binary has
-//! only the second, so the boundary the adapter existed to hide is gone.
+//! There is no platform adapter here: the web app needs one because a browser
+//! download and a native save dialog share nothing, but a native binary only
+//! has the second.
 
 use std::path::{Path, PathBuf};
 
@@ -49,9 +49,9 @@ pub fn load_bytes(
     insert_at_cursor: bool,
     path: Option<PathBuf>,
 ) {
-    // Inserting something that is no tape: it goes in as a data block, once the
-    // dialog has said where it loads. (Opening still reads anything as a TAP,
-    // which is what a tape with an odd extension needs.)
+    // Something that is not a tape goes in as a data block once the dialog says
+    // where it loads. Opening still reads anything as a TAP, which is what a
+    // tape with an odd extension needs.
     let is_tap = name.rsplit('.').next().is_some_and(|e| e.eq_ignore_ascii_case("tap"));
     if insert_at_cursor && !is_tzx(bytes) && !is_tap && SnapshotKind::from_name(name).is_none() {
         store.dialog = Some(crate::dialogs::Dialog::data_file(side, name, bytes.to_vec()));
@@ -186,9 +186,9 @@ pub fn open_with(store: &mut Store, paths: &[PathBuf]) {
     }
 }
 
-/// Tapes the panic hook wrote out last time go back into their panes, unsaved as
-/// they were, and the files go. A pane that already has a tape in it (one named
-/// on the command line) keeps it, and the rescued file stays where it is.
+/// Tapes the panic hook wrote out last time return to their panes, still marked
+/// unsaved, and the rescued files are then deleted. A pane that already has a
+/// tape from the command line keeps it, and its rescued file stays where it is.
 pub fn restore_rescued(store: &mut Store) {
     if let Some(dir) = crate::settings::config_dir() {
         restore_rescued_from(store, &dir);
@@ -236,10 +236,10 @@ pub fn restore_rescued_from(store: &mut Store, dir: &Path) {
     }
 }
 
-/// Write `bytes` over the file at `path` so that a failure — a full disk —
-/// leaves the old file whole: to a temporary beside it first, then renamed over
-/// it. With `backup` the old file is kept as `name.tzx.bak`, which is then
-/// always the version before the last save.
+/// Writes `bytes` to `path` via a temporary file and rename, so a failure such
+/// as a full disk leaves the old file whole. With `backup` true, the file's
+/// previous contents are kept as `name.tzx.bak`, which is then always the
+/// version before the last save.
 fn write_in_place(path: &Path, bytes: &[u8], backup: bool) -> std::io::Result<()> {
     let beside = |suffix: &str| {
         let mut name = path.file_name().unwrap_or_default().to_os_string();
@@ -255,7 +255,7 @@ fn write_in_place(path: &Path, bytes: &[u8], backup: bool) -> std::io::Result<()
     })
 }
 
-/// Pick one arbitrary file (the data window's Append / Replace from file).
+/// Pick one arbitrary file, for the data window's Append / Replace from file.
 pub fn pick_any_file() -> Option<(String, Vec<u8>)> {
     let path = rfd::FileDialog::new().add_filter("All files", &["*"]).pick_file()?;
     std::fs::read(&path).ok().map(|b| (file_name(&path), b))
@@ -390,8 +390,8 @@ pub mod tests {
         assert_eq!(t.blocks.iter().map(|b| b.body.data().unwrap().len()).collect::<Vec<_>>(), [19, 6914]);
         assert!(t.dirty());
 
-        // A TAP by name and a TZX by signature are still tapes, and opening (not
-        // inserting) reads anything as one, as it always did.
+        // A `.tap` name skips the dialog when inserting; opening (insert_at_cursor
+        // false) reads anything as a TAP regardless of extension.
         load_bytes(&mut store, 0, "x.tap", &[2, 0, 0xff, 0xff], true, None);
         assert!(store.dialog.is_none());
         load_bytes(&mut store, 1, "odd.bin", &[2, 0, 0xff, 0xff], false, None);
@@ -419,9 +419,8 @@ pub mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The checksums are of the file: read at load, kept through edits (the note in
-    /// tape info says they no longer describe the pane), gone with an emptied tape
-    /// and back on undo, and after a save those of what was written.
+    /// Checksums are of the file's bytes as read or last saved, never of the
+    /// pane's edits; tape info's own note says so.
     #[test]
     fn the_checksums_follow_the_file() {
         use tapeti_core::hash::file_hashes;

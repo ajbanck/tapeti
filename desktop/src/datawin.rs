@@ -72,8 +72,8 @@ pub struct DataWin {
     decrypt: bool,
     crypt_xor: i64,
     crypt_add: i64,
-    /// Custom picked in the preset list. Not derived from the values alone: those
-    /// still match the preset they came from, and the list jumped back to it.
+    /// Whether the preset list shows Custom rather than a matching preset: the
+    /// values alone can't tell them apart, since Custom may still equal a preset.
     crypt_custom: bool,
     n: i64,
     dirty: bool,
@@ -214,7 +214,7 @@ impl DataWin {
         &self.work.data
     }
 
-    /// Which view is showing. The tests walk all six; the window itself sets it
+    /// Which view is showing. The tests walk all seven; the window itself sets it
     /// from the tab strip.
     #[cfg(test)]
     pub fn set_view(&mut self, view: ViewAs) {
@@ -259,8 +259,6 @@ impl DataWin {
         self.source_errors.clear();
     }
 
-    /// Open the disassembly view's symbol strip and tick Decrypt. Test-only, so a
-    /// headless frame draws them.
     /// Put the window into editing, so a test frame draws the text box and the
     /// row of switches over it rather than the listing. Test-only.
     #[cfg(test)]
@@ -268,6 +266,8 @@ impl DataWin {
         self.source = Some(text.to_string());
     }
 
+    /// Open the disassembly view's symbol strip and tick Decrypt. Test-only, so a
+    /// headless frame draws them.
     #[cfg(test)]
     pub fn show_everything(&mut self) {
         self.edit_symbols = true;
@@ -310,11 +310,10 @@ impl DataWin {
         d
     }
 
-    /// Write back a byte the view shows. The view is the raw data with the
-    /// modifiers applied, so index and value travel the other way: reverse
-    /// mirrors the index, "hide flag byte" shifts it past byte 0 ("hide
-    /// checksum byte" only shortens the end, so it does not move anything), and
-    /// flip is its own inverse on the value.
+    /// Write back a byte the view shows, translating index and value the other way:
+    /// reverse mirrors the index, "hide flag byte" shifts it past byte 0, "hide
+    /// checksum byte" only shortens the end so it moves nothing, and flip is its
+    /// own inverse on the value.
     fn set_view_byte(&mut self, i: usize, v: u8, view_len: usize) {
         let mirrored = if self.reverse { view_len.checked_sub(i + 1) } else { Some(i) };
         let Some(j) = mirrored else { return };
@@ -329,9 +328,9 @@ impl DataWin {
     }
 
     /// Reversed, a screen reads from its last byte down, so the base address is
-    /// the end of screen memory rather than the start. Put the old base back
-    /// when the tick comes off, or the picture sits above screen memory and the
-    /// view goes blank — but leave a base the user has set since alone.
+    /// the end of screen memory rather than the start. Untick puts the old base
+    /// back, or the picture sits above screen memory and the view goes blank; a
+    /// base the user has set since reversing is left alone.
     fn toggle_reverse(&mut self, screen: bool) {
         if !screen {
             return;
@@ -376,7 +375,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         format!("{}-block{}", files::stem(&t.name), fmt::block_no(t.cursor.max(0) as usize, zero))
     };
     let mut dw = app.datawin.take().unwrap();
-    // The store's while the window draws, and back again below.
+    // Taken out of the store so it can be borrowed alongside `app`; put back below.
     let mut symbols = std::mem::take(&mut app.store.symbols);
     // Read once, so a click on the switch below shows in the next frame rather
     // than halfway down this one.
@@ -424,11 +423,9 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 });
             });
             let view = dw.view_bytes();
-            // Typing over a byte works through the modifiers: the index travels
-            // back (see `set_view_byte`). Drop/Add/Shift and the last-byte mask
-            // change the length and the bit alignment of the raw stream, whose
-            // ends and bit order the modifiers have moved, so those stay off
-            // while any modifier is on.
+            // Typing goes through the modifiers (`set_view_byte` translates the index
+            // back). Drop/Add/Shift and the mask act on the raw stream, whose ends and
+            // bit order the modifiers have moved, so those stay off while one is on.
             let editable = dw.single() && !locked;
             let structural = editable && !dw.modifiers_on();
             ui.horizontal(|ui| {
@@ -1213,12 +1210,9 @@ fn text_view(dw: &mut DataWin, ui: &mut Ui, data: &[u8], h: f32) {
 
 // ---- header -----------------------------------------------------------------------
 
-/// The 17 bytes of a standard ROM header, read out. `editor.rs` edits the same
-/// fields; this is the data window's view of them, so a header opens on
-/// something better than its own hex dump.
-/// The 17 bytes of a standard ROM header, in the fields they stand for. The same
-/// form as the block editor's (`editor::header_editor`): the data window's copy
-/// of it, writing the same re-encoded 19 bytes back, checksum and all.
+/// The 17 bytes of a standard ROM header, in the fields they stand for: the same
+/// form as the block editor's (`editor::header_editor`), writing back the same
+/// 19 re-encoded bytes, checksum included.
 fn header_view(dw: &mut DataWin, ui: &mut Ui, hex: bool, tok: &Tokens, editable: bool) {
     let Some(hdr) = decode_header(&dw.work.data) else {
         ui.add_space(8.0);
@@ -1450,7 +1444,7 @@ mod tests {
     }
 
     /// A header block opens on the view that reads it out, not on its own hex
-    /// dump — the 17 bytes say more as a name and a load address.
+    /// dump: the 17 bytes say more as a name and a load address.
     #[test]
     fn a_header_block_opens_on_the_header_view() {
         let header = HeaderInfo {
@@ -1471,10 +1465,10 @@ mod tests {
         assert_eq!(DataWin::new(&other, 0, vec![uid]).view, ViewAs::Dump);
     }
 
-    /// A data block opens with "hide flag byte" and "hide checksum byte" ticked:
-    /// they are what the block is made of. That must not take the dump's typing
-    /// with it — the byte the view shows is written back through the modifiers,
-    /// so editing the first byte on screen edits the first body byte.
+    /// A data block opens with "hide flag byte" and "hide checksum byte" ticked,
+    /// since they are what the block is made of, but the dump stays editable: the
+    /// byte shown writes back through the modifiers, so the first byte on screen
+    /// edits the first body byte.
     #[test]
     fn the_dump_stays_editable_while_the_modifiers_are_on() {
         let data = vec![0xff, 0x11, 0x22, 0x33, 0xaa];
@@ -1501,8 +1495,9 @@ mod tests {
         assert_eq!(dw.work.data, vec![0xff, 0x99, 0x22, 0x01, 0xaa]);
     }
 
-    /// Samples start with silence, 0x00 or 0xFF, which once passed for a flag byte:
-    /// the window opened with the first and last eight samples hidden.
+    /// Silence at the start of a sample block is 0x00 or 0xFF, which can look like
+    /// a flag byte, but direct recordings and CSW blocks have neither a flag nor a
+    /// checksum byte to hide.
     #[test]
     fn samples_open_whole_with_nothing_to_hide() {
         let blocks = vec![
@@ -1587,8 +1582,8 @@ mod tests {
 
     /// Ticking "Reverse order" on a screen moves the base to the end of screen
     /// memory, where a backwards picture starts. Unticking it must move the base
-    /// back: left at 0x5AFF the picture sits 6911 bytes above the screen and the
-    /// view is blank.
+    /// back: left at 0x5AFF, the picture sits 6911 bytes above the screen and the
+    /// view goes blank.
     #[test]
     fn unticking_reverse_order_puts_a_screen_back_where_it_was() {
         let mut data = vec![0xffu8];
@@ -1646,9 +1641,9 @@ mod tests {
         assert_eq!(dw.work_data()[18], sum, "the checksum was recomputed");
     }
 
-    /// A header made by adding 19 bytes to an empty block has a name of ten
-    /// zeros. Only spaces used to come off, so the name field was full before
-    /// anything was typed, and each key was cut off again.
+    /// A header made by adding 19 bytes to an empty block has ten NULs in the
+    /// name field. `name_to_edit` strips trailing spaces and NULs, or they fill
+    /// the 10-character field and cut off every key typed.
     #[test]
     fn a_header_of_zeros_has_an_empty_name_to_type_in() {
         let blocks = vec![Block::new(Body::Standard { pause: 1000, data: vec![0; 19] })];
@@ -1662,9 +1657,8 @@ mod tests {
     }
 
     /// The Dec/Hex switch belongs to the screen it is on: a data window opens on
-    /// Dec whatever the main window is showing, and switching it there leaves
-    /// the main window alone. It is not remembered either — the next data window
-    /// is a new one, on Dec again.
+    /// Dec whatever the main window shows, and switching it there leaves the main
+    /// window alone. It is not remembered: the next data window opens on Dec again.
     #[test]
     fn the_data_window_has_a_switch_of_its_own() {
         let blocks = vec![Block::new(Body::Standard { pause: 1000, data: vec![0, 1, 2] })];

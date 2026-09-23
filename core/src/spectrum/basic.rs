@@ -1,8 +1,8 @@
 //! The BASIC lister and the variables area, the port of `src/spectrum/basic.ts`.
 //!
-//! The number formatting follows JavaScript's, because that is what the listing
-//! has always shown: `Number.prototype.toPrecision(8)` and its trailing-zero
-//! trim, reimplemented here rather than approximated.
+//! The number formatting reimplements JavaScript's `Number.prototype.toPrecision(8)`
+//! and its trailing-zero trim rather than approximating them, so the listing agrees
+//! with the frozen TypeScript reference digit for digit.
 
 use super::charset::{token_name, zx_char};
 
@@ -289,7 +289,8 @@ pub fn list_basic(data: &[u8], start: usize, end: usize, opts: BasicOptions) -> 
                 if !text.is_empty() {
                     line.tokens.push(BasicToken { text: std::mem::take(&mut text), kind: TokenKind::Text });
                 }
-                // Sinclair ROM prints a leading space unless preceded by a space, and a trailing space
+                // Sinclair ROM prints a leading space before a token unless one already precedes it,
+                // and always a trailing space.
                 let s = if last_was_space { tok.to_string() } else { format!(" {tok}") };
                 line.tokens.push(BasicToken { text: format!("{s} "), kind: TokenKind::Token });
                 last_was_space = true;

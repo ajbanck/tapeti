@@ -117,7 +117,7 @@ pub fn zx_char(code: u8, expand_tokens: bool) -> String {
         0x7f => "©".to_string(),
         0x20..=0x7e => (code as char).to_string(),
         0x80..=0x8f => BLOCKS[code as usize - 0x80].to_string(),
-        // circled letters for UDGs
+        // UDGs A to U as the circled numbers 1 to 21, from U+2460.
         0x90..=0xa4 => char::from_u32(0x2460 + u32::from(code - 0x90)).unwrap().to_string(),
         _ if expand_tokens && code >= 0xa5 => TOKENS[code as usize - 0xa5].to_string(),
         _ => ".".to_string(),

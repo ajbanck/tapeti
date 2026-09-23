@@ -182,7 +182,6 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
     };
   }, [ctx]);
 
-  // keep the cursor row visible
   useEffect(() => {
     const el = listRef.current?.querySelector('.row.cursor') as HTMLElement | null;
     if (listRef.current && el) scrollRowIntoView(listRef.current, el);
@@ -417,9 +416,8 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
   );
 }
 
-/** Issues of blocks start..end, so a collapsed group or loop shows what it hides. */
-// Scrolls only the list. Element.scrollIntoView also scrolls overflow:hidden ancestors
-// (Safari 14 does so on every call), which shifted the whole window during playback.
+// Scrolls only the list. Element.scrollIntoView also scrolls overflow:hidden ancestors,
+// Safari 14 on every call, so it would shift the whole window during playback.
 function scrollRowIntoView(list: HTMLElement, row: HTMLElement) {
   const l = list.getBoundingClientRect();
   const r = row.getBoundingClientRect();
@@ -427,6 +425,7 @@ function scrollRowIntoView(list: HTMLElement, row: HTMLElement) {
   else if (r.bottom > l.top + list.clientHeight) list.scrollTop += r.bottom - (l.top + list.clientHeight);
 }
 
+// Issues of blocks start..end, so a collapsed group or loop shows what it hides.
 function rangeIssues(by: Map<number, Issue[]>, start: number, end: number): Issue[] {
   const out: Issue[] = [];
   for (let i = start; i <= end; i++) {
@@ -435,7 +434,8 @@ function rangeIssues(by: Map<number, Issue[]>, start: number, end: number): Issu
   return out;
 }
 
-/** Consistency marker in the block list: red for errors (invalid), amber for warnings (e.g. bad checksum). */
+// Consistency marker in the block list: red for an error such as an invalid block,
+// amber a warning such as a bad checksum.
 function IssueMark({ issues }: { issues?: Issue[] }) {
   if (!issues || issues.length === 0) return null;
   const error = issues.some((i) => i.severity === 'error');

@@ -13,8 +13,7 @@ fn commands_ts() -> String {
 }
 
 fn command_ids() -> Vec<String> {
-    // The table's keys are the only single-quoted strings at two spaces of indent
-    // followed by a colon.
+    // Assumes the command ids are the only single-quoted, colon-followed strings at two-space indent.
     commands_ts()
         .lines()
         .filter_map(|line| {

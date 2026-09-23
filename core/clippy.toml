@@ -1,0 +1,2 @@
+# Proper names clippy::doc_markdown would otherwise want in backticks; ".." keeps the defaults.
+doc-valid-idents = ["SpeedLock", "ThunderWare", "AppKit", "AppImage", ".."]

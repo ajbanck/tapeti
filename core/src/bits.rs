@@ -52,7 +52,7 @@ pub fn shift_right_bits(d: &BitData, n: usize) -> BitData {
     from_bits(before + n, |i| if i < n { 0 } else { get_bit(&d.data, i - n) })
 }
 
-/// Concatenate several bit streams (used by "view selected as one").
+/// Concatenate several bit streams: the data window's "view selected as one".
 pub fn join_bits(parts: &[BitData]) -> BitData {
     let lens: Vec<usize> = parts.iter().map(total_bits).collect();
     let total: usize = lens.iter().sum();
@@ -92,12 +92,12 @@ pub fn encrypt_bytes(d: &[u8], xor: u8, add: u8) -> Vec<u8> {
 /// The values the SpeedLock versions use unless a game changes them.
 pub const CRYPT_PRESETS: [(&str, u8, u8); 2] = [("SpeedLock 2/3", 0x98, 0x0b), ("SpeedLock 4-7", 0xc1, 0x11)];
 
-/// The values the loader a group is named after used, from the name the decoders
-/// write: "SpeedLock N block M". Versions 2 and 3 share one pair, 4 to 7 the
-/// other; version 1 does not encrypt, and a name without a version says nothing.
+/// The preset for the loader a group is named after, read from a name like
+/// "SpeedLock N block M".
 ///
-/// `None` for anything else on purpose: decrypting with the wrong values is
-/// worse than not decrypting, because the result still looks like data.
+/// Versions 2 and 3 share one pair, 4 to 7 the other; version 1 does not encrypt and a name
+/// without a version matches nothing. Returns `None` rather than guess: decrypting with the
+/// wrong values still looks like data, which is worse than leaving it alone.
 pub fn crypt_preset_for(name: &str) -> Option<(u8, u8)> {
     let rest = name.trim_start().to_ascii_lowercase();
     let rest = rest.strip_prefix("speedlock")?.trim_start();

@@ -1,8 +1,9 @@
 // "Check consistency": structure, useless blocks, infinite loops, cross nesting.
-// The checks are the Rust core in core/ (consistency.rs); this module is the
-// signature the UI has always used.
+// The checks are the Rust core in core/ (consistency.rs); this module keeps the
+// signature the UI imports.
 //
-// The previous implementation lives on as test/reference/consistency.ts.
+// test/reference/consistency.ts is the frozen implementation the differential
+// tests compare this against.
 import { Block, Issue } from './types';
 import { checkConsistencyCore } from './core';
 import { perTapeWith } from './cache';

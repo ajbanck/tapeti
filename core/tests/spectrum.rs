@@ -1,6 +1,6 @@
 //! Tests for the Spectrum side: the character set, the screen, the BASIC lister
-//! and the Z80 disassembler. `test/core.test.ts` compares these against the
-//! TypeScript they replaced; what is here is what the core owes on its own.
+//! and the Z80 disassembler. `test/core.test.ts` runs the frozen `test/reference/`
+//! implementations against the core; what is here is what the core owes on its own.
 
 use tapeti_core::spectrum::basic::{
     basic_to_text, decode_number, format_number, list_basic, list_variables, BasicOptions,
@@ -42,10 +42,10 @@ fn renders_a_screen() {
     assert_eq!(px.len(), 256 * 192 * 4);
     assert_eq!(&px[0..4], &[0, 0, 0, 255]); // ink
     assert_eq!(&px[4..8], &[0xd7, 0xd7, 0xd7, 255]); // paper
-                                                     // Hiding the attributes forces black on white whatever the attribute says.
     data[6144] = 0b0100_0010; // bright red ink on black paper
     let colour = render_screen(&data, 0, ScreenOptions::default());
     assert_eq!(&colour[0..4], &[0xff, 0, 0, 255]);
+    // Hiding the attributes forces black on white whatever the attribute says.
     let plain = render_screen(&data, 0, ScreenOptions { hide_attributes: true, flash_phase: false });
     assert_eq!(&plain[0..4], &[0, 0, 0, 255]);
 
@@ -105,7 +105,7 @@ fn lists_a_basic_program() {
     let lines = list_basic(&altered, 0, altered.len(), opts);
     assert!(basic_to_text(&lines, opts).contains("{99}"), "{}", basic_to_text(&lines, opts));
 
-    // The same program with showNumbers on spells out every number.
+    // The same program with show_numbers on spells out every number.
     let plain = [0x00, 0x14, 0x0b, 0x00, 0xf1, 0x61, 0x3d, 0x31, 0x0e, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0d];
     let quiet = list_basic(&plain, 0, plain.len(), opts);
     assert!(!basic_to_text(&quiet, opts).contains('{'));
@@ -183,7 +183,6 @@ fn disassembles_the_tricky_prefixes() {
     assert_eq!(lines[0].target, Some(0x8000));
     assert_eq!(lines[0].bytes, vec![0x18, 0xfe]);
 
-    // Decimal mode spells everything in decimal.
     let dec = disassemble(
         &[0x21, 0x34, 0x12],
         0,
@@ -192,7 +191,6 @@ fn disassembles_the_tricky_prefixes() {
         DisOptions { hex: false, rom_labels: true, ..DisOptions::default() },
     );
     assert_eq!(dec[0].text, "LD HL,4660");
-    // Without labels, nothing is annotated.
     let bare = disassemble(
         &[0xc7],
         0,

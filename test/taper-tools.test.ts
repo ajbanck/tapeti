@@ -168,14 +168,13 @@ describe('loop and invert selection', () => {
     const uids = tapes[0].value.blocks.map((b) => b.uid);
     toggleCollapse(0, uids[1]);
 
-    // The group's row is the selected one: inverting leaves the two pauses, and
-    // nothing of what the group hides.
+    // A collapsed group is one row: inverting the selected row leaves the two
+    // pauses selected, not the group's contents.
     setCursor(0, 1);
     runCommand('invert-selection', 0);
     expect([...tapes[0].value.selected].sort()).toEqual([uids[0], uids[4]].sort());
 
-    // And back: the group comes out selected whole, so acting on it acts on all
-    // of it, as `unitIndices` has it.
+    // Inverting again selects the group whole, matching `unitIndices`.
     runCommand('invert-selection', 0);
     expect([...tapes[0].value.selected].sort()).toEqual(uids.slice(1, 4).sort());
 

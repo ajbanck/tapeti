@@ -149,11 +149,10 @@ const MAC_SYMBOLS: &str = "/System/Library/Fonts/Apple Symbols.ttf";
 
 /// egui's default fonts, and on macOS the system's symbol font behind them.
 ///
-/// macOS spells a shortcut as ⌃⌥⇧⌘ and an arrow (`fmt::key`), and of those egui's
-/// fonts have only ⌘: the rest came out as empty boxes in every menu egui draws —
-/// the right-click menu, a pane's "…" menu. The platform menu bar never showed it,
-/// being native. Apple Symbols is on every Mac; if it is not there the fonts are
-/// egui's alone, and the boxes come back rather than anything worse.
+/// macOS spells a shortcut as ⌃⌥⇧⌘ and an arrow (`fmt::key`); egui's bundled fonts have
+/// only ⌘, so the rest render as empty boxes in any menu egui draws (the right-click
+/// menu, a pane's "…" menu). The native platform menu bar is unaffected. Without Apple
+/// Symbols the app falls back to egui's fonts alone and shows the boxes.
 pub fn fonts() -> egui::FontDefinitions {
     #[allow(unused_mut)]
     let mut fonts = egui::FontDefinitions::default();
@@ -173,14 +172,10 @@ pub fn fonts() -> egui::FontDefinitions {
 
 /// egui's default font list minus the two emoji fonts.
 ///
-/// Nothing the app draws needs them any more — the icons are geometry, and
-/// `src/icons.rs` says why. (They do not hold the macOS modifier symbols either,
-/// ⌘ aside: `fonts` brings those in.)
-///
-/// Kept because `--measure` weighs it, and the answer is worth keeping visible:
-/// about 1 ms of a 4–6 ms first frame. egui rasterises glyphs on demand, so the
-/// fonts it never draws from cost almost nothing. Whatever cold start turns out
-/// to be, it is not this.
+/// The icons are geometry (`src/icons.rs`), not glyphs, so nothing here needs them; the
+/// macOS modifier symbols are unaffected, since `fonts` adds those separately. egui
+/// rasterises glyphs on demand, so fonts it never draws from cost almost nothing: dropping
+/// them saves about 1 ms of a 4-6 ms first frame (`--measure`). Not a cold-start lever.
 pub fn latin_only_fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     let keep = ["Hack", "Ubuntu-Light"];

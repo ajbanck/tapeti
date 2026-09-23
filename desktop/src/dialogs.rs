@@ -172,7 +172,7 @@ enum Outcome {
     Close,
 }
 
-/// The ✕ in the title row, under an id of its own so a test can click it.
+/// The close button in the title row, under an id of its own so a test can click it.
 pub fn close_button_id() -> egui::Id {
     egui::Id::new("tapeti-dialog-close")
 }
@@ -218,9 +218,9 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 Dialog::Snapshot(s) => snapshot_body(ui, app, s, &tok),
                 Dialog::DataFile(s) => data_file_body(ui, app, s, &tok),
             };
-            // The ✕ goes in last, at the right edge the body left: a body wider
-            // than `width` (tape info's SHA-1) widens the dialog, and an ✕ laid
-            // out with the title stayed where the edge had been.
+            // The close button is drawn after the body, at the right edge the body left: a body
+            // wider than `width` (tape info's SHA-1) widens the dialog, so drawing it with the
+            // title would leave it at the dialog's original, narrower edge.
             let right = ui.min_rect().right().max(title_row.right());
             let at = egui::Rect::from_center_size(
                 egui::pos2(right - 12.0, title_row.center().y),
@@ -232,9 +232,9 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                         .clicked()
                 })
                 .inner;
-            // The ✕ wins over the body, which reports `Keep` on every frame in
-            // which nothing was clicked in it. Assigning both to one variable is
-            // what made the ✕ do nothing at all.
+            // The close button's `Close` overrides the body's outcome, since the body reports
+            // `Keep` on every frame nothing in it was clicked. Combining the two checks into
+            // one variable instead of this if/else would make the close button never fire.
             if closed {
                 Outcome::Close
             } else {
@@ -251,11 +251,10 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
 
 /// The rule and the button row at the bottom of a dialog.
 ///
-/// The buttons go right to left inside a `horizontal`, one row high. On their own
-/// a right-to-left layout centres its row in all the height left in the dialog,
-/// and counts all of it as used: the modal then measured itself at the height it
-/// already had, so it never shrank, and every dialog kept the height of the
-/// tallest one shown before it — whitespace under a short one's buttons.
+/// The buttons go right to left inside a `horizontal`, one row high: a bare
+/// right-to-left layout centres its row in all the height left in the dialog and
+/// counts it as used, so the modal never shrinks below the tallest dialog shown
+/// before it, leaving whitespace under a short one's buttons.
 pub fn footer<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.add_space(10.0);
     ui.separator();
@@ -300,11 +299,9 @@ fn about_body(ui: &mut Ui, tok: &Tokens) -> Outcome {
         "Supports TZX 1.20 blocks 10–19, 20–28, 2A, 2B, 30–33, 35 and 5A; unknown and deprecated blocks are preserved untouched.",
     );
     ui.add_space(4.0);
-    // "Native shell" until stage 6: the wording came from the Tauri build, where a
-    // shell wrapped the web app and had a version of its own to distinguish.
     w::note(ui, tok, format!("Version {}", env!("CARGO_PKG_VERSION")));
-    // Only once there is one to name: a path here is an answer to "it quit and
-    // I do not know why", not a line of small print for everyone else.
+    // Shown only once a crash log exists: this is for someone reporting a crash,
+    // not general information text everyone else would see.
     if let Some(path) = crate::crashlog::path().filter(|p| p.exists()) {
         ui.add_space(4.0);
         let text = RichText::new(format!("Crash log: {}", path.display())).size(11.0).color(tok.muted);
@@ -319,7 +316,7 @@ const BASIC_PROGRAM: u8 = 0;
 fn insert_body(ui: &mut Ui, app: &mut App, s: &mut InsertState) -> Outcome {
     let mut go = false;
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-        // After the block types, the one thing here that is two blocks.
+        // The BASIC program entry, appended last, inserts two blocks: header and data.
         for id in CREATABLE_IDS.into_iter().chain([BASIC_PROGRAM]) {
             let label = match id {
                 BASIC_PROGRAM => "     BASIC program (header and data, to edit as text)".to_string(),
@@ -380,8 +377,8 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
 
     let rich_row = |ui: &mut Ui, k: &str, v: RichText| {
         ui.horizontal(|ui| {
-            // A fixed column, left-aligned as `.modal td` is: `add_sized` would
-            // centre the label in it whatever its own `halign` says.
+            // A fixed, left-aligned column: `add_sized` would centre the label in it
+            // whatever its own `halign` says.
             ui.allocate_ui_with_layout(egui::vec2(190.0, 18.0), Layout::left_to_right(Align::Center), |ui| {
                 ui.set_min_width(190.0);
                 ui.label(RichText::new(k).color(tok.muted));
@@ -390,7 +387,6 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
         });
     };
     let row = |ui: &mut Ui, k: &str, v: String| rich_row(ui, k, RichText::new(v));
-    // The checksums in monospace, as `<code>` sets them on the web.
     let hash_row = |ui: &mut Ui, k: &str, v: &str| rich_row(ui, k, RichText::new(v).monospace());
     row(ui, "File", t.name.clone());
     row(ui, "Blocks", fmt::num(t.blocks.len() as i64, hex));

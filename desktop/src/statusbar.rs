@@ -10,12 +10,11 @@ use crate::app::App;
 use crate::fmt;
 use crate::icons::{self, Icon};
 
-/// One clickable cell — `.statusbar .cell`: a rounded outlined pill holding the
-/// icon the web bar shows and its text, tinted with the accent when it is `on`.
-/// The value half of the text is `<b>`, so it is drawn in the text colour.
+/// One clickable cell (`.statusbar .cell`): a rounded pill holding an icon and
+/// text, tinted with the accent when `on`. The value half draws in the text
+/// colour rather than the muted label colour.
 ///
-/// The data window borrows it for its own Dec/Hex switch, which is the same
-/// control on another screen.
+/// The data window reuses this for its own Dec/Hex switch.
 pub fn cell(
     ui: &mut Ui,
     icon: Option<&Icon>,
@@ -125,13 +124,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             app.store.audio_mic = !mic;
         }
 
-        // The theme switch lives at the right end of the menu bar, where
-        // `MenuBar.tsx` has always had it — not here as well.
+        // The theme switch is the View menu's check items and the in-window menu
+        // bar's cycling button, not a cell here as well.
 
         if app.progress.playing {
             progress(app, ui);
         } else {
-            // `.cell.grow`: the message, with no pill around it.
             ui.add_space(4.0);
             let status = app.store.status().to_string();
             ui.label(RichText::new(status).size(12.0).color(tok.muted));

@@ -74,7 +74,6 @@ export function App() {
       }
     };
     window.addEventListener('beforeunload', onBeforeUnload);
-    // Window title mirrors the active tape
     const disposeTitle = effect(() => {
       const t = tapes[active.value].value;
       document.title = `${t.name}${t.dirty ? ' *' : ''} — Tapeti`;

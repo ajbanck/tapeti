@@ -33,8 +33,8 @@ const hasCursor = (side: Side) => !!tape(side).blocks[tape(side).cursor];
 const MAC_SYMBOLS: Record<string, string> = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Mod: '⌘' };
 
 /**
- * Format a shortcut written as `Mod+Shift+Z` for the platform: `⇧⌘Z` on macOS (modifiers in the
- * Apple order ⌃⌥⇧⌘), `Ctrl+Shift+Z` on Windows and Linux. `Mod` is ⌘ on macOS and Ctrl elsewhere.
+ * Format a shortcut written as `Mod+Shift+Z` for the platform: `⇧⌘Z` on macOS, modifiers in
+ * Apple order ⌃⌥⇧⌘; `Ctrl+Shift+Z` on Windows and Linux. `Mod` is ⌘ on macOS and Ctrl elsewhere.
  */
 export function fmtKey(spec: string, mac = isMac): string {
   const parts = spec.split('+');
@@ -50,7 +50,7 @@ export const COMMANDS = {
   'open': { label: 'Open…', key: fmtKey('Mod+O'), run: (s) => confirmDiscard(s, () => pickAndOpen(s)) },
   'insert-file': { label: 'Insert file at cursor…', run: (s) => pickAndOpen(s, true) },
   /** A browser has nowhere to write back to, so Save is Save as. The desktop app writes
-   *  in place — `desktop/src/files.rs` keeps the id and the rule. */
+   *  in place: `desktop/src/files.rs` keeps the id and the rule. */
   'save': { label: 'Save', key: fmtKey('Mod+S'), enabled: hasBlocks, run: (s) => saveTzx(s) },
   'save-as': { label: 'Save as TZX (download)', key: fmtKey('Mod+Shift+S'), enabled: hasBlocks, run: (s) => saveTzx(s) },
   'save-tap': { label: 'Save as TAP (download)', enabled: hasBlocks, run: (s) => saveTap(s) },
@@ -66,7 +66,7 @@ export const COMMANDS = {
   'select-all': { label: 'Select all', key: fmtKey('Mod+A'), enabled: hasBlocks, run: selectAll },
   'invert-selection': { label: 'Invert selection', enabled: hasBlocks, run: invertSelection },
   // ---- block
-  // The desktop menu has Mod+Shift+N for this (Mac keyboards have no Insert key).
+  // The desktop menu has Mod+Shift+N for this: Mac keyboards have no Insert key.
   'insert': { label: 'Insert block…', key: 'Ins', run: openInsertDialog },
   'view-data': { label: 'View data', key: 'Enter', enabled: hasCursor, run: (s) => viewData(s) },
   'view-as-one': { label: 'View selected as one', enabled: hasCursor, run: (s) => viewData(s, true) },
@@ -146,9 +146,10 @@ export function commandKey(id: CommandId): string | undefined {
 }
 
 /**
- * Keyboard shortcuts handled by the web view (App.tsx). `shift` left out means either. The desktop menu owns the accelerators
- * it declares in menu.rs, so those keydowns never arrive there; this table still lists them
- * for the browser build. Keys are `e.key` values; `mod` means ⌘ on macOS, Ctrl elsewhere.
+ * Keyboard shortcuts handled by the web view (App.tsx). `shift` left out means either. The
+ * desktop app's menu owns the accelerators it declares in menu.rs, so its keyboard handler never
+ * sees those keydowns; this table lists them for the browser build. Keys are `e.key` values;
+ * `mod` means ⌘ on macOS, Ctrl elsewhere.
  */
 export const KEY_COMMANDS: { key: string; mod: boolean; shift?: boolean; alt?: boolean; id: CommandId }[] = [
   { key: 'c', mod: true, id: 'copy' },

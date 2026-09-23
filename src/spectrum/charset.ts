@@ -2,7 +2,8 @@
 // (spectrum/charset.rs); the hex dump asks per byte, so the app fetches all 256
 // characters once and indexes the result instead of crossing per character.
 //
-// The previous implementation lives on as test/reference/spectrum/charset.ts.
+// test/reference/spectrum/charset.ts is the frozen implementation the differential
+// tests compare this against.
 import { charTableCore, CharTable } from '../tzx/core';
 
 const tables = new Map<CharTable, string[]>();
@@ -16,7 +17,7 @@ function table(kind: CharTable): string[] {
   return t;
 }
 
-/** Printable form of a single ZX character, for the dump / text views (no tokens expanded). */
+/** Printable form of a single ZX character, for the dump / text views. */
 export function zxChar(code: number, expandTokens = true): string {
   return table(expandTokens ? 'zx' : 'zxPlain')[code & 0xff];
 }

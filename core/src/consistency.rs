@@ -42,7 +42,7 @@ enum Nesting {
     Loop,
 }
 
-/// `base` is the number shown for the first block (1, or 0 with zero-based numbering).
+/// `base` is the number shown for the first block: 1, or 0 for zero-based numbering.
 pub fn check_consistency(blocks: &[Block], base: i32) -> Vec<Issue> {
     let mut issues: Vec<Issue> = Vec::new();
     let n = blocks.len();
@@ -50,7 +50,8 @@ pub fn check_consistency(blocks: &[Block], base: i32) -> Vec<Issue> {
         return vec![issue(-1, Severity::Info, "Tape is empty")];
     }
 
-    // Structural nesting of groups and loops (static)
+    // Structural nesting of groups and loops: a static pass, separate from the flow
+    // simulation below.
     let mut stack: Vec<(Nesting, usize)> = Vec::new();
     for (i, b) in blocks.iter().enumerate() {
         let at = i as i32;
@@ -258,9 +259,9 @@ pub fn check_consistency(blocks: &[Block], base: i32) -> Vec<Issue> {
         }
     }
 
-    // SpeedLock's pure data blocks have no checksum of their own to mark: the
-    // loader keeps one parity over the group, which must come out as nothing.
-    // (TAPER's "Group parity". Groups are named this by the decoders that make them.)
+    // SpeedLock's pure data blocks carry no checksum of their own: the loader keeps one parity
+    // over the group, which must come out as nothing. TAPER calls this "Group parity"; the
+    // decoders that build the tape name the group "SpeedLock N".
     let mut i = 0;
     while i < n {
         let Body::GroupStart { name } = &blocks[i].body else {

@@ -1,6 +1,7 @@
 // Z80 disassembly. The decoder is the Rust core in core/ (spectrum/z80dis.rs).
 //
-// The previous implementation lives on as test/reference/spectrum/z80dis.ts.
+// test/reference/spectrum/z80dis.ts is the frozen implementation the
+// differential tests compare this against.
 import { DisLine, DisOptions } from '../tzx/types';
 import { checkSymbolsCore, disassembleCore, disassemblyTextCore } from '../tzx/core';
 

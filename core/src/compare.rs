@@ -153,9 +153,11 @@ pub fn compare_tapes(
     (lres, rres, identical)
 }
 
-/// Find all blocks in `haystack` matching `needle`. `skip` is where the needle
-/// itself sits in the haystack, if it is in there: the TypeScript compares
-/// object identity, and an index is what survives the trip across the wire.
+/// Find all blocks in `haystack` matching `needle`.
+///
+/// `skip` is where the needle itself sits in the haystack, if it is in there: the
+/// TypeScript compares object identity, and an index is what survives the trip across
+/// the wire.
 pub fn find_matches(
     needle: &Block,
     haystack: &[Block],

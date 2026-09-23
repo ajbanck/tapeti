@@ -1,8 +1,9 @@
 // What a data block contains: a ROM header, a BASIC program, a screen, machine
 // code, an array or plain data. The detection is the Rust core in core/
-// (content.rs); this module is the signature the UI has always used.
+// (content.rs); this module keeps the signature the UI imports.
 //
-// The previous implementation lives on as test/reference/content.ts.
+// test/reference/content.ts is the frozen implementation the differential
+// tests compare this against.
 import { AsLoaded, Block, ContentInfo, ContentKind } from './types';
 import { basicScoreCore, contentLabelsCore, detectContentAsLoadedCore, detectContentCore } from './core';
 import { perTape } from './cache';

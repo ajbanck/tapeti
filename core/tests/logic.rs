@@ -1,8 +1,8 @@
-//! Tests for the modules stage 2 moved over: descriptions, content detection,
-//! consistency and program structure. The TypeScript versions of these live in
-//! `test/tzx.test.ts` and `test/programs.test.ts`; `test/core.test.ts` compares
-//! the two implementations directly, so what is here is what the core owes on
-//! its own, plus the two predicates the TypeScript still keeps a copy of.
+//! Tests for descriptions, content detection, consistency and program structure in the core.
+//! `test/core.test.ts` compares the core against the frozen implementations in
+//! `test/reference/`; what is here is what the core owes on its own, plus the two predicates
+//! (`isMetadata`, `blockBody`) the TypeScript keeps its own copy of, asserted against the
+//! same table on both sides.
 
 use tapeti_core::consistency::{check_consistency, Severity};
 use tapeti_core::content::{basic_score, block_body, detect_content, ContentKind, Source};
@@ -274,8 +274,8 @@ fn finds_groups_and_programs() {
     assert_eq!(programs[0].name, "Game");
     assert_eq!(programs[0].source, ProgramSource::Group);
 
-    // A Select entry starts a program where it points. (A boundary at block 0
-    // would not split anything: the first program always starts at the top.)
+    // A Select entry starts a program where it points. A boundary at block 0 would not split
+    // anything: the first program always starts at the top.
     let blocks = vec![
         header_block(0, "A         ", 10, 0, 10),
         data_block(4, 0),

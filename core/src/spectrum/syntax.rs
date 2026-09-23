@@ -1,51 +1,31 @@
 //! Does a tokenised line say something a Spectrum would accept?
 //!
-//! [`tokenise_line`](super::source::tokenise_line) will spell anything: it turns
-//! text into bytes and never asks what the bytes mean, so `10 PRINT AND` comes
-//! out as a program line. This is the second half, after TAPER's `tpbasic.c`: a
-//! recursive-descent walk of the line against the 48K ROM's syntax tables, the
-//! ones the interpreter itself uses (the command classes at 1A48 in "The
-//! Complete Spectrum ROM Disassembly").
+//! [`tokenise_line`](super::source::tokenise_line) turns text into bytes without checking
+//! what they mean, so `10 PRINT AND` comes out as a program line. This is the second half,
+//! after TAPER's `tpbasic.c`: a recursive-descent walk against the 48K ROM's syntax tables
+//! (the command classes at 1A48 in "The Complete Spectrum ROM Disassembly"). Every keyword
+//! has a `Kind` and a list of what must follow it: a *class* (one of the ROM's fifteen
+//! operand shapes) or a literal byte (`(`, `,`, `TO`). [`check_line`] walks statement by
+//! statement against those lists, typing expressions as it goes.
 //!
-//! Every keyword has a [`Kind`] — whether it is a command, a function giving a
-//! number, a function giving a string, a colour item or one of the two items
-//! only PRINT takes — and a list of what must follow it. An entry of that list
-//! is either a *class*, one of the ROM's fifteen shapes of operand, or a byte
-//! that has to be there (`(`, `,`, `TO`). [`check_line`] walks the line
-//! statement by statement against those lists, and expressions are typed as it
-//! goes, so `LET a="x"` and `PRINT LEN 5` are caught as well as `GO TO`
-//! with nothing behind it.
+//! Only the 48K ROM is known: Interface 1, Microdrive and disc syntax (CAT, FORMAT, MOVE,
+//! ERASE, OPEN #, CLOSE #, `LOAD *`, `SAVE !`) is taken as read rather than guessed at,
+//! since a false positive blocks a real edit. Also unchecked: only AND and OR need a left
+//! operand (so `PRINT =1` passes; guarding the others must still allow `a=b=c`), and PLAY is
+//! checked only as a list of strings, not against what the 128K ROM allows after it.
 //!
-//! **Only the 48K ROM.** The Interface 1, Microdrive and disc commands (CAT,
-//! FORMAT, MOVE, ERASE, OPEN #, CLOSE #, and the `*` and `!` forms of LOAD and
-//! SAVE) are syntax this does not know, so the rest of such a statement is taken
-//! as it comes rather than guessed at: a check that shouts at a working program
-//! is worse than one that stays quiet. TAPER does check them, and sorts the
-//! program into 48K / 128K / Interface 1 / Opus as it goes; that would want its
-//! channel and stream scanners and a dialect flag per program.
-//!
-//! Two smaller things go unchecked. A binary operator is only held to having
-//! something on its left for AND and OR, so `PRINT =1` and `LET a=*2` pass —
-//! the same guard would do for the others, minding that `a=b=c` is legal. And
-//! `PLAY` is all 128k BASIC adds here, `SPECTRUM` taking no operands; what the
-//! 128K ROM really allows after it is not in TAPER's table either.
-//!
-//! Where this differs from TAPER's own checker, on purpose:
-//! - its `TokenBracket` is a global, so the brackets one token brought along let
-//!   *every* expression nested inside them run on past an operator: it rejects
-//!   `LET a$=a$( TO LEN a$-1)`, which is the standard way to drop a string's
-//!   last character. Here that flag is an argument, carried to one operand, and
-//!   a function met inside it takes its own tight operand;
-//! - `DEF FN a()=1`, a function of no arguments, is taken; TAPER reports an
-//!   empty parameter list, though the Spectrum allows it;
-//! - a statement may begin with `:` (`IF a THEN : PRINT 1`), which TAPER reports
-//!   as a statement that does not end where it should;
-//! - no loop over a comma-separated list or over PRINT's items will spin on an
-//!   operand that consumed nothing, which is what `DATA 1)` and `PRINT !` do to
-//!   TAPER's classes 13 and 5;
-//! - a walk that runs off the end reads ENTER rather than whatever lies behind
-//!   the line. Both count the brackets first, but TAPER's pointer leaves the
-//!   buffer if the walk is ever reached with one unclosed.
+//! Deliberate departures from TAPER's own checker:
+//! - TAPER's `TokenBracket` is global, so it lets a nested expression run past an operator
+//!   and rejects `LET a$=a$( TO LEN a$-1)` (the standard way to drop a string's last
+//!   character); here the flag is passed per operand instead.
+//! - `DEF FN a()=1` (no arguments) is accepted; TAPER reports it as an empty parameter list
+//!   even though the Spectrum allows it.
+//! - A statement may start with `:` (`IF a THEN : PRINT 1`); TAPER reports that as ending
+//!   where it should not.
+//! - No comma list or PRINT item loop spins on an operand that consumes nothing, which is
+//!   what `DATA 1)` and `PRINT !` do to TAPER's classes 13 and 5.
+//! - Running off the end of the line reads ENTER rather than whatever lies behind it; both
+//!   count brackets first, but TAPER's pointer leaves the buffer if one is still unclosed.
 
 use super::charset::token_name;
 use super::source::number_len;
@@ -224,7 +204,7 @@ const TOKEN_SYNTAX: [(Kind, &[u8]); 93] = [
 /// can be 64K of `(`, and the walk below is recursive.
 const MAX_DEPTH: u32 = 48;
 
-/// The body of one program line — everything after the four byte header, up to
+/// The body of one program line: everything after the four byte header, up to
 /// and including the ENTER. `Ok` means the Spectrum would take it.
 pub fn check_line(body: &[u8], basic128: bool) -> Result<(), String> {
     let s = strip(body);
@@ -238,8 +218,8 @@ pub fn check_line(body: &[u8], basic128: bool) -> Result<(), String> {
 }
 
 /// The line with everything the syntax does not read taken out: spaces, colour
-/// controls and their operands, and the five bytes behind a number — the marker
-/// itself stays, because a DEF FN parameter is nothing else. Strings keep their
+/// controls and their operands, and the five bytes behind a number. The number
+/// marker itself stays, because a DEF FN parameter is nothing else. Strings keep their
 /// bytes, so what is inside one cannot end a statement, and REM takes the rest
 /// of the line with it.
 fn strip(body: &[u8]) -> Vec<u8> {

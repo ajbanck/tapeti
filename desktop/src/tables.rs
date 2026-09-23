@@ -1,10 +1,10 @@
 //! Tables the UI shows and the core does not need: the archive-info kinds and
 //! the hardware list of `src/tzx/types.ts`.
 //!
-//! They stay out of `core/` for the same reason the block names nearly did —
-//! they are labels, not data the parser or the writer depends on. Generated
-//! from the TypeScript once, in its order, so the two dropdowns offer the same
-//! choices in the same places.
+//! They stay out of `core/`: they are labels, not data the parser or writer
+//! depends on. Copied from the TypeScript once, in its order, so the two
+//! dropdowns offer the same choices in the same places; a change there needs
+//! copying here too.
 
 /// `ARCHIVE_TYPES`: the kind byte of an Archive info entry.
 pub const ARCHIVE_TYPES: &[(u8, &str)] = &[

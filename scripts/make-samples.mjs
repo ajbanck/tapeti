@@ -23,7 +23,7 @@ try {
   const { encodePokes } = await vite.ssrLoadModule('/src/tzx/pokes.ts');
   const { checkConsistency } = await vite.ssrLoadModule('/src/tzx/consistency.ts');
   const { parseTzx } = await vite.ssrLoadModule('/src/tzx/parser.ts');
-  // Parsing runs in the Rust core now, which has to be instantiated first.
+  // Parsing runs in the Rust core, which has to be instantiated first.
   await (await vite.ssrLoadModule('/src/tzx/core.ts')).initCore();
 
   // ---- helpers ---------------------------------------------------------------

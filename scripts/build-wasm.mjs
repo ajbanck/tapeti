@@ -6,8 +6,8 @@
 // import because the same module has to load in the browser and in vitest under
 // node, and because inlining it costs one less round trip at startup.
 //
-// The wasm target needs a rustup toolchain: Homebrew's rust only ships the host
-// standard library. Set CARGO to override which cargo is used.
+// Needs a toolchain with the wasm32 target: rustup's shim, if installed, is taken
+// before the cargo on PATH. Set CARGO to override which cargo is used.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,7 +19,6 @@ const OUT = path.resolve('src/tzx/core.wasm.ts');
 
 function findCargo() {
   if (process.env.CARGO) return process.env.CARGO;
-  // rustup's shim knows about the wasm32 target; a Homebrew cargo does not.
   const rustup = path.join(os.homedir(), '.cargo/bin/cargo');
   return fs.existsSync(rustup) ? rustup : 'cargo';
 }

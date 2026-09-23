@@ -20,11 +20,9 @@ pub fn num(n: i64, hex: bool) -> String {
     }
 }
 
-/// `fmtByte`: a flag or checksum byte. Hex under the screen's switch or the
-/// "flag and checksum bytes in hex" option, else a zero-padded decimal, the way
-/// the web editor shows them. The `0x` is part of it either way: these bytes are
-/// read out of a sentence ("Checksum byte 0x17"), where a bare 17 would not say
-/// which base it is in.
+/// `fmtByte`: a flag or checksum byte. Hex (with `0x`) under the screen's switch or the
+/// "flag and checksum bytes in hex" option, else a zero-padded decimal. The `0x` prefix
+/// disambiguates the base when the byte appears inline in a sentence ("Checksum byte 0x17").
 pub fn byte(n: u8, hex: bool, hex_bytes: bool) -> String {
     if hex || hex_bytes {
         format!("0x{n:02X}")

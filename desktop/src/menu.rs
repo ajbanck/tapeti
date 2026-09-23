@@ -1,25 +1,20 @@
 //! The application menu, built from the table in `menutable.rs`.
 //!
-//! One bar per platform, from one table, in one grouping.
+//! One bar per platform, from one table, in one grouping. On macOS `muda`
+//! hangs the table on `NSApp`, so accelerators are the platform's there
+//! (`CmdOrCtrl+S` means Cmd+S) and the window draws no bar of its own. There
+//! are no Left / Right menus: what is aimed at one pane is in that pane's
+//! header (`App::pane_head`).
 //!
-//! On macOS `muda` hangs the table on `NSApp`, so the accelerators are the
-//! platform's there — `CmdOrCtrl+S` meaning ⌘S — and the window draws no bar of
-//! its own: it used to, grouped by pane (Left, Right), and two bars that split
-//! the same commands two ways was one too many. What was worth aiming at one
-//! pane is in that pane's header now (`App::pane_head`).
+//! Everywhere else egui draws the bar in the window and `app.rs` handles the
+//! accelerators. That includes Windows, on purpose: muda's `init_for_hwnd` on
+//! a winit window shows a black strip where the menu should be and shrinks the
+//! client area without telling egui, so every click lands a menu height off,
+//! and its accelerators would need a `TranslateAccelerator` in winit's message
+//! loop, which winit lacks. The egui bar there is not a stopgap.
 //!
-//! Everywhere else the bar is drawn in the window by egui, and `app.rs` handles
-//! the accelerators itself. **Including Windows**:
-//! stage 5 tried `init_for_hwnd` there and it does not work with a winit window
-//! — the menu never appeared, a black strip took its place, and every click
-//! landed one menu-height away from what it hit, because a Win32 menu shrinks
-//! the client area and nothing told egui. muda's accelerators would need a
-//! `TranslateAccelerator` in the message loop as well, which winit does not
-//! have, so the platform bar on Windows is not a small fix and the egui one is
-//! not a stopgap.
-//!
-//! Clicks arrive on muda's own thread, so they land in a queue and wake the UI;
-//! `take_activated` drains it at the top of a frame.
+//! Clicks from muda's own thread land in a queue; `take_activated` drains it
+//! at the top of a frame.
 
 use std::sync::{Arc, Mutex};
 
@@ -173,7 +168,7 @@ mod in_window {
         /// Check marks, by command id, pushed each frame from the store.
         checked: std::cell::RefCell<Vec<(&'static str, bool)>>,
         queue: Queue,
-        /// A click a test makes, delivered from where a real one comes from.
+        /// A click a test injects; `bar` returns it the same way as a real one.
         /// See `Menu::fire_next_frame`.
         #[cfg(test)]
         injected: std::cell::RefCell<Option<(String, usize)>>,
@@ -244,10 +239,8 @@ mod in_window {
                 brand(ui, tok);
                 for menu in MENUS {
                     ui.menu_button(menu.title, |ui| {
-                        // Room for a tick in front of every item, the way
-                        // `.menu .item` reserves 28px of padding-left for the
-                        // `::before` that draws one: the labels of a menu line
-                        // up whether or not the one above is checked.
+                        // Reserves room for a tick like `.menu .item`'s 28px `::before`
+                        // padding, so labels line up whether or not the item above is checked.
                         ui.spacing_mut().button_padding.x = TICK_GUTTER;
                         for it in menu.items {
                             if it.id.is_empty() {
@@ -268,9 +261,8 @@ mod in_window {
                         }
                     });
                 }
-                // The theme cycle sits at the right end of the bar, where
-                // `MenuBar.tsx` puts it. `theme` is not a command id — nothing
-                // else can reach it — so the caller reads it off the return.
+                // The theme cycle sits at the right end of the bar. `theme` is not a
+                // command id: the caller reads it directly off the return.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let icon = match tok.theme_icon {
                         0 => &crate::icons::SUN,
@@ -326,18 +318,14 @@ impl Menu {
 
     /// Pretend the user picked `id` from the bar on the next frame drawn.
     ///
-    /// Three of the five places that call `commands::run` do it *during* a
-    /// frame, after `App::frame` has refreshed its caches and before the panes
-    /// are drawn: this bar, the pane toolbar a few lines above `list::show`,
-    /// and the context menu. Nothing in the test layer could reach that point —
-    /// tests either call a command between frames or draw a frame in which
-    /// nothing is clicked — and that is the gap a load in the middle of a frame
-    /// slipped through, leaving rows built for the tape that had just been
-    /// replaced. The toolbar's own buttons cannot stand in for it, because the
-    /// interesting ones open a native file dialog and would block the test.
-    ///
-    /// Only the queue is test-only; what happens to the value afterwards is the
-    /// production path, unchanged.
+    /// Three of the five callers of `commands::run` fire *during* a frame, after
+    /// `App::frame` has refreshed its caches and before the panes are drawn: this
+    /// bar, the pane toolbar and the context menu (`handle_menu` and `handle_keys`
+    /// run before it). A test that calls a command between frames, or draws a
+    /// frame in which nothing is clicked, never reaches that path, where a command
+    /// can leave rows built for the tape it just replaced. The toolbar's own
+    /// buttons cannot stand in for it: the interesting ones open a native file
+    /// dialog and would block the test.
     #[cfg(test)]
     pub fn fire_next_frame(&self, id: &str, side: usize) {
         match self {
@@ -447,11 +435,8 @@ mod tests {
         (ctx, app)
     }
 
-    /// The check mark of an option that is on. It used to be a `✓` in the
-    /// label, which the app's font set has no glyph for: what the menu
-    /// actually showed was an empty box. Painting it leaves pixels in the
-    /// gutter, and nothing else in this frame differs — the tape is empty, so
-    /// no row or number moves when the options change.
+    /// The check mark of an option that is on (see `tick`). The tape is empty,
+    /// so nothing but the check-mark pixels differs between the two frames.
     #[test]
     fn an_option_that_is_on_is_ticked() {
         let (ctx, mut app) = app_with(false);
@@ -464,8 +449,7 @@ mod tests {
     }
 
     /// The pane header's overflow button opens a menu of its own, over the
-    /// list: the home of what the Left and Right menus used to hold. Drawn
-    /// without a menu bar, the way macOS draws the window.
+    /// list. Drawn without a menu bar, the way macOS draws the window.
     #[test]
     fn the_pane_header_has_an_overflow_menu() {
         let ctx = egui::Context::default();

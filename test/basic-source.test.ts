@@ -45,11 +45,11 @@ describe('BASIC as text', () => {
   it('checks the syntax of a changed line when asked to', () => {
     const { body, progLen } = program();
     const text = basicSource(body, 0, progLen) + '\n9000 LET a$=1: GO TO';
-    // Off (the flag's default), a line only has to be spellable.
+    // The syntax check defaults to off, so a line only has to be spellable.
     expect('program' in editBasic(body, 0, progLen, text)).toBe(true);
     const r = editBasic(body, 0, progLen, text, { checkSyntax: true });
     expect(r).toEqual({ errors: [{ line: 7, message: expect.stringContaining('string variable takes a string') }] });
-    // And the lines it left alone are never checked, whatever they hold.
+    // `editBasic` never checks a line it leaves unchanged, whatever it holds.
     expect('program' in editBasic(body, 0, progLen, basicSource(body, 0, progLen), { checkSyntax: true })).toBe(true);
   });
 });

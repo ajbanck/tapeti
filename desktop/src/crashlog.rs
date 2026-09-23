@@ -1,22 +1,15 @@
 //! Where a panic goes when there is no terminal to see it.
 //!
-//! A Rust panic unwinds and the process exits 101, which means the app simply
-//! vanishes and takes the one useful sentence with it. macOS files no crash
-//! report for an exit — `~/Library/Logs/DiagnosticReports` stays empty, because
-//! nothing was signalled — and the unified log does not carry the stderr of an
-//! app launched from Finder. On Windows `#![windows_subsystem = "windows"]`
-//! means there is no console to write to at all. So the only way anyone could
-//! report the list panic this module was written for was "it terminates", and
-//! the line number took a terminal and a session to get to.
+//! A panic exits the process with no visible report: macOS writes none to
+//! `~/Library/Logs/DiagnosticReports` for a plain exit, and does not carry the stderr of an
+//! app launched from Finder into the unified log; `#![windows_subsystem = "windows"]` leaves
+//! no console on Windows either. The hook writes the message, source location and a backtrace
+//! beside the settings file, which the About dialog names; the location survives stripping
+//! because it is a static string in the binary.
 //!
-//! A panic also takes every unsaved edit with it, so the hook writes those out
-//! first ([`keep`] is told what they are as the tapes change) and the next start
-//! puts them back in their panes. TAPER did the same with LEFTTAPE.TZX.
-//!
-//! The hook writes the message, the source location and a backtrace beside the
-//! settings file, and the About dialog names that file once it exists. The
-//! location is the part that always survives: it is a static string in the
-//! binary, so stripping does not touch it.
+//! A panic also takes every unsaved edit with it, so the hook writes those out first
+//! ([`keep`] is told what they are as the tapes change) and the next start puts them back,
+//! as TAPER did with LEFTTAPE.TZX.
 
 use std::backtrace::Backtrace;
 use std::io::Write;
@@ -31,8 +24,7 @@ use tapeti_core::writer::serialize_tzx;
 /// An unsaved tape as last seen: which version of it, its name, its blocks.
 type Unsaved = Option<(u64, String, Vec<Block>)>;
 
-/// What the hook would have to write out, per pane. `None` for a tape with
-/// nothing unsaved on it.
+/// What the hook would have to write out, per pane. `None` for a tape with nothing unsaved.
 static UNSAVED: Mutex<[Unsaved; 2]> = Mutex::new([None, None]);
 
 const SIDES: [&str; 2] = ["left", "right"];
@@ -101,10 +93,9 @@ pub fn path() -> Option<PathBuf> {
 pub fn install() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // stderr first, and always: running from a terminal should look exactly
-        // as it did before this module existed.
+        // Always run the default hook first, so a terminal run still shows the panic directly.
         default(info);
-        // The tapes before the report: they are what cannot be had again.
+        // Save the tapes before the report: they are what would otherwise be lost.
         let kept = rescue();
         eprint!("{kept}");
         if let Some(path) = path() {
@@ -180,8 +171,6 @@ fn append(path: &Path, text: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    /// What is held follows the tape: a copy per unsaved version, nothing once
-    /// it is saved, and no second copy of a version already held.
     #[test]
     fn only_what_is_unsaved_is_held() {
         use tapeti_core::types::{create_body, Block};
@@ -200,8 +189,6 @@ mod tests {
         assert_eq!(held(&slot), None);
     }
 
-    /// The whole way round: what the hook writes is what the next start puts
-    /// back, unsaved as it was, and the file is gone once it has been.
     #[test]
     fn a_rescued_tape_comes_back_unsaved() {
         use crate::settings::Settings;
@@ -238,8 +225,7 @@ mod tests {
         assert_eq!(utc(951_782_400), "2000-02-29 00:00:00Z");
     }
 
-    /// The location is what a report is worth, so it has to be in there whole —
-    /// file, line and column, the way the panic prints it.
+    /// The location is file, line and column, in the same order Rust's panic message uses.
     #[test]
     fn a_report_carries_the_location_and_the_message() {
         let text = report("index out of bounds", Some(Location::caller()), "<trace>", 0);

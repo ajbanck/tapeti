@@ -1,4 +1,5 @@
 //! The three checksums a tape file is known by: CRC32, MD5 and SHA-1.
+//!
 //! Taken over the bytes of the file as read, never over what saving would write:
 //! the writer rebuilds the file and may raise its version, and a hash of that
 //! would match nothing. Written out here because the core has no

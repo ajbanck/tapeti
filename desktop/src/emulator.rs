@@ -1,11 +1,6 @@
 //! "Open in emulator": write the tape to a temp file and start an external emulator with it.
 //! The program is either chosen by the user or auto-detected (Fuse). It is started directly,
 //! never through a shell, so paths with spaces need no quoting.
-//!
-//! This is the one piece of the Tauri shell that outlived it: stage 5 deleted
-//! `src-tauri/`, and the two `#[tauri::command]` attributes its copy carried were
-//! the whole difference — the shell reached these through the IPC bridge, this
-//! app calls them.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

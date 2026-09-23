@@ -1,11 +1,11 @@
 // Answers from the core, remembered per tape.
 //
 // Every call sends the blocks across the wasm boundary, so asking twice for the
-// same tape costs twice. Blocks and the arrays holding them are immutable here —
-// every edit makes a new array (see src/state/store.ts) — so a WeakMap keyed on
-// the array itself cannot go stale, and the entry disappears with the tape.
+// same tape costs twice. Blocks and the arrays holding them are immutable: every
+// edit makes a new array (see src/state/store.ts), so a WeakMap keyed on the
+// array itself cannot go stale, and the entry disappears with the tape.
 //
-// This is what `useMemo` in the components used to do, one layer lower, so two
+// Centralizing the memoization here, rather than in each component, means two
 // components asking the same question only pay once.
 import { Block } from './types';
 

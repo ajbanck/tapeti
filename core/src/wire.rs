@@ -3,8 +3,8 @@
 //! `src/tzx/wire.ts` decodes it. Both ends are hand written, so the format is
 //! deliberately dull: little-endian, fixed widths that match the block model,
 //! no alignment and no compression. Fields appear in the order the TypeScript
-//! object literals in `parser.ts` declare them, so the decoded objects come out
-//! with the same key order as before.
+//! object literals in `test/reference/parser.ts` declare them, so JSON
+//! comparisons of decoded objects keep the same key order.
 //!
 //! ```text
 //! u8  WIRE_VERSION
@@ -18,9 +18,8 @@
 //!           otherwise:    the fields of that block type, in declaration order
 //! ```
 //!
-//! `str` and `bytes` are both a u32 length and that many bytes; `str` holds the
-//! Latin-1 bytes of the TZX text, which the decoder turns back into a JS string
-//! one char per byte.
+//! `str` and `bytes` are both a u32 length and that many bytes; `str` is UTF-8
+//! text, `bytes` raw tape bytes in whatever encoding they carry.
 
 use crate::bytes::{ReadResult, Reader};
 use crate::parser::ParsedTape;
@@ -515,7 +514,7 @@ pub fn encode_programs(programs: &[crate::programs::Program]) -> Vec<u8> {
     w
 }
 
-/// A ROM header arriving from JavaScript, for `encode_header`.
+/// A ROM header arriving from JavaScript, for `core_encode_header`.
 pub fn decode_header_info(buf: &[u8]) -> ReadResult<crate::describe::HeaderInfo> {
     let mut r = Reader::new(buf);
     let kind = r.u8()?;

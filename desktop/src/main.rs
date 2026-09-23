@@ -1,16 +1,13 @@
 //! Tapeti, the desktop app.
 //!
 //! A window, the platform's menu built from one command table, two tape panes
-//! with their editors, the data window, the dialogs and playback — all on
-//! `tapeti-core` linked directly: no wasm, no wire format, no web view. Stage 3
-//! of the Rust migration chose the toolkit and measured the boundary, stage 4
-//! filled the app in against a parity checklist, and stage 5 made it the
-//! desktop app: the Tauri shell is gone, `src/` is the browser build.
+//! with their editors, the data window, the dialogs and playback, linked
+//! directly to `tapeti-core`: no wasm, no wire format, no web view.
 //!
-//! The flags are in `HELP` below, which is what `--help` prints — one list, so it
-//! cannot drift from the arguments `parse_args` accepts the way it did before
-//! `--screenshot` existed. `--screenshot` and `--measure` are the two that open no
-//! window, which is what makes them the way to check a change from a terminal.
+//! `HELP` below is what `--help` prints, one list so it cannot drift from what
+//! `parse_args` accepts. `--screenshot` and `--measure` open no window, so they
+//! check a change from a terminal; `--screenshot` is the desktop equivalent of
+//! the web build's `npm run smoke`.
 
 #![windows_subsystem = "windows"]
 
@@ -56,9 +53,7 @@ const DEFAULT_TAPE: &str = "public/samples/Tapeti demo.tzx";
 /// and a task bar want.
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/128x128.png");
 
-/// `--help`. The flags below the first group open no window, which is what makes
-/// them the way to check a change from a terminal; `--screenshot` is the one the
-/// tests use too, through `shot::capture`.
+/// `--help`. `--screenshot` is also what the tests use, through `shot::capture`.
 const HELP: &str = "\
 tapeti [TAPE…] [OPTIONS]
 
@@ -162,8 +157,8 @@ fn default_tape() -> Option<PathBuf> {
     roots.into_iter().map(|r| r.join(DEFAULT_TAPE)).find(|p| p.is_file())
 }
 
-/// Repeat the tape's blocks until the list is `rows` long, the way the stage 2
-/// benchmarks built their 3,000-block tape.
+/// Repeats the tape's blocks until the list is `rows` long, for benchmarking with
+/// a large tape.
 fn grow(blocks: &[Block], rows: usize) -> Vec<Block> {
     if blocks.is_empty() {
         return Vec::new();
@@ -171,8 +166,7 @@ fn grow(blocks: &[Block], rows: usize) -> Vec<Block> {
     (0..rows).map(|i| blocks[i % blocks.len()].clone_fresh()).collect()
 }
 
-/// The stage 2 boundary table, one call per line, with the wire encoding gone:
-/// this is the same work the web app pays for through wasm.
+/// The core operations `--measure` times and prints, one call per line.
 fn measure(blocks: &[Block], parse_ms: f64, hex: bool) {
     fn ms(f: impl FnOnce()) -> f64 {
         let t = Instant::now();
@@ -215,13 +209,13 @@ fn measure(blocks: &[Block], parse_ms: f64, hex: bool) {
     debug_assert!(sink > 0);
 }
 
-/// What the app's own first frame costs before a window is involved: laying out
-/// and tessellating every panel, and rasterising the glyphs it uses. This is the
-/// half of cold start that can be measured from a terminal — the other half is
-/// process start, window creation and the GL context, and it needs a screen.
+/// What the app's own first frame costs before a window exists: laying out and
+/// tessellating every panel, and rasterising the glyphs it uses. This is the
+/// half of cold start measurable from a terminal; process start, window
+/// creation and the GL context need a screen.
 ///
-/// The two font sets are timed against each other because trimming them was the
-/// obvious suspect for a slow start. It is not: the gap is about a millisecond.
+/// The two font sets are compared to check whether trimming them speeds cold
+/// start: it is not a cold-start lever, the gap is about a millisecond.
 fn measure_first_frame(store: Store) {
     let mut store = Some(store);
     println!("\nfirst headless frame (no window, no GL context, warm page cache):");
@@ -276,9 +270,9 @@ fn main() -> eframe::Result<()> {
     let mut store = Store::new(settings);
     store.hex = opts.hex;
 
-    // The command line is the "open with" queue the Tauri shell used to drain: a
-    // tape named on it goes into the left pane, a second into the right. macOS
-    // sends an Apple Event instead of argv, which `macos::install` catches.
+    // A tape named on the command line opens in the left pane, a second in the
+    // right. macOS sends an Apple Event instead of argv, which `macos::install`
+    // catches.
     let t_parse = Instant::now();
     files::open_with(&mut store, &startup_paths(&opts));
     let parse_ms = t_parse.elapsed().as_secs_f64() * 1000.0;
@@ -297,8 +291,8 @@ fn main() -> eframe::Result<()> {
         store.tape_mut(0).load(name, None, grown, None);
     }
 
-    // A picture of the app, without a window: what `npm run smoke` gives the
-    // browser build. `--screenshot out.png` or `--screenshot out.png,1400x900`.
+    // A picture of the app, without a window. `--screenshot out.png` or
+    // `--screenshot out.png,1400x900`.
     if let Some(spec) = opts.screenshot.clone() {
         let (path, size) = match spec.split_once(',') {
             Some((p, wh)) => {
@@ -386,10 +380,10 @@ mod tests {
         }
     }
 
-    /// Started with nothing to open, the app opens nothing: the demo tape is for
-    /// the measuring flags, which have to measure something. Double-clicking the
-    /// app used to open whatever tape was next to the binary, which is a
-    /// development convenience and not what an editor does.
+    /// A plain start opens no tape: the demo tape is only for the measuring flags,
+    /// which need something to measure. Opening whatever tape sits next to the
+    /// binary on a double-click is a development convenience, not what an editor
+    /// does; do not bring it back.
     #[test]
     fn a_plain_start_opens_no_tape() {
         assert!(startup_paths(&opts()).is_empty());
