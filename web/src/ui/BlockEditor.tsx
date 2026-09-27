@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { Side, tapes, replaceBlock, fmtNum, fmtByte, hex, locked, parseNum, showMessage, blockNo } from '../state/store';
 import {

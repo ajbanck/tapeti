@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Platform adapter: the only place that knows how files get in and out of the app.
 // This build is the browser one: <input type=file> and blob downloads. The desktop
 // app is `desktop/` (Rust), with its own file layer in `desktop/src/files.rs`; the

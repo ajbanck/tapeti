@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The binary format the wasm build hands parsed tapes to JavaScript in.
 //!
 //! `web/src/tzx/wire.ts` decodes it. Both ends are hand written, so the format is

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // The one table of user commands. The desktop app's menu (menu.rs), the in-app menus and the
 // context menu (MenuBar.tsx) and the keyboard shortcuts (App.tsx) all resolve to an entry here,
 // so labels, enabled state and behaviour live in a single place. Ids match the item ids in menu.rs.

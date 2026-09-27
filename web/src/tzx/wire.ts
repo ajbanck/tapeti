@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Decoder for the byte format the Rust core answers in; `core/src/wire.rs` is
 // the encoder and documents the layout. Fields are read in the order the block
 // literals below declare them, matching `types.ts`, so key order (and therefore

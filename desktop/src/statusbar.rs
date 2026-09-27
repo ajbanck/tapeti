@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The status bar: the Dec/Hex switch, the
 //! two compare modes, the lock, the waveform, and either the status message or
 //! the playback progress.

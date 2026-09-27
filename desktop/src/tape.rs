@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The two things the native side must bring that the core does not have:
 //! inflating Z-RLE CSW blocks, and the binary search over a timeline the caller
 //! already holds.

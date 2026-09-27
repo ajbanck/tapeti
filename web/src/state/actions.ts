@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { Side, tapes, commit, unitIndices, setStatus, dialog, dataWindow, active, blockNo, selectUids, setCursor, insertBlocks } from './store';
 import { downloadBytes, newTape, confirmDiscard } from './files';
 import {

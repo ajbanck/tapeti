@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! BASIC as text that can be typed, saved and turned back into a program: the
 //! other direction from the lister in `basic.rs`.
 //!

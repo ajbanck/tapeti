@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { signal } from '@preact/signals';
 import { Block } from '../tzx/types';
 import { renderTape, playbackTimeline, playbackOrder, positionAt, TSTATES_PER_SEC } from '../tzx/core';

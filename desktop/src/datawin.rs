@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The data window: hex, screen, BASIC,
 //! variables, text and disassembly over the bytes of one block, or of several
 //! viewed as one.

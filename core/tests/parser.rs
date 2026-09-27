@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Parser tests. Two halves:
 //!
 //! * `matches_the_dumps`: every dump in `tests/fixtures/` must be reproduced byte for

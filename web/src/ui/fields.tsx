@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { useState, useEffect } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
 import { fmtNum, parseNum, hex } from '../state/store';

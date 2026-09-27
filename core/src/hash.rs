@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The three checksums a tape file is known by: CRC32, MD5 and SHA-1.
 //!
 //! Taken over the bytes of the file as read, never over what saving would write:

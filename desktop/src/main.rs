@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Tapeti, the desktop app.
 //!
 //! A window, the platform's menu built from one command table, two tape panes

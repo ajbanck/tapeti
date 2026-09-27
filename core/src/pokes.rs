@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! POKEs text syntax <-> the standardized 'POKEs' custom info block.
 //!
 //!   Each POKE on its own line:  `[POKE] [page:]adr,val[/orgval]`

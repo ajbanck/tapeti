@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { useEffect } from 'preact/hooks';
 import { effect } from '@preact/signals';
 import { MenuBar } from './MenuBar';

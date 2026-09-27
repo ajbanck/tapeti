@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Generates the test tapes in core/tests/samples/ from scratch, using the app's own
 // TZX writer. Nothing in them is copied from a real tape: the BASIC program, the
 // screen, the machine code and the loader timings are all made up here, so the

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Block descriptions and ROM headers.
 //!
 //! `isMetadata` in `web/src/tzx/core.ts` is the web side's copy of `is_metadata`;

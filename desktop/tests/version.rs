@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! One version number across the repo: this crate's `CARGO_PKG_VERSION`.
 //!
 //! `CARGO_PKG_VERSION` is what ships: the About dialog, the macOS About panel, the

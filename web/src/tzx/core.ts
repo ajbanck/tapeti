@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // The Rust tape core's TypeScript face: the loader, and every call the app makes
 // into it, under the name the app knows it by.
 //

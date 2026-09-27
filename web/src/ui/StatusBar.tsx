@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { hex, locked, blockCompare, tapeCompare, audioMode, status, toggleLock, fmtTime, blockNo, tapes } from '../state/store';
 import { playing, playingSide, playingBlock, playPos, stopPlayback } from '../state/player';
 import { Icon } from './icons';

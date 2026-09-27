@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Application state as Preact signals, plus the editing operations on it. File I/O lives in
 // files.ts, higher-level actions in actions.ts, and the command table in commands.ts.
 import { signal } from '@preact/signals';

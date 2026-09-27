@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vitest/config';
 import preact from '@preact/preset-vite';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Getting tapes in and out of the store, with `rfd` for the file dialogs.
 //!
 //! There is no platform adapter here: the web app needs one because a browser

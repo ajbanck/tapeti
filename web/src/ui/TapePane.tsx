@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { Side, tapes, active, setCursor, unitIndices, moveBlocks, toggleCollapse, hex, blockNo, zeroBased, fmtTime } from '../state/store';
 import { openFiles } from '../state/files';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The design tokens of `web/src/style.css`, both themes, plus the egui `Visuals`
 //! built from them.
 //!

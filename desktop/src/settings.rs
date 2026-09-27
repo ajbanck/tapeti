@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The options the web build keeps in `localStorage`, in a plain `key=value`
 //! file next to the platform's other application data.
 //!

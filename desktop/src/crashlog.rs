@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Where a panic goes when there is no terminal to see it.
 //!
 //! A panic exits the process with no visible report: macOS writes none to

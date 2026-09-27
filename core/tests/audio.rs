@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Audio tests: the playback flow, the pulses each block makes, the sample
 //! rendering and the WAV encoding. `web/test/core.test.ts` holds the same, through the
 //! wasm build, to recorded answers.

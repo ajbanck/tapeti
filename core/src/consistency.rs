@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! "Check consistency": structure, useless blocks, infinite loops, cross
 //! nesting.
 

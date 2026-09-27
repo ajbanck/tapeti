@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Headless UI smoke test. Start `npm run dev` first, then `npm run smoke`.
 // Loads two of the test tapes (scripts/make-samples.mjs; the dev server serves core/tests/samples/ at /samples/), exercises the list, editor, data window, menus and undo,
 // fails on console errors, and writes screenshots to web/scratch/.

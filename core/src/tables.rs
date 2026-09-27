@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The labels of the TZX specification's enumerations: the archive-info kinds and
 //! the hardware list, as both editors' dropdowns offer them.
 //!

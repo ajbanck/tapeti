@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Golden tests of the core's TypeScript face: parsing, writing, descriptions, content
 // detection, consistency, programs, comparison, conversion, POKEs, bits, the Spectrum
 // side (charset, screen, BASIC, disassembler) and audio.

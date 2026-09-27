@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Turns a block list into an edge/pulse stream and then into PCM samples, following loops,
 //! jumps, calls and returns exactly like an emulator would.
 //!

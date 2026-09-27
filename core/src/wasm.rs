@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The C ABI the wasm build exposes to JavaScript.
 //!
 //! No wasm-bindgen: the whole interface is a byte buffer in and a byte buffer out, so

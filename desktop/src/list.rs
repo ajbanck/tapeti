@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The block list.
 //!
 //! The rows are built from the core once per version of the tape, not once per

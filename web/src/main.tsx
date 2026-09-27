@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { render } from 'preact';
 import { App } from './ui/App';
 import { applyTheme, theme } from './state/store';

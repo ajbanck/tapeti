@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! TZX and TAP parsing into blocks.
 
 use crate::bytes::{ReadError, ReadResult, Reader};

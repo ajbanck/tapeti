@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The window: two tape panes, the editor under each, the status bar, and the
 //! keyboard.
 //!

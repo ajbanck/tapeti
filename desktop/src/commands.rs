@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Running a command, by the ids of `COMMANDS` in `web/src/state/commands.ts`, which
 //! `tests/menu.rs` holds this side to.
 //!

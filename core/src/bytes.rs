@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Sequential little-endian reads and writes.
 
 /// Reader errors are user-visible: the parser puts their text straight into its warnings.

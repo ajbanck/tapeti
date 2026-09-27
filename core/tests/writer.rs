@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Writer tests: the round trips of `web/test/tzx.test.ts`, the version rules and the
 //! TAP export.
 

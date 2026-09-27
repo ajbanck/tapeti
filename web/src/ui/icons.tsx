@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // The icon set, stroke based so the app has no icon-font dependency. The paths are
 // icons.paths, which the desktop app reads as well: one name and one SVG path per line.
 import raw from './icons.paths?raw';

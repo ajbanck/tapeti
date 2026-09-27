@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Bit-stream helpers for the data window's Drop / Add / Shift operations.
 
 #[derive(Clone, Debug, PartialEq, Eq)]

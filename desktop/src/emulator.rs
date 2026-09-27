@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! "Open in emulator": write the tape to a temp file and start an external emulator with it.
 //! The program is either chosen by the user or auto-detected (Fuse). It is started directly,
 //! never through a shell, so paths with spaces need no quoting.

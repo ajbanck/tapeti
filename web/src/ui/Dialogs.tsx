@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
 import { Dialog, dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum, fmtTime, unitIndices, hex, blockNo, zeroBased } from '../state/store';

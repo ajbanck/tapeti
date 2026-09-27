@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The application menu, built from the table in `menutable.rs`.
 //!
 //! One bar per platform, from one table, in one grouping. On macOS `muda`

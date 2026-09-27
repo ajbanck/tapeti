@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Tests for converting block types, comparing blocks and tapes, the bit
 //! operations and the POKEs block.
 

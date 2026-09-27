@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! TZX block model. `web/src/tzx/types.ts` is the same model on the web side;
 //! `wire.rs` carries blocks across the wasm boundary in that file's declaration order.
 //!

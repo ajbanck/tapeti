@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Tests for the Spectrum side: the character set, the screen, the BASIC lister
 //! and the Z80 disassembler. `web/test/core.test.ts` holds the same to recorded answers
 //! through the wasm build; what is here is what the core owes on its own.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Builds Tapeti, the desktop app (desktop/), and packages it for the platform it
 // is run on. CI calls this script too, so a release is the same steps a person runs.
 //

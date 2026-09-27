@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Headless screenshots: what the app would draw, as a PNG, with no window.
 //!
 //! `npm run smoke` screenshots the browser build through headless Chrome into

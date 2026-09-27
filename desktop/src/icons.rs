@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The icon set: the SVG paths of `web/src/ui/icons.paths`, the file the web app draws
 //! from, flattened into polylines and painted by egui.
 //!

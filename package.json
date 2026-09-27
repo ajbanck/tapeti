@@ -16,6 +16,7 @@
     "typecheck": "npm --prefix web run typecheck --",
     "pretypecheck": "node scripts/build-wasm.mjs",
     "smoke": "node scripts/ui-smoke.mjs",
+    "headers": "node scripts/license-headers.mjs",
     "presamples": "node scripts/build-wasm.mjs",
     "samples": "node scripts/make-samples.mjs",
     "core:wasm": "node scripts/build-wasm.mjs",

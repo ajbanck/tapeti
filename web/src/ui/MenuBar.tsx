@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { useState, useEffect } from 'preact/hooks';
 import { Side, active, theme, cycleTheme } from '../state/store';
 import { COMMANDS, Command, CommandId, commandEnabled, commandKey, commandLabel, runCommand } from '../state/commands';

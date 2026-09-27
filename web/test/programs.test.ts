@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { describe, it, expect } from 'vitest';
 import { detectPrograms, programAt, groupRanges, encodeHeader } from '../src/tzx/core';
 import { createBlock, Block, StandardBlock, GroupStartBlock, TextBlock, SelectBlock, ArchiveBlock } from '../src/tzx/types';

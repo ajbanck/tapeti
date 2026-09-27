@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The file checksums against their published test vectors (RFC 1321 for MD5,
 //! FIPS 180 for SHA-1, the "123456789" check value for CRC-32), and against
 //! Python's hashlib and zlib at the lengths where the padding crosses a block.

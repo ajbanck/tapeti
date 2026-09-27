@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { describe, it, expect } from 'vitest';
 import { convertBlock } from '../src/tzx/core';
 import { createBlock, ROM_TIMINGS, TurboBlock, GeneralizedBlock, PauseBlock, TextBlock, GroupStartBlock, StandardBlock } from '../src/tzx/types';

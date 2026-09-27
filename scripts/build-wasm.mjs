@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Builds core/ for wasm32, with the workspace's size-first `wasm` profile, and writes it
 // into the bundle as base64:
 //

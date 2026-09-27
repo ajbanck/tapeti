@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! What a data block contains: a ROM header, a BASIC program, a screen, machine
 //! code, an array or plain data.
 //!

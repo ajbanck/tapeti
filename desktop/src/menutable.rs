@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // The command table the native menu is built from.
 //
 // `menu.rs` builds the menu bar from it — muda's on macOS, an egui bar in the

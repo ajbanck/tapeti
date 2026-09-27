@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   tapes, locked, clipboard, insertBlocks, unitIndices, moveUnit, undo, redo, markSaved, toggleCollapse, groupSelection,

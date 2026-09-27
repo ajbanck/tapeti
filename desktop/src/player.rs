@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Playback.
 //!
 //! cpal takes a callback and asks for frames, so the rendered tape lives in an `Arc<[f32]>`

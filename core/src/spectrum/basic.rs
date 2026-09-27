@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The BASIC lister and the variables area.
 //!
 //! The number formatting reimplements JavaScript's `Number.prototype.toPrecision(8)`

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The per-type block editor.
 //!
 //! The form edits a draft `Body` value directly; Commit replaces the block with

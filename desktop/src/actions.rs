@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The higher-level actions.
 //!
 //! A confirmation's follow-up is a [`Then`] value, not a closure: a closure that outlives

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // TZX block model. Every block carries a `uid` used by the UI for selection,
 // drag & drop and keys. Numbers are plain JS numbers, byte data is Uint8Array.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Names the disassembler puts beside numbers: the 48K ROM's system variables,
 //! the error reports behind `RST 08`, the calculator's literals behind `RST 28`,
 //! and symbols of the user's own.

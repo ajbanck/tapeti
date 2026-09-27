@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The small widgets the forms are made of.
 //!
 //! A number field keeps the typed text apart from the value, so a half-typed number is not

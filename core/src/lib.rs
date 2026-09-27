@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! TZX/TAP data layer: block model, parsing and writing. No I/O, no UI, no dependencies.
 //!
 //! The desktop app links this crate directly. The web app reaches it through the `wasm` ABI

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 // Getting tapes in and out of the store: parsing loaded bytes, saving through the platform
 // adapter, and routing files that arrive from dialogs or drops.
 import { Side, tapes, active, dialog, emptyTape, markSaved, insertBlocks, setStatus, showMessage, blockNo } from './store';

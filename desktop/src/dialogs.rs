@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The dialogs.
 //!
 //! Each dialog owns its own widget state, and the store holds one `Option<Dialog>`. A

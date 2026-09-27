@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The snapshot loader, run for real: a small Z80 interpreter with T-state
 //! counting executes the generated loader against the pulses the tape's blocks
 //! produce, and the machine it leaves behind is compared with the snapshot.

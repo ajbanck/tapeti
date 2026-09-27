@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! A canonical text rendering of a parsed tape: what `tests/fixtures/` holds for
 //! every sample tape, and what `tests/parser.rs` compares a parse against.
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Changing a block's type while keeping whatever fields carry over (the block editor's type menu).
 //!
 //! Each carried field is read from the old body and written to the new one explicitly, through

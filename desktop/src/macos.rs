@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! macOS glue eframe does not provide: Finder document opens, and a drag-drop position.
 //!
 //! Double-clicking a tape does not put a path in `argv`. Launch Services sends a

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! TZX and TAP writing.
 
 use crate::bytes::{string_to_latin1, Writer};

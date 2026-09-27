@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Tests for descriptions, content detection, consistency and program structure in the core.
 //! `web/test/core.test.ts` holds the same, through the wasm build, to recorded answers; what is
 //! here is what the core owes on its own, plus the two predicates (`isMetadata`, `blockBody`)

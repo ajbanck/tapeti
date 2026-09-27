@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! The native menu against `web/src/state/commands.ts`.
 //!
 //! The web app and this one address commands by the same ids and grey them out

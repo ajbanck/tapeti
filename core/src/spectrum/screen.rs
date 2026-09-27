@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Rendering a Spectrum screen dump.
 
 pub const SCREEN_SIZE: usize = 6912;

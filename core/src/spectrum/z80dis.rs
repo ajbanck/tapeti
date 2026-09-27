@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 AJ Banck
+
 //! Table-free Z80 disassembler following the x/y/z/p/q decoding scheme. Handles CB, ED, DD, FD,
 //! DDCB and FDCB prefixes including undocumented forms.
 //!
