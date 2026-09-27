@@ -37,6 +37,14 @@ export default defineConfig({
   // Oldest engines we support: Safari 14.1 (macOS Big Sur 11.3 / WebKitGTK 2.32), Chrome 90, Firefox 90.
   build: {
     target: ['safari14', 'chrome90', 'firefox90'],
+    // The core's wasm, inlined as base64 (scripts/build-wasm.mjs), is most of the bundle: a chunk
+    // of its own keeps the app's chunk under the size warning and lets either change without
+    // the other's cache going. Still a static import, so the page preloads both in parallel.
+    rolldownOptions: {
+      output: {
+        codeSplitting: { groups: [{ name: 'core', test: /core\.wasm\.ts$/ }] },
+      },
+    },
   },
   server: {
     port: 5173,
