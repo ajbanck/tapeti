@@ -1,4 +1,4 @@
-//! ZX Spectrum character set to Unicode, the port of `src/spectrum/charset.ts`.
+//! ZX Spectrum character set to Unicode.
 
 const BLOCKS: [&str; 16] = [" ", "▝", "▘", "▀", "▗", "▐", "▚", "▜", "▖", "▞", "▌", "▛", "▄", "▟", "▙", "█"];
 

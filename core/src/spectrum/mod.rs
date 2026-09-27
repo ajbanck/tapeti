@@ -1,5 +1,5 @@
 //! The Spectrum side of the app: the character set, the screen, the BASIC
-//! lister, BASIC as text (`source`) and the Z80 disassembler. The port of `src/spectrum/`.
+//! lister, BASIC as text (`source`) and the Z80 disassembler.
 
 pub mod basic;
 pub mod charset;

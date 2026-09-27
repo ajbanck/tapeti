@@ -1,4 +1,4 @@
-//! The status bar, the port of `src/ui/StatusBar.tsx`: the Dec/Hex switch, the
+//! The status bar: the Dec/Hex switch, the
 //! two compare modes, the lock, the waveform, and either the status message or
 //! the playback progress.
 

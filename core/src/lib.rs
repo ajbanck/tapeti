@@ -1,8 +1,7 @@
-//! Pure TZX/TAP data layer, the Rust port of `src/tzx/`. No I/O, no UI.
+//! TZX/TAP data layer: block model, parsing and writing. No I/O, no UI, no dependencies.
 //!
-//! The block model and the parser,
-//! plus the wasm ABI (`wasm`) and the byte format (`wire`) the TypeScript app
-//! calls them through.
+//! The desktop app links this crate directly. The web app reaches it through the `wasm` ABI
+//! and the `wire` byte format, whose other end is `web/src/tzx/core.ts` and `web/src/tzx/wire.ts`.
 
 pub mod audio;
 pub mod bits;

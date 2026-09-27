@@ -215,7 +215,7 @@ function block(r: Reader): Block {
  * `withData: false` leaves the byte payloads out: for a call that only looks at
  * block types, copying them costs more than the call. Only for entry points that
  * provably ignore the data (`core_required_version`, `core_save_version`);
- * `test/core.test.ts` records their answers on blocks that do carry data, so a
+ * `web/test/core.test.ts` records their answers on blocks that do carry data, so a
  * core that started reading it would fail there.
  */
 export function encodeBlocks(blocks: Block[], opts: { withData?: boolean } = {}): Uint8Array {

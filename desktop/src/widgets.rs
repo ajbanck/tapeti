@@ -1,10 +1,9 @@
-//! The small widgets the forms are made of: the port of `src/ui/fields.tsx`.
+//! The small widgets the forms are made of.
 //!
-//! `NumInput` on the web keeps the typed text in component state so a half-typed
-//! number is not reformatted under the cursor, and marks it invalid until it
-//! parses. egui has no component state, so the text lives in the context's
-//! temporary memory under the widget's id and is refreshed from the value
-//! whenever the field is not being edited — which comes to the same thing.
+//! A number field keeps the typed text apart from the value, so a half-typed number is not
+//! reformatted under the cursor, and marks it invalid until it parses. egui has no widget
+//! state of its own, so the text lives in the context's temporary memory under the widget's
+//! id and is refreshed from the value whenever the field is not being edited.
 
 use std::fmt::Debug;
 use std::hash::Hash;

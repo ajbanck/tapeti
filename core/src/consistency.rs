@@ -1,5 +1,5 @@
 //! "Check consistency": structure, useless blocks, infinite loops, cross
-//! nesting. The port of `src/tzx/consistency.ts`.
+//! nesting.
 
 use crate::content::{block_body, detect_content};
 use crate::describe::checksum;

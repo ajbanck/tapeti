@@ -1,4 +1,4 @@
-//! The per-type block editor, the port of `src/ui/BlockEditor.tsx`.
+//! The per-type block editor.
 //!
 //! The form edits a draft `Body` value directly; Commit replaces the block with
 //! it, with no per-field property, setter or callback to keep in sync.

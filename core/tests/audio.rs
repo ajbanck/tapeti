@@ -1,6 +1,6 @@
 //! Audio tests: the playback flow, the pulses each block makes, the sample
-//! rendering and the WAV encoding. `test/core.test.ts` holds the same to recorded
-//! answers through the wasm build.
+//! rendering and the WAV encoding. `web/test/core.test.ts` holds the same, through the
+//! wasm build, to recorded answers.
 
 use tapeti_core::audio::{
     block_duration, decode_csw_rle, emit_block, encode_wav, playback_order, playback_timeline, render_length,

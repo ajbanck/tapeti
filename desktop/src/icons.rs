@@ -1,4 +1,4 @@
-//! The icon set: the SVG paths of `src/ui/icons.paths`, the file the web app draws
+//! The icon set: the SVG paths of `web/src/ui/icons.paths`, the file the web app draws
 //! from, flattened into polylines and painted by egui.
 //!
 //! Icons are geometry rather than glyphs, so the app needs no icon font and no
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// The shared file, one `name path` per line.
-const PATHS: &str = include_str!("../../src/ui/icons.paths");
+const PATHS: &str = include_str!("../../web/src/ui/icons.paths");
 
 pub enum Icon {
     /// A path of the shared file, by name.

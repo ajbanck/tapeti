@@ -1,16 +1,16 @@
 // Golden tests of the core's TypeScript face: parsing, writing, descriptions, content
 // detection, consistency, programs, comparison, conversion, POKEs, bits, the Spectrum
-// side (charset, screen, BASIC, disassembler) and audio, over the same inputs the
-// differential test used while the core was ported from TypeScript.
+// side (charset, screen, BASIC, disassembler) and audio.
 //
-// The expected values are `__snapshots__/core.test.ts.snap`, recorded from the core
-// when the frozen TypeScript it was ported from was retired. A changed answer fails
-// here until `npm test -- -u` records the new one, so the diff is the review. Bulky
-// answers (rendered screens and samples, the opcode sweep) are kept as SHA-1 digests.
+// The expected values are `__snapshots__/core.test.ts.snap`, recorded from the core. A
+// changed answer fails here until `npm test -- -u` records the new one, so the diff is
+// the review. Bulky answers (rendered screens and samples, the opcode sweep) are kept as
+// SHA-1 digests.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { deflate } from 'pako';
 import * as core from '../src/tzx/core';
 import {
@@ -23,8 +23,9 @@ import {
 } from '../src/tzx/core';
 import { Block, CREATABLE_IDS, createBlock, isDataBlock } from '../src/tzx/types';
 
-const sample = (name: string) => new Uint8Array(fs.readFileSync(path.resolve('test/samples', name)));
-const sampleNames = () => fs.readdirSync(path.resolve('test/samples')).sort();
+const SAMPLES = fileURLToPath(new URL('../../core/tests/samples', import.meta.url));
+const sample = (name: string) => new Uint8Array(fs.readFileSync(path.join(SAMPLES, name)));
+const sampleNames = () => fs.readdirSync(SAMPLES).sort();
 
 const hex = (b: Uint8Array) => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('hex');
 

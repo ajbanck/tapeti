@@ -1,4 +1,4 @@
-//! The block list, the port of `src/ui/TapePane.tsx`.
+//! The block list.
 //!
 //! The rows are built from the core once per version of the tape, not once per
 //! frame: `describe_block` over 3,000 blocks takes 0.9 ms, against a 16 ms frame

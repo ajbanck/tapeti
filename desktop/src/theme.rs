@@ -1,4 +1,4 @@
-//! The design tokens of `src/style.css`, both themes, plus the egui `Visuals`
+//! The design tokens of `web/src/style.css`, both themes, plus the egui `Visuals`
 //! built from them.
 //!
 //! The web app switches themes by setting `data-theme` on the root element and
@@ -34,7 +34,7 @@ pub struct Tokens {
     pub diff: Color32,
     pub match_: Color32,
     pub ignored: Color32,
-    /// `category()` in `src/ui/TapePane.tsx`: data, signal, flow, struct, info, unknown.
+    /// `category()` in `web/src/ui/TapePane.tsx`: data, signal, flow, struct, info, unknown.
     pub cat: [Color32; 6],
     /// Which icon the theme button shows: 0 sun, 1 moon, 2 follow the system.
     /// A token because the bar that draws it has no other route to the setting.

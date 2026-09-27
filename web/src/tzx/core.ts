@@ -6,7 +6,7 @@
 // core directly, with no wasm. Compiling wasm is asynchronous (browsers refuse a
 // synchronous compile of anything but a tiny module on the main thread), and the
 // app parses tapes synchronously, so `initCore` runs once at startup, in
-// src/main.tsx, and everything below is sync from then on.
+// web/src/main.tsx, and everything below is sync from then on.
 //
 // What stays in TypeScript is the little that is cheaper here than across the
 // boundary: slicing bytes the caller already holds, a binary search per animation
@@ -175,7 +175,7 @@ function call(entry: Entry, buf: Uint8Array, ...extra: number[]): Uint8Array {
 //
 // Every call sends the blocks across the boundary, so asking twice for the same
 // tape costs twice. Blocks and the arrays holding them are immutable: every edit
-// makes a new array (see src/state/store.ts), so a WeakMap keyed on the array
+// makes a new array (see web/src/state/store.ts), so a WeakMap keyed on the array
 // itself cannot go stale, and the entry disappears with the tape. Memoizing here
 // rather than in each component means two components asking the same question
 // only pay once.
@@ -370,7 +370,7 @@ export function blockLength(b: Block): number {
  *
  * Kept in TypeScript: it is a classification of the block model, like
  * `isDataBlock`, and the list asks it per row. The core has its own copy in
- * `describe.rs`, and `test/core.test.ts` holds both to the same table.
+ * `describe.rs`, and `web/test/core.test.ts` holds both to the same table.
  */
 export function isMetadata(b: Block): boolean {
   return b.id === 0x21 || b.id === 0x22 || b.id === 0x30 || b.id === 0x31 || b.id === 0x32 || b.id === 0x33 || b.id === 0x35 || b.id === 0x5a || (isUnknown(b) && b.id !== 0x16 && b.id !== 0x17);
@@ -390,7 +390,7 @@ export function payload(b: DataBlock): Uint8Array {
  *
  * Kept in TypeScript: a view of bytes the editor already holds, not logic, and
  * crossing into wasm to drop two bytes would cost more than it saves.
- * `content.rs` has the same slice for the core's own use, and `test/core.test.ts`
+ * `content.rs` has the same slice for the core's own use, and `web/test/core.test.ts`
  * holds the two together.
  */
 export function blockBody(data: Uint8Array, skipFlag: boolean, skipChecksum: boolean): Uint8Array {

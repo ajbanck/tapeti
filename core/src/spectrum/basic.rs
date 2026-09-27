@@ -1,8 +1,8 @@
-//! The BASIC lister and the variables area, the port of `src/spectrum/basic.ts`.
+//! The BASIC lister and the variables area.
 //!
 //! The number formatting reimplements JavaScript's `Number.prototype.toPrecision(8)`
-//! and its trailing-zero trim rather than approximating them: that is how the
-//! Spectrum's listing was rendered before the port, and the tests pin the digits.
+//! and its trailing-zero trim exactly: `core/tests/spectrum.rs` and the recorded
+//! answers in `web/test/core.test.ts` pin the digits.
 
 use super::charset::{token_name, zx_char};
 
@@ -243,7 +243,8 @@ fn trailing_number(text: &str) -> Option<&str> {
 
 /// List a BASIC program area. `data` is the raw bytes starting at PROG.
 pub fn list_basic(data: &[u8], start: usize, end: usize, opts: BasicOptions) -> Vec<BasicLine> {
-    let end = end.min(data.len().max(end)); // the TypeScript reads past the end as undefined
+    // `at` reads past `data.len()` as 0, so `end` need not fit inside `data`.
+    let end = end.min(data.len().max(end));
     let mut lines: Vec<BasicLine> = Vec::new();
     let mut p = start;
     while p + 4 <= end {

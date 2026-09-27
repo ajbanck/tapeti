@@ -1,4 +1,4 @@
-//! Writer tests: the round trips of `test/tzx.test.ts`, the version rules and the
+//! Writer tests: the round trips of `web/test/tzx.test.ts`, the version rules and the
 //! TAP export.
 
 use tapeti_core::parser::{parse_tap, parse_tzx};

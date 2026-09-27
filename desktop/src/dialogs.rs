@@ -1,10 +1,8 @@
-//! The dialogs, the port of `src/ui/Dialogs.tsx`.
+//! The dialogs.
 //!
-//! Each dialog owns its own widget state here, where the web version keeps it in
-//! `useState` hooks; the store holds one `Option<Dialog>` exactly as it holds one
-//! `dialog` signal. A dialog is taken out of the store while it draws and put
-//! back unless it closed, which is how a dialog gets to run a command without
-//! borrowing the store twice.
+//! Each dialog owns its own widget state, and the store holds one `Option<Dialog>`. A
+//! dialog is taken out of the store while it draws and put back unless it closed, which is
+//! how a dialog gets to run a command without borrowing the store twice.
 
 use egui::{Align, Layout, RichText, Ui};
 

@@ -1,15 +1,16 @@
+# web/node_modules, installed with `npm ci --prefix web`
 node_modules
-dist
-scratch
-target
+web/dist
 desktop/dist
-src/tzx/core.wasm.ts
+web/scratch
+target
+web/src/tzx/core.wasm.ts
 
 # Private tapes stay out of the repo; only the generated test tapes are tracked
 *.tzx
 *.tap
 *.TZX
 *.TAP
-!test/samples/*.tzx
-!test/samples/*.tap
+!core/tests/samples/*.tzx
+!core/tests/samples/*.tap
 .DS_Store

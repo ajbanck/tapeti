@@ -1,7 +1,7 @@
 //! The options the web build keeps in `localStorage`, in a plain `key=value`
 //! file next to the platform's other application data.
 //!
-//! `src/state/store.ts` persists `tapeti.theme`, `tapeti.hexBytes`,
+//! `web/src/state/store.ts` persists `tapeti.theme`, `tapeti.hexBytes`,
 //! `tapeti.zeroBased` and `tapeti.emulator`, and `TapePane.tsx` the two
 //! splitter positions. The keys here are the same names, so the two builds are
 //! at least readable against each other.

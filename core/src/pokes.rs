@@ -1,13 +1,12 @@
-//! POKEs text syntax <-> the standardized 'POKEs' custom info block, the port
-//! of `src/tzx/pokes.ts`.
+//! POKEs text syntax <-> the standardized 'POKEs' custom info block.
 //!
 //!   Each POKE on its own line:  `[POKE] [page:]adr,val[/orgval]`
 //!   'val' may be '?' meaning "ask the user".
 //!   Lines starting with ';' are trainer descriptions; the first ';' lines before any
 //!   trainer form the general description.
 //!
-//! The TypeScript parses a line with one regular expression; this reads the
-//! same grammar by hand, because the crate has no dependencies.
+//! The grammar is parsed by hand, a line at a time: the crate has no dependencies, so no
+//! regex.
 
 use crate::bytes::{latin1_to_string, string_to_latin1, ReadResult, Reader, Writer};
 
@@ -302,7 +301,7 @@ pub fn text_to_pokes(text: &str, hex: bool) -> Result<PokesInfo, String> {
     Ok(info)
 }
 
-/// Latin-1 helpers the TypeScript re-exported for its tests.
+/// Latin-1 conversions matching how a POKEs block's description and trainer text is stored.
 pub fn text_bytes(s: &str) -> Vec<u8> {
     string_to_latin1(s)
 }

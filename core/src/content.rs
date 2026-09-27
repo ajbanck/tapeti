@@ -1,8 +1,7 @@
 //! What a data block contains: a ROM header, a BASIC program, a screen, machine
 //! code, an array or plain data.
 //!
-//! The port of `src/tzx/content.ts`: it uses the preceding header when there is one,
-//! otherwise heuristics on the bytes.
+//! Uses the preceding header when there is one, otherwise heuristics on the bytes.
 
 use crate::bits::{crypt_preset_for, decrypt_bytes};
 use crate::describe::{decode_header, HeaderInfo};
@@ -89,8 +88,10 @@ impl Default for ContentInfo {
     }
 }
 
-/// Body of a data block after removing flag/checksum bytes. The TypeScript keeps
-/// its own copy of this slice for the editor; a differential test pins them.
+/// Body of a data block after removing flag/checksum bytes.
+///
+/// `blockBody` in `web/src/tzx/core.ts` is the editor's copy of this slice;
+/// `core/tests/logic.rs` and `web/test/core.test.ts` hold both to the same answers.
 pub fn block_body(data: &[u8], skip_flag: bool, skip_checksum: bool) -> &[u8] {
     let mut d = data;
     if skip_flag && !d.is_empty() {

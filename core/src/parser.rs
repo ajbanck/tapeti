@@ -1,4 +1,4 @@
-//! TZX and TAP parsing, the port of `src/tzx/parser.ts`.
+//! TZX and TAP parsing into blocks.
 
 use crate::bytes::{ReadError, ReadResult, Reader};
 use crate::types::{ArchiveEntry, Block, Body, HardwareEntry, PilotRun, SelectEntry, SymDef};

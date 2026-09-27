@@ -1,11 +1,10 @@
-//! TZX block model, the port of `src/tzx/types.ts`.
+//! TZX block model. `web/src/tzx/types.ts` is the same model on the web side;
+//! `wire.rs` carries blocks across the wasm boundary in that file's declaration order.
 //!
-//! Where TypeScript puts `id` and `uid` on every block object, Rust splits the
-//! two: [`Block`] holds the `uid` the UI uses for selection and keys, and
-//! [`Body`] is the tagged union with the block ID implied by the variant,
-//! except [`Body::Unknown`], which carries it explicitly. Matching on `Body`
-//! avoids the TypeScript trap where narrowing on `UnknownBlock.id` does not
-//! exclude other IDs, because `id` there is typed as plain `number`.
+//! [`Body`] is a tagged union with the block ID implied by the variant, except
+//! [`Body::Unknown`], which carries it explicitly, so matching on `Body` cannot
+//! confuse an unknown id with a known one. [`Block`] holds the `uid` the UI uses
+//! for selection and keys.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -186,7 +185,7 @@ impl Body {
         }
     }
 
-    /// `isDataBlock`: blocks that turn bytes into pulses.
+    /// Blocks that turn bytes into pulses.
     pub fn is_data_block(&self) -> bool {
         matches!(
             self,
@@ -198,7 +197,7 @@ impl Body {
         )
     }
 
-    /// `hasData`: blocks with a byte payload the data window can view/edit.
+    /// Blocks with a byte payload the data window can view/edit.
     pub fn has_data(&self) -> bool {
         self.is_data_block() || matches!(self, Body::Custom { .. } | Body::Csw { .. })
     }
@@ -228,9 +227,8 @@ pub const CREATABLE_IDS: [u8; 25] = [
     0x2a, 0x2b, 0x30, 0x31, 0x32, 0x33, 0x35, 0x5a,
 ];
 
-/// A fresh block of the given id with sensible defaults, the port of
-/// `createBlock`. An id the editor does not model becomes an empty unknown
-/// block, as it does there.
+/// A fresh block of the given id with sensible defaults. An id the editor does not
+/// model becomes an empty unknown block.
 pub fn create_body(id: u8) -> Body {
     match id {
         0x10 => Body::Standard { pause: 1000, data: Vec::new() },
@@ -285,8 +283,8 @@ pub fn create_body(id: u8) -> Body {
     }
 }
 
-/// The spec's name for a block ID: the entries of `BLOCK_NAMES` in `types.ts` that the
-/// descriptions need. The UI reads its own copy.
+/// The spec's name for a block ID, only the entries the descriptions need. The web UI's
+/// own table is `BLOCK_NAMES` in `web/src/tzx/types.ts`.
 pub fn block_name(id: u8) -> Option<&'static str> {
     Some(match id {
         0x10 => "Standard speed data",
@@ -339,15 +337,15 @@ impl Block {
         self.body.id()
     }
 
-    /// Deep copy with a new uid, the port of `cloneBlock`. `Clone` is the deep
-    /// copy here, so there is no `deepClone` counterpart.
+    /// Deep copy with a new uid. `Clone` already deep-copies every field, so there
+    /// is no need for a separate deep-clone function.
     pub fn clone_fresh(&self) -> Self {
         Block::new(self.body.clone())
     }
 }
 
-/// Blocks compare by content; uids are identity, not data, and the tests strip
-/// them for exactly this reason.
+/// Blocks compare by content: uids are identity, not data, so two blocks with
+/// different uids can still compare equal.
 impl PartialEq for Block {
     fn eq(&self, other: &Self) -> bool {
         self.body == other.body

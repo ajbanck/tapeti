@@ -1,13 +1,11 @@
 //! Changing a block's type while keeping whatever fields carry over (the block editor's type menu).
 //!
-//! Port of `src/tzx/convert.ts`, which copies fields by name: if the new type has `pause` and the
-//! old one had a number there, it carries over. Here that is an explicit read and write per field
-//! instead, longer but explicit about what carries over.
+//! Each carried field is read from the old body and written to the new one explicitly, through
+//! the `Field` enum below. An unknown block is returned unchanged.
 
 use crate::types::{create_body, Block, Body, PilotRun, RomTimings, SymDef};
 
-/// The numeric fields that carry over between types, in the order the
-/// TypeScript lists them.
+/// The numeric fields that carry over between types.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
     Pause,

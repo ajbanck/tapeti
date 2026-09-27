@@ -1,7 +1,6 @@
-//! Sequential little-endian reads and writes, the port of `src/tzx/bytes.ts`.
+//! Sequential little-endian reads and writes.
 
-/// Reader errors carry the same text as the TypeScript ones, because the parser
-/// puts them in user-visible warnings.
+/// Reader errors are user-visible: the parser puts their text straight into its warnings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadError(pub String);
 
@@ -77,7 +76,7 @@ impl<'a> Reader<'a> {
         Ok(v)
     }
 
-    /// TZX text is Latin-1; one byte becomes one char, as in `bytesToLatin1`.
+    /// TZX text is Latin-1: one byte becomes one char.
     pub fn str(&mut self, n: usize) -> ReadResult<String> {
         Ok(latin1_to_string(&self.bytes(n)?))
     }
@@ -87,14 +86,13 @@ pub fn latin1_to_string(b: &[u8]) -> String {
     b.iter().map(|&c| c as char).collect()
 }
 
-/// Inverse of [`latin1_to_string`]; chars above 0xff are truncated, as in
-/// `latin1ToBytes`.
+/// Inverse of [`latin1_to_string`]; chars above 0xff are truncated.
 pub fn string_to_latin1(s: &str) -> Vec<u8> {
     s.chars().map(|c| c as u32 as u8).collect()
 }
 
-/// Sequential little-endian writes. Widths wrap the way the TypeScript ones do: an over-long
-/// block writes the same truncated length here as there.
+/// Sequential little-endian writes; an over-long value wraps to its field's width instead of
+/// erroring.
 #[derive(Default)]
 pub struct Writer {
     pub buf: Vec<u8>,

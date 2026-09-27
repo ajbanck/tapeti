@@ -1,10 +1,9 @@
-//! The data window, the port of `src/ui/DataWindow.tsx`: hex, screen, BASIC,
+//! The data window: hex, screen, BASIC,
 //! variables, text and disassembly over the bytes of one block, or of several
 //! viewed as one.
 //!
-//! The views are virtualised lists, the way they are on the web — a 64 kB block
-//! is 4,096 dump rows and 20,000 disassembly lines, and egui's `show_rows` asks
-//! only for the ones on screen.
+//! The views are virtualised lists: a 64 kB block is 4,096 dump rows and 20,000
+//! disassembly lines, and egui's `show_rows` asks only for the ones on screen.
 
 use std::collections::HashSet;
 use std::time::Instant;

@@ -1,0 +1,28 @@
+{
+  "name": "tapeti-web",
+  "private": true,
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "description": "The browser build of Tapeti: its dependencies and the vite, vitest and tsc runs; the scripts at the repository root call these",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.2",
+    "pako": "^3.0.2",
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^26.6.1",
+    "@types/pako": "^2.0.4",
+    "puppeteer-core": "^25.11.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

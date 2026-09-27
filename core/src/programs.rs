@@ -1,5 +1,5 @@
 //! Tape structure: group/loop ranges and the programs (games) a collection tape
-//! holds. The port of `src/tzx/programs.ts`.
+//! holds.
 
 use crate::describe::{decode_header, HeaderInfo};
 use crate::types::{Block, Body};

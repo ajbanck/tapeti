@@ -1,4 +1,5 @@
-//! Running a command, the port of `src/state/commands.ts`.
+//! Running a command, by the ids of `COMMANDS` in `web/src/state/commands.ts`, which
+//! `tests/menu.rs` holds this side to.
 //!
 //! The web table carries label, shortcut, enabled rule and behaviour in one
 //! object. Here the first three live in `menutable.rs`, because the platform
@@ -394,9 +395,7 @@ mod tests {
     }
 
     fn command_ids() -> Vec<String> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/state/commands.ts");
-        std::fs::read_to_string(path)
-            .expect("src/state/commands.ts")
+        include_str!("../../web/src/state/commands.ts")
             .lines()
             .filter_map(|line| {
                 let rest = line.strip_prefix("  '")?;

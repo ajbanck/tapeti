@@ -1,5 +1,5 @@
 //! Tests for the Spectrum side: the character set, the screen, the BASIC lister
-//! and the Z80 disassembler. `test/core.test.ts` holds the same to recorded answers
+//! and the Z80 disassembler. `web/test/core.test.ts` holds the same to recorded answers
 //! through the wasm build; what is here is what the core owes on its own.
 
 use tapeti_core::spectrum::basic::{
@@ -225,7 +225,7 @@ fn sample_programs() -> Vec<Vec<u8>> {
 
     let mut found = Vec::new();
     for name in ["Tapeti demo.tzx", "Tapeti demo (variant).tzx"] {
-        let bytes = std::fs::read(format!("../test/samples/{name}")).unwrap();
+        let bytes = std::fs::read(format!("tests/samples/{name}")).unwrap();
         found.extend(programs(&tapeti_core::parser::parse_tape(&bytes).unwrap().blocks));
     }
     let mut snap = Snapshot::default();
@@ -290,7 +290,7 @@ fn an_empty_program_is_a_program() {
     assert_eq!(program.len(), 4 + 6 + 4 + 10);
 }
 
-// ---- the disassembler past the port ---------------------------------------
+// ---- the disassembler's extras, and listing edge cases -------------------
 
 fn listing(code: &[u8], base: u32, opts: DisOptions, symbols: &str) -> Vec<String> {
     use tapeti_core::spectrum::romnames::Symbols;

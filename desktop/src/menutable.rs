@@ -2,16 +2,16 @@
 //
 // `menu.rs` builds the menu bar from it — muda's on macOS, an egui bar in the
 // window elsewhere — and `tests/menu.rs` checks it against the web app's table. The
-// ids are the ids of `COMMANDS` in `src/state/commands.ts`, so the desktop app and
+// ids are the ids of `COMMANDS` in `web/src/state/commands.ts`, so the desktop app and
 // the browser one cannot drift apart.
 //
 // What an item *does* lives in `commands.rs`; what it is called, what it is
 // bound to and when it is enabled lives here, because the menu, the context
 // menu, the keyboard and the tests all have to agree on those.
 
-/// When an item is enabled: the port of the `enabled` predicates in
-/// `commands.ts`, as a table rather than as closures, so `tests/menu.rs` can
-/// read it without the rest of the app.
+/// When an item is enabled, as a table rather than closures, so `tests/menu.rs` can read
+/// it without the rest of the app and hold it to the `enabled` rules of
+/// `web/src/state/commands.ts`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Need {
     /// Always enabled.
@@ -59,7 +59,7 @@ impl Need {
 }
 
 pub struct Item {
-    /// Command id, matching `COMMANDS` in `src/state/commands.ts`. Empty for a separator.
+    /// Command id, matching `COMMANDS` in `web/src/state/commands.ts`. Empty for a separator.
     pub id: &'static str,
     pub label: &'static str,
     /// Accelerator in muda's spelling: `CmdOrCtrl` is ⌘ on macOS and Ctrl
@@ -89,7 +89,7 @@ const fn sep() -> Item {
 use Need::{Always, Blocks, Clipboard, Collapsible, Cursor, Playing, Redo, Undo};
 
 /// The one grouping, on every platform and in the browser: `MENUS` in
-/// `src/ui/MenuBar.tsx` lists the same ids under the same titles, and
+/// `web/src/ui/MenuBar.tsx` lists the same ids under the same titles, and
 /// `tests/menu.rs` fails if they drift.
 ///
 /// Every menu runs on the active pane; what is aimed at one pane in particular is a

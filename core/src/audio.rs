@@ -1,10 +1,9 @@
-//! Turning a block list into an edge/pulse stream and then into PCM samples,
-//! the port of `src/tzx/audio.ts`. Loops, jumps, calls and returns are followed
-//! exactly like an emulator would.
+//! Turns a block list into an edge/pulse stream and then into PCM samples, following loops,
+//! jumps, calls and returns exactly like an emulator would.
 //!
-//! Z-RLE CSW blocks arrive already inflated: the crate has no dependencies, so
-//! the app does that with pako before handing the tape over (see
-//! `src/tzx/audio.ts`).
+//! Z-RLE CSW blocks must arrive already inflated: the crate has no dependencies, so callers
+//! do that themselves (`web/src/tzx/core.ts` with pako, `desktop/src/tape.rs` with
+//! `miniz_oxide`).
 
 use crate::parser::bits_per_symbol;
 use crate::types::{Block, Body, SymDef};

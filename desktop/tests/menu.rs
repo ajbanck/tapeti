@@ -1,4 +1,4 @@
-//! The native menu against `src/state/commands.ts`.
+//! The native menu against `web/src/state/commands.ts`.
 //!
 //! The web app and this one address commands by the same ids and grey them out
 //! under the same conditions, so the thing worth testing about the table is that
@@ -8,8 +8,7 @@
 include!("../src/menutable.rs");
 
 fn commands_ts() -> String {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/state/commands.ts");
-    std::fs::read_to_string(path).expect("src/state/commands.ts")
+    include_str!("../../web/src/state/commands.ts").to_string()
 }
 
 fn command_ids() -> Vec<String> {
@@ -114,13 +113,12 @@ fn every_command_is_in_the_menu() {
     }
 }
 
-/// `MENUS` in `src/ui/MenuBar.tsx`, as (title, ids) with `""` for a separator:
+/// `MENUS` in `web/src/ui/MenuBar.tsx`, as (title, ids) with `""` for a separator:
 /// the entries between `export const MENUS` and the `];` that closes it, where
 /// a line opening with `['Title', [` starts a menu and every other quoted word
 /// is a command id or `sep`.
 fn web_menus() -> Vec<(String, Vec<String>)> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/ui/MenuBar.tsx");
-    let source = std::fs::read_to_string(path).expect("src/ui/MenuBar.tsx");
+    let source = include_str!("../../web/src/ui/MenuBar.tsx");
     let start = source.find("export const MENUS").expect("MenuBar.tsx has no MENUS table");
     let table = &source[start..];
     let table = &table[..table.find("\n];").expect("MENUS is not closed")];

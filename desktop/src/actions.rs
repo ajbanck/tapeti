@@ -1,9 +1,8 @@
-//! The higher-level actions, the port of `src/state/actions.ts`.
+//! The higher-level actions.
 //!
-//! One shape changes: `confirmDiscard(side, () => …)` takes a closure on the web
-//! and a [`Then`] here. A closure that outlives the frame would have to capture
-//! the store it is going to mutate; naming the follow-up instead keeps the
-//! borrow checker out of it and makes a queued action something the app can show
+//! A confirmation's follow-up is a [`Then`] value, not a closure: a closure that outlives
+//! the frame would have to capture the store it is going to mutate, and a named follow-up
+//! keeps the borrow checker out of it and makes a queued action something the app can show
 //! and test.
 
 use tapeti_core::audio::FlowOptions;

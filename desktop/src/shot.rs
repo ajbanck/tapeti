@@ -1,7 +1,7 @@
 //! Headless screenshots: what the app would draw, as a PNG, with no window.
 //!
 //! `npm run smoke` screenshots the browser build through headless Chrome into
-//! `scratch/`; this is the desktop build's equivalent, rasterising egui's
+//! `web/scratch/`; this is the desktop build's equivalent, rasterising egui's
 //! tessellated triangles and font atlas without a GPU.
 //!
 //! The rasteriser is the small half of what `egui_glow` does: one texture, no

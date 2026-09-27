@@ -1,10 +1,8 @@
-//! Playback, the port of `src/state/player.ts`.
+//! Playback.
 //!
-//! Web Audio takes a whole `AudioBuffer` and plays it; cpal takes a callback and
-//! asks for frames. The rendered tape therefore lives in an `Arc<[f32]>` that
-//! the audio thread reads and a cursor the UI thread watches — the same three
-//! numbers the web build exposes as signals (`playing`, `playingBlock`,
-//! `playPos`), read here as one `Progress`.
+//! cpal takes a callback and asks for frames, so the rendered tape lives in an `Arc<[f32]>`
+//! that the audio thread reads and a cursor the UI thread watches; the UI reads what it
+//! needs of that (playing, block, position) as one `Progress`.
 //!
 //! The tape is rendered at the device's own sample rate, so nothing resamples.
 

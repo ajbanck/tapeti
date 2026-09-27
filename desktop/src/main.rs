@@ -46,7 +46,7 @@ use settings::Settings;
 use state::Store;
 
 /// Where a tape comes from when `--measure` or `--bench` names none.
-const DEFAULT_TAPE: &str = "test/samples/Tapeti demo.tzx";
+const DEFAULT_TAPE: &str = "core/tests/samples/Tapeti demo.tzx";
 
 /// The window icon, compiled in: the bundles' own icon, at the size a title bar
 /// and a task bar want.
@@ -141,8 +141,8 @@ fn startup_paths(o: &Opts) -> Vec<PathBuf> {
     }
 }
 
-/// The test tape, looked for up the tree from the working directory and next to
-/// the crate, so both `cargo run` and a bundle built here find it.
+/// The test tape, looked for up the tree from the working directory and from the
+/// crate's manifest, so both `cargo run` and a bundle built here find it.
 fn default_tape() -> Option<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -152,7 +152,7 @@ fn default_tape() -> Option<PathBuf> {
             dir = d.parent();
         }
     }
-    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
+    roots.extend(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(PathBuf::from));
     roots.into_iter().map(|r| r.join(DEFAULT_TAPE)).find(|p| p.is_file())
 }
 

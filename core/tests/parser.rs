@@ -5,7 +5,7 @@
 //!   added or the format changed. `UPDATE_FIXTURES=1 cargo test --test parser` writes
 //!   them anew (a new tape needs a file holding just its `file <path>` line first);
 //!   review the diff, never hand-edit them.
-//! * the rest: the hand-built cases of `test/tzx.test.ts`.
+//! * the rest: the hand-built cases of `web/test/tzx.test.ts`.
 
 use std::path::{Path, PathBuf};
 use tapeti_core::dump::dump_tape;
@@ -258,7 +258,7 @@ fn counts_bits_per_symbol() {
 
 #[test]
 fn parses_tap_files() {
-    // A 19-byte header block and a 3-byte data block, as in test/tzx.test.ts.
+    // A 19-byte header block and a 3-byte data block, as in web/test/tzx.test.ts.
     let mut tap: Vec<u8> = vec![19, 0];
     tap.extend_from_slice(&[0; 19]);
     tap.extend_from_slice(&[3, 0, 0xff, 1, 0xfe]);

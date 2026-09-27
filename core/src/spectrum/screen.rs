@@ -1,4 +1,4 @@
-//! Rendering a Spectrum screen dump, the port of `src/spectrum/screen.ts`.
+//! Rendering a Spectrum screen dump.
 
 pub const SCREEN_SIZE: usize = 6912;
 

@@ -1,4 +1,4 @@
-//! Comparing blocks and tapes, the port of `src/tzx/compare.ts`.
+//! Comparing blocks and tapes.
 
 use crate::describe::is_metadata;
 use crate::types::{Block, Body};
@@ -115,7 +115,9 @@ fn considered(b: &Block, mode: TapeCompareMode) -> bool {
     }
 }
 
-/// Compare two tapes block by block, returning a result per block of each tape.
+/// Compare two tapes block by block.
+///
+/// Returns a result per block of each tape, plus whether the two tapes are identical overall.
 pub fn compare_tapes(
     left: &[Block],
     right: &[Block],
@@ -155,9 +157,8 @@ pub fn compare_tapes(
 
 /// Find all blocks in `haystack` matching `needle`.
 ///
-/// `skip` is where the needle itself sits in the haystack, if it is in there: the
-/// TypeScript compares object identity, and an index is what survives the trip across
-/// the wire.
+/// `skip` is where the needle itself sits in the haystack, if it is in there: it is an
+/// index because that is how a block is identified across the wire.
 pub fn find_matches(
     needle: &Block,
     haystack: &[Block],

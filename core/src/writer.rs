@@ -1,4 +1,4 @@
-//! TZX and TAP writing, the port of `src/tzx/writer.ts`.
+//! TZX and TAP writing.
 
 use crate::bytes::{string_to_latin1, Writer};
 use crate::parser::bits_per_symbol;
@@ -96,8 +96,7 @@ pub fn save_version(blocks: &[Block], loaded: Option<Version>) -> Version {
     }
 }
 
-/// Text fields carry a byte length, so anything longer is cut, as in the
-/// TypeScript's `slice(0, 255)`.
+/// A text field carries a one-byte length, so text longer than 255 bytes is cut.
 fn short_str(s: &str) -> Vec<u8> {
     let mut b = string_to_latin1(s);
     b.truncate(255);

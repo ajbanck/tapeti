@@ -1,7 +1,6 @@
-//! Number and key formatting, the port of the helpers at the top of
-//! `src/state/store.ts` and `fmtKey` in `src/state/commands.ts`.
+//! Number and key formatting.
 //!
-//! Every one of them depends on a switch — the screen's own Dec/Hex button, the
+//! Every formatter here depends on a switch — the screen's own Dec/Hex button, the
 //! "hex bytes" option, the "number blocks from 0" option — so they take the
 //! flags explicitly and the call sites read them off the store or off the
 //! screen's own state. The Dec/Hex one belongs to a screen: the main window's
@@ -56,8 +55,10 @@ pub fn duration(s: f64) -> String {
     format!("{m}:{:05.2}", s - m * 60.0)
 }
 
-/// `parseNum`: `$`/`0x` force hex, `#` forces decimal, everything else follows
-/// the Dec/Hex switch. Returns `None` where the TypeScript returns NaN.
+/// Parse a number as typed: `$`/`0x` force hex, `#` forces decimal, everything else follows
+/// the Dec/Hex switch.
+///
+/// `None` for anything that is not a number.
 pub fn parse_num(s: &str, hex: bool) -> Option<i64> {
     let s = s.trim();
     if s.is_empty() {

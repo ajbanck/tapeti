@@ -1,10 +1,9 @@
 //! The window: two tape panes, the editor under each, the status bar, and the
-//! keyboard. The port of `src/ui/App.tsx` and the frame of `TapePane.tsx`.
+//! keyboard.
 //!
 //! egui is immediate mode, so there is no binding graph and no component tree:
-//! this struct *is* the app, and the frame reads it. What used to be a signal
-//! subscription is a field read; what used to be a `useEffect` is a line in the
-//! right order.
+//! this struct *is* the app, and the frame reads it. State is read where it is needed,
+//! and whatever must follow a change is a line in the right order.
 
 use std::time::Instant;
 

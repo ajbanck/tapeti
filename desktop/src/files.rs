@@ -1,5 +1,4 @@
-//! Getting tapes in and out of the store: the port of `src/state/files.ts`, with
-//! `rfd` where the web build has `src/platform/`.
+//! Getting tapes in and out of the store, with `rfd` for the file dialogs.
 //!
 //! There is no platform adapter here: the web app needs one because a browser
 //! download and a native save dialog share nothing, but a native binary only

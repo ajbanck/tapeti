@@ -1,5 +1,4 @@
-//! Bit-stream helpers for the data window's Drop / Add / Shift operations, the
-//! port of `src/tzx/bits.ts`.
+//! Bit-stream helpers for the data window's Drop / Add / Shift operations.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BitData {

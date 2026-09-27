@@ -6,14 +6,14 @@
   "type": "module",
   "description": "ZX Spectrum TZX/TAP tape editor for the desktop and the browser",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm --prefix web run dev --",
     "predev": "node scripts/build-wasm.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm --prefix web run build --",
     "prebuild": "node scripts/build-wasm.mjs",
-    "preview": "vite preview",
-    "test": "vitest run",
+    "preview": "npm --prefix web run preview --",
+    "test": "npm --prefix web test --",
     "pretest": "node scripts/build-wasm.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm --prefix web run typecheck --",
     "pretypecheck": "node scripts/build-wasm.mjs",
     "smoke": "node scripts/ui-smoke.mjs",
     "presamples": "node scripts/build-wasm.mjs",
@@ -26,19 +26,5 @@
     "desktop:package": "node scripts/build-desktop.mjs --package",
     "clean": "cargo clean",
     "core:fixtures": "cd core && UPDATE_FIXTURES=1 cargo test --test parser"
-  },
-  "dependencies": {
-    "@preact/signals": "^2.11.2",
-    "pako": "^3.0.2",
-    "preact": "^10.29.8"
-  },
-  "devDependencies": {
-    "@preact/preset-vite": "^2.10.6",
-    "@types/node": "^26.6.1",
-    "@types/pako": "^2.0.4",
-    "puppeteer-core": "^25.11.0",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.0",
-    "vitest": "^5.0.1"
   }
 }

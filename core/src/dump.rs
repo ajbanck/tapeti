@@ -9,7 +9,7 @@
 //! <index> <id:02x> <field>=<value> ... (one line per block, uid excluded)
 //! ```
 //!
-//! Field names are the TypeScript property names of `src/tzx/types.ts`, in
+//! Field names are the TypeScript property names of `web/src/tzx/types.ts`, in
 //! declaration order.
 //! Values: numbers in decimal; byte arrays in lowercase hex; strings quoted
 //! with `\xNN` for anything outside printable ASCII; list and record elements

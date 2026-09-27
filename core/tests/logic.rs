@@ -1,7 +1,8 @@
 //! Tests for descriptions, content detection, consistency and program structure in the core.
-//! `test/core.test.ts` holds the same to recorded answers through the wasm build; what is
+//! `web/test/core.test.ts` holds the same, through the wasm build, to recorded answers; what is
 //! here is what the core owes on its own, plus the two predicates (`isMetadata`, `blockBody`)
-//! the TypeScript keeps its own copy of, asserted against the same table on both sides.
+//! that `web/src/tzx/core.ts` keeps its own copy of, asserted against the same table on both
+//! sides.
 
 use tapeti_core::consistency::{check_consistency, Severity};
 use tapeti_core::content::{basic_score, block_body, detect_content, ContentKind, Source};
@@ -72,9 +73,9 @@ fn measures_blocks_for_the_length_column() {
     assert_eq!(block_length(&b(Body::GroupEnd)), 0);
 }
 
-/// `isMetadata` is one of the two predicates the TypeScript keeps its own copy
-/// of (`describe.ts`), so both sides assert this same table; `test/core.test.ts`
-/// holds the other half.
+/// `isMetadata` is one of the two predicates that `web/src/tzx/core.ts` keeps its own
+/// copy of, so both sides assert this same table; `web/test/core.test.ts` holds the
+/// other half.
 #[test]
 fn classifies_metadata_blocks() {
     let metadata = [0x21, 0x22, 0x30, 0x31, 0x32, 0x33, 0x35, 0x5a];
@@ -137,7 +138,7 @@ fn classifies_metadata_blocks() {
     assert!(!is_metadata(&b(Body::Unknown { id: 0x17, raw: vec![] })));
 }
 
-/// The other predicate the TypeScript keeps: `blockBody` in `content.ts`.
+/// The other predicate that `web/src/tzx/core.ts` keeps: `blockBody`.
 #[test]
 fn strips_flag_and_checksum_bytes() {
     let d = [0xff, 1, 2, 3, 0x55];

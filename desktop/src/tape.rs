@@ -4,7 +4,7 @@
 //!
 //! The core is dependency-free on purpose, to keep the wasm module small, so
 //! zlib lives out here, exactly as it does on the web side, where
-//! `src/tzx/audio.ts` inflates with pako before calling in. Everything that
+//! `web/src/tzx/core.ts` inflates with pako before calling in. Everything that
 //! turns a tape into pulses goes through [`playable`] first.
 
 use std::borrow::Cow;
@@ -65,9 +65,8 @@ pub fn render_tape(blocks: &[Block], opts: RenderOptions, order: &[u32]) -> Vec<
 }
 
 /// Index into the playback order of the block playing at `tstates`; 0 during the lead-in
-/// before the first block. Stays out of the core for the same reason `positionAt` stays in
-/// TypeScript: it is a binary search over an array the caller already holds, run once per
-/// frame while the tape plays.
+/// before the first block. Stays out of the core because it is a binary search over an
+/// array the caller already holds, run once per frame while the tape plays.
 pub fn position_at(starts: &[u64], tstates: u64) -> usize {
     if starts.is_empty() {
         return 0;

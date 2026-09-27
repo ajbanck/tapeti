@@ -15,12 +15,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: web/package-lock.json
       # The tape core is Rust compiled to wasm, and the npm scripts build it.
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: swatinem/rust-cache@v2
-      - run: npm ci
+      - run: npm ci --prefix web
       - run: npm run core:test
       - run: npm run typecheck
       - run: npm test
@@ -28,7 +29,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: web-dist
-          path: dist
+          path: web/dist
 
   # The desktop app, on the three platforms it ships on. `cargo test` includes the
   # headless UI frames and the menu table checked against src/state/commands.ts,

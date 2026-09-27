@@ -1,12 +1,17 @@
 // Headless UI smoke test. Start `npm run dev` first, then `npm run smoke`.
-// Loads two of the test tapes (scripts/make-samples.mjs; the dev server serves test/samples/ at /samples/), exercises the list, editor, data window, menus and undo,
-// fails on console errors, and writes screenshots to scratch/.
-import puppeteer from 'puppeteer-core';
+// Loads two of the test tapes (scripts/make-samples.mjs; the dev server serves core/tests/samples/ at /samples/), exercises the list, editor, data window, menus and undo,
+// fails on console errors, and writes screenshots to web/scratch/.
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+// puppeteer-core is installed with the web app's dependencies, in web/node_modules.
+const fromWeb = createRequire(import.meta.resolve('../web/package.json'));
+const { default: puppeteer } = await import(pathToFileURL(fromWeb.resolve('puppeteer-core')).href);
 
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const URL = process.env.SMOKE_URL ?? "http://localhost:5173/?open=samples/Tapeti%20demo.tzx&right=samples/Tapeti%20demo%20(variant).tzx";
-const OUT = 'scratch';
+const OUT = 'web/scratch';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });

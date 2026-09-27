@@ -1,12 +1,11 @@
-//! Table-free Z80 disassembler following the x/y/z/p/q decoding scheme, the
-//! port of `src/spectrum/z80dis.ts`. Handles CB, ED, DD, FD, DDCB and FDCB
-//! prefixes including undocumented forms.
+//! Table-free Z80 disassembler following the x/y/z/p/q decoding scheme. Handles CB, ED, DD, FD,
+//! DDCB and FDCB prefixes including undocumented forms.
 //!
-//! Past the port: the bytes behind `RST 08` and `RST 28` are read as what they
-//! are (a report code, the calculator's literals) rather than as instructions,
-//! which is what keeps a listing in step through ROM calls; operands that are
-//! system variables say so, `(IY+d)` included; and addresses can carry names of
-//! the user's own. The tables are in `romnames.rs`, the idea is TAPER's.
+//! Two extras are options in `DisOptions`, off by default: reading the bytes behind `RST 08` and
+//! `RST 28` as a report code and the calculator's literals instead of instructions, which keeps
+//! the listing in step after a ROM call, and naming operands that are system variables, `(IY+d)`
+//! included. `disassemble_with` also puts the user's own names on addresses. The tables are in
+//! `romnames.rs`; reading the ROM's literals is TAPER's idea.
 
 use super::basic::{decode_number, format_number};
 use super::romnames::{
@@ -613,9 +612,8 @@ pub fn disassemble_with(
             match target.and_then(rom_label) {
                 Some(label) => text.push_str(&format!("  ; {label}")),
                 None => {
-                    // LD HL,nnnn / LD DE,nnnn etc. with a ROM address. The
-                    // TypeScript looks for `,$?dddd` at the end, which its own
-                    // `0x` spelling never matches, so this only fires in decimal.
+                    // LD HL,nnnn / LD DE,nnnn etc. with a ROM address: `trailing_address`
+                    // only matches in decimal, since hex mode's `0x` prefix breaks its pattern.
                     if let Some(v) = trailing_address(&text, hex) {
                         if let Some(label) = rom_label(v) {
                             text.push_str(&format!("  ; {label}"));
@@ -649,7 +647,8 @@ fn rel(c: &mut Cursor, addr: u32, hex: bool, target: &mut Option<u32>) -> String
     h16(t, hex)
 }
 
-/// `/,\$?([0-9A-F]{4})$/` from the TypeScript, ported as it stands.
+/// Matches a trailing `,` (optionally followed by `$`) then four hex digits at the end of
+/// `text`, and parses them in the given base.
 fn trailing_address(text: &str, hex: bool) -> Option<u32> {
     let b = text.as_bytes();
     if b.len() < 5 {

@@ -1,4 +1,4 @@
-file test/samples/Tapeti demo (variant).tzx
+file core/tests/samples/Tapeti demo (variant).tzx
 tape 1.20
 0 32 entries=0/"Tapeti demo (variant)";1/"Tapeti project";3/"2026";255/"Same program as the demo tape with a headerless screen, a select block, a direct recording and a CSW block."
 1 10 pause=1000 data=000064656d6f202020202020ac001400ac0017

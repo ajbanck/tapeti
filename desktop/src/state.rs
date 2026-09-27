@@ -1,13 +1,12 @@
-//! The application state, the port of `src/state/store.ts`.
+//! The application state.
 //!
-//! Preact signals become plain fields: egui redraws this struct every frame,
-//! so nothing needs to subscribe. Blocks stay immutable: an edit builds a new
-//! `Vec<Block>`, so an undo snapshot is a cheap clone of a vector of
-//! `Rc`-free values that the compiler moves rather than copies.
+//! egui redraws this struct every frame, so the fields are plain values and nothing
+//! subscribes to them. Blocks stay immutable: an edit builds a new `Vec<Block>`, so an
+//! undo snapshot is a cheap clone of a vector of `Rc`-free values that the compiler moves
+//! rather than copies.
 //!
-//! `dirty` is identity in TypeScript (`snap.blocks !== t.saved`); here every
-//! version of the blocks array carries a generation number, so undoing back
-//! to the saved version clears `dirty` as it does on the web.
+//! `dirty` is version identity: every version of the blocks array carries a generation
+//! number, compared with the saved one, so undoing back to the saved version clears it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

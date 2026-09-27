@@ -77,8 +77,7 @@ describe('TZX round trip', () => {
   });
 
   it('reports a CSW block whose length cannot hold its own header', () => {
-    // len 4 is below the 10-byte CSW header; reading len - 10 bytes used to move
-    // the read position backwards.
+    // len 4 is below the 10-byte CSW header.
     const raw = new Uint8Array([0x18, 4, 0, 0, 0, 1, 2, 3, 4]);
     const file = new Uint8Array([...Array.from('ZXTape!\x1a').map((c) => c.charCodeAt(0)), 1, 20, ...raw]);
     const parsed = parseTzx(file);

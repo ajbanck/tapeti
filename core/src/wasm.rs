@@ -6,7 +6,7 @@
 //! JavaScript owns both buffers: it calls [`core_alloc`], writes the tape,
 //! calls [`core_parse_tape`], reads the `u32` payload length at the returned
 //! pointer followed by that many bytes of [`crate::wire`] payload, then frees
-//! both with [`core_free`]. `src/tzx/core.ts` is the other end.
+//! both with [`core_free`]. `web/src/tzx/core.ts` is the other end.
 
 use crate::audio::{
     block_duration, decode_csw_rle, emit_block, encode_wav, playback_order, playback_timeline, render_length,

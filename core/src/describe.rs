@@ -1,5 +1,8 @@
-//! Block descriptions and ROM headers, the port of `src/tzx/describe.ts`. `is_metadata`'s
-//! TypeScript twin, `isMetadata`, is pinned to it by a differential test over every block ID.
+//! Block descriptions and ROM headers.
+//!
+//! `isMetadata` in `web/src/tzx/core.ts` is the web side's copy of `is_metadata`;
+//! `core/tests/logic.rs` and `web/test/core.test.ts` hold both to the same table over every
+//! block ID.
 
 use crate::bytes::{latin1_to_string, string_to_latin1};
 use crate::types::{block_name, Block, Body};

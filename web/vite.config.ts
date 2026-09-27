@@ -3,12 +3,16 @@ import { defineConfig } from 'vitest/config';
 import preact from '@preact/preset-vite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 
-/** Serves test/samples/ at /samples/ from the dev server, for `npm run smoke` and
- *  `?open=samples/…`. The tapes are test fixtures, so a build ships none of them. */
+/** This directory: the web app's root, whatever directory vite is run from. */
+const here = fileURLToPath(new URL('.', import.meta.url));
+
+/** Serves core/tests/samples/ at /samples/ from the dev server, for `npm run smoke`
+ *  and `?open=samples/…`. The tapes are test fixtures, so a build ships none of them. */
 function testSamples(): Plugin {
-  const dir = path.resolve('test/samples');
+  const dir = path.resolve(here, '../core/tests/samples');
   return {
     name: 'test-samples',
     apply: 'serve',
@@ -26,6 +30,7 @@ function testSamples(): Plugin {
 
 // `base: './'` keeps the build relocatable, so the same dist/ works on any web path.
 export default defineConfig({
+  root: here,
   plugins: [preact(), testSamples()],
   base: './',
   clearScreen: false,

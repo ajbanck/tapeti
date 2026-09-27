@@ -1,4 +1,4 @@
-// Generates the test tapes in test/samples/ from scratch, using the app's own
+// Generates the test tapes in core/tests/samples/ from scratch, using the app's own
 // TZX writer. Nothing in them is copied from a real tape: the BASIC program, the
 // screen, the machine code and the loader timings are all made up here, so the
 // tapes can be redistributed under the project licence. They are fixtures for the
@@ -12,11 +12,16 @@
 //   Tapeti demo (variant).tzx  a variation of the same program for the compare modes
 //   Tapeti demo.tap            the TAP export of the demo tape
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import { createServer } from 'vite';
+import { pathToFileURL } from 'node:url';
 
-const OUT = path.resolve('test/samples');
-const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+// vite is the web app's, installed in web/node_modules, which a script here does not see.
+const fromWeb = createRequire(import.meta.resolve('../web/package.json'));
+const { createServer } = await import(pathToFileURL(fromWeb.resolve('vite')).href);
+
+const OUT = path.resolve('core/tests/samples');
+const vite = await createServer({ configFile: 'web/vite.config.ts', server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 try {
   const { createBlock } = await vite.ssrLoadModule('/src/tzx/types.ts');
   const { serializeTzx, serializeTap, encodeHeader, checksum, encodePokes, checkConsistency, parseTzx } =
