@@ -1,0 +1,2 @@
+# The fixture dumps are compared byte for byte, so a checkout must not rewrite their line endings.
+*.dump text eol=lf

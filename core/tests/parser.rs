@@ -36,7 +36,8 @@ fn matches_the_dumps() {
     names.sort();
     assert!(!names.is_empty(), "no fixtures in {}", dir.display());
     for fixture in names {
-        let text = std::fs::read_to_string(&fixture).unwrap();
+        // A Windows checkout with autocrlf hands the dump over with CRLF line endings.
+        let text = std::fs::read_to_string(&fixture).unwrap().replace("\r\n", "\n");
         let (head, expected) = text.split_once('\n').expect("fixture header line");
         let tape_path = repo_root().join(head.strip_prefix("file ").expect("file header"));
         let bytes = std::fs::read(&tape_path).unwrap_or_else(|e| panic!("{}: {e}", tape_path.display()));
