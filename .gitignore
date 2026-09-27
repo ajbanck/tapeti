@@ -1,8 +1,7 @@
 node_modules
 dist
 scratch
-core/target
-desktop/target
+target
 desktop/dist
 src/tzx/core.wasm.ts
 

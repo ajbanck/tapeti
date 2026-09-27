@@ -1,8 +1,6 @@
-//! A canonical text rendering of a parsed tape, used to compare this crate
-//! against the TypeScript implementation byte for byte.
+//! A canonical text rendering of a parsed tape: what `tests/fixtures/` holds for
+//! every sample tape, and what `tests/parser.rs` compares a parse against.
 //!
-//! `scripts/dump-blocks.mjs` prints the same format from `src/tzx/parser.ts`,
-//! so a fixture generated there is a differential test of the two parsers.
 //! The format is:
 //!
 //! ```text
@@ -11,14 +9,15 @@
 //! <index> <id:02x> <field>=<value> ... (one line per block, uid excluded)
 //! ```
 //!
-//! Field names are the TypeScript property names, in declaration order.
+//! Field names are the TypeScript property names of `src/tzx/types.ts`, in
+//! declaration order.
 //! Values: numbers in decimal; byte arrays in lowercase hex; strings quoted
 //! with `\xNN` for anything outside printable ASCII; list and record elements
 //! separated by `;`, with `/` between a record's fields, except a pilot run,
 //! which is `symbol*reps`.
 //!
 //! The fixture files carry one extra `file <path>` line at the top, naming the
-//! tape they were generated from; `dump_tape` does not print it.
+//! tape they were recorded from; `dump_tape` does not print it.
 
 use crate::parser::ParsedTape;
 use crate::types::{Block, Body, SymDef};

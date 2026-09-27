@@ -32,7 +32,6 @@ mod settings;
 mod shot;
 mod state;
 mod statusbar;
-mod tables;
 mod tape;
 mod theme;
 mod widgets;

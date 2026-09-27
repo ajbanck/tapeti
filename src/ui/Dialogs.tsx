@@ -2,15 +2,28 @@ import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
 import { Dialog, dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum, fmtTime, unitIndices, hex, blockNo, zeroBased } from '../state/store';
 import { downloadBytes, importSnapshot, insertDataFile, headerName, MAX_FILE_BYTES, pickFile } from '../state/files';
-import { SNAPSHOT_SPEEDS, SNAPSHOT_SPEED_NAMES, SNAPSHOT_MACHINES, DEFAULT_SNAPSHOT_SPEED, SCREEN_BYTES } from '../tzx/snapshot';
-import { renderScreen } from '../spectrum/screen';
+import {
+  SNAPSHOT_SPEEDS,
+  SNAPSHOT_SPEED_NAMES,
+  SNAPSHOT_MACHINES,
+  DEFAULT_SNAPSHOT_SPEED,
+  SCREEN_SIZE,
+  renderScreen,
+  checkConsistency,
+  tapeDuration,
+  renderWav,
+  playbackOrder,
+  blockDuration,
+  TSTATES_PER_SEC,
+  requiredVersion,
+  saveVersion,
+  serializeTzx,
+  describeBlock,
+  encodeHeader,
+  detectPrograms,
+} from '../tzx/core';
 import { NumInput } from './fields';
 import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block, StandardBlock } from '../tzx/types';
-import { checkConsistency } from '../tzx/consistency';
-import { tapeDuration, renderWav, playbackOrder, blockDuration, TSTATES_PER_SEC } from '../tzx/audio';
-import { requiredVersion, saveVersion, serializeTzx } from '../tzx/writer';
-import { describeBlock, encodeHeader } from '../tzx/describe';
-import { detectPrograms } from '../tzx/programs';
 import { jumpToProgram } from '../state/actions';
 
 export function Modal({ title, onClose, children, footer, width, cls }: { title: string; onClose: () => void; children: ComponentChildren; footer?: ComponentChildren; width?: number; cls?: string }) {
@@ -311,14 +324,14 @@ function SnapshotImport({ d }: { d: Extract<Dialog, { kind: 'snapshot' }> }) {
   const shown = screen?.bytes ?? d.info.screen;
   useEffect(() => {
     const ctx = canvas.current?.getContext('2d');
-    if (!ctx || shown.length < SCREEN_BYTES) return;
+    if (!ctx || shown.length < SCREEN_SIZE) return;
     ctx.putImageData(new ImageData(renderScreen(shown, 0) as Uint8ClampedArray<ArrayBuffer>, 256, 192), 0, 0);
   }, [shown]);
   const pickScreen = async () => {
     const f = await pickFile();
     if (!f) return;
-    if (f.bytes.length !== SCREEN_BYTES) {
-      setError(`A loading screen is ${fmtNum(SCREEN_BYTES)} bytes; ${f.name} has ${fmtNum(f.bytes.length)}.`);
+    if (f.bytes.length !== SCREEN_SIZE) {
+      setError(`A loading screen is ${fmtNum(SCREEN_SIZE)} bytes; ${f.name} has ${fmtNum(f.bytes.length)}.`);
       return;
     }
     setError('');

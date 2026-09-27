@@ -1,8 +1,8 @@
 //! The BASIC lister and the variables area, the port of `src/spectrum/basic.ts`.
 //!
 //! The number formatting reimplements JavaScript's `Number.prototype.toPrecision(8)`
-//! and its trailing-zero trim rather than approximating them, so the listing agrees
-//! with the frozen TypeScript reference digit for digit.
+//! and its trailing-zero trim rather than approximating them: that is how the
+//! Spectrum's listing was rendered before the port, and the tests pin the digits.
 
 use super::charset::{token_name, zx_char};
 

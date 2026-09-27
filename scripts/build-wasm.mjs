@@ -1,4 +1,5 @@
-// Builds core/ for wasm32 and writes it into the bundle as base64:
+// Builds core/ for wasm32, with the workspace's size-first `wasm` profile, and writes it
+// into the bundle as base64:
 //
 //   node scripts/build-wasm.mjs [--check]
 //
@@ -14,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const CRATE = path.resolve('core');
-const WASM = path.join(CRATE, 'target/wasm32-unknown-unknown/release/tapeti_core.wasm');
+const WASM = path.resolve('target/wasm32-unknown-unknown/wasm/tapeti_core.wasm');
 const OUT = path.resolve('src/tzx/core.wasm.ts');
 
 function findCargo() {
@@ -24,7 +25,7 @@ function findCargo() {
 }
 
 try {
-  execFileSync(findCargo(), ['build', '--release', '--target', 'wasm32-unknown-unknown'], {
+  execFileSync(findCargo(), ['build', '--profile', 'wasm', '--target', 'wasm32-unknown-unknown'], {
     cwd: CRATE,
     stdio: ['ignore', 'ignore', 'pipe'],
     encoding: 'utf8',

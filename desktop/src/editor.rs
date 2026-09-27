@@ -21,9 +21,9 @@ use tapeti_core::types::{
 use crate::app::App;
 use crate::fmt;
 use crate::state::Side;
-use crate::tables;
 use crate::theme::Tokens;
 use crate::widgets as w;
+use tapeti_core::tables;
 
 const TSTATES_PER_SEC: f64 = 3_500_000.0;
 

@@ -51,18 +51,3 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSString",
   "NSURL",
 ] }
-
-# Not the core's size-first profile: this one is a desktop binary, not a wasm
-# module in a web bundle. Kept here rather than in a workspace root so that
-# core/Cargo.toml keeps owning the profile the wasm build needs.
-#
-# `strip = "debuginfo"` rather than `true`: the symbol table is what makes the
-# backtrace in `crashlog.rs` name functions instead of repeating
-# `__mh_execute_header`, and a report that names the call path is the whole
-# point of writing one. It costs 0.77 MB of 6.2, which is a trade this profile
-# is already on the right side of.
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
-strip = "debuginfo"

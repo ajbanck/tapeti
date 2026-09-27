@@ -3,8 +3,8 @@
 //! `src/tzx/wire.ts` decodes it. Both ends are hand written, so the format is
 //! deliberately dull: little-endian, fixed widths that match the block model,
 //! no alignment and no compression. Fields appear in the order the TypeScript
-//! object literals in `test/reference/parser.ts` declare them, so JSON
-//! comparisons of decoded objects keep the same key order.
+//! interfaces in `src/tzx/types.ts` declare them, so JSON comparisons of decoded
+//! objects keep the same key order.
 //!
 //! ```text
 //! u8  WIRE_VERSION

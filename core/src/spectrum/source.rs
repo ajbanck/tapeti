@@ -39,8 +39,8 @@ pub struct SourceOptions {
     /// happen to spell a keyword, which is how the Spectrum itself tells them apart.
     pub any_case: bool,
     /// Hold a line that is tokenised to the 48K ROM's syntax as well as its
-    /// spelling. Off in [`Default`], as the disassembler's extras are, because
-    /// the frozen reference knows nothing of it; both data windows turn it on.
+    /// spelling. Off in [`Default`], as the disassembler's extras are; both data
+    /// windows turn it on.
     pub check_syntax: bool,
 }
 

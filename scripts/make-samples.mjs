@@ -18,12 +18,9 @@ import { createServer } from 'vite';
 const OUT = path.resolve('test/samples');
 const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 try {
-  const { serializeTzx, serializeTap } = await vite.ssrLoadModule('/src/tzx/writer.ts');
   const { createBlock } = await vite.ssrLoadModule('/src/tzx/types.ts');
-  const { encodeHeader, checksum } = await vite.ssrLoadModule('/src/tzx/describe.ts');
-  const { encodePokes } = await vite.ssrLoadModule('/src/tzx/pokes.ts');
-  const { checkConsistency } = await vite.ssrLoadModule('/src/tzx/consistency.ts');
-  const { parseTzx } = await vite.ssrLoadModule('/src/tzx/parser.ts');
+  const { serializeTzx, serializeTap, encodeHeader, checksum, encodePokes, checkConsistency, parseTzx } =
+    await vite.ssrLoadModule('/src/tzx/core.ts');
   // Parsing runs in the Rust core, which has to be instantiated first.
   await (await vite.ssrLoadModule('/src/tzx/core.ts')).initCore();
 

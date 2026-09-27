@@ -1,11 +1,16 @@
 import { Side, tapes, commit, unitIndices, setStatus, dialog, dataWindow, active, blockNo, selectUids, setCursor, insertBlocks } from './store';
 import { downloadBytes, newTape, confirmDiscard } from './files';
-import { Program, detectPrograms, programAt } from '../tzx/programs';
-import { checkConsistency } from '../tzx/consistency';
-import { serializeTzx, requiredVersion } from '../tzx/writer';
+import {
+  Program,
+  detectPrograms,
+  programAt,
+  checkConsistency,
+  serializeTzx,
+  requiredVersion,
+  playbackOrder,
+} from '../tzx/core';
 import { isDataBlock, isUnknown, deepClone, cloneBlock } from '../tzx/types';
 import { playBlocks } from './player';
-import { playbackOrder } from '../tzx/audio';
 
 /** "Set selection timings to current" copies all timings (not the pause) to selected data blocks. */
 export function setSelectionTimings(side: Side) {

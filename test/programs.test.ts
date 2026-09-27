@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectPrograms, programAt, groupRanges } from '../src/tzx/programs';
-import { encodeHeader } from '../src/tzx/describe';
+import { detectPrograms, programAt, groupRanges, encodeHeader } from '../src/tzx/core';
 import { createBlock, Block, StandardBlock, GroupStartBlock, TextBlock, SelectBlock, ArchiveBlock } from '../src/tzx/types';
 
 const hdr = (name: string, type = 0) => ({ ...createBlock(0x10), data: encodeHeader({ type, typeName: '', name, length: 10, param1: 0, param2: 10 }) } as StandardBlock);

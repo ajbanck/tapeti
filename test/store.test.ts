@@ -3,10 +3,8 @@ import {
   tapes, locked, clipboard, insertBlocks, unitIndices, moveUnit, undo, redo, markSaved, toggleCollapse, groupSelection,
   copyUnit, paste, deleteUnit, setCursor, selectUids, commit, collapseAll,
 } from '../src/state/store';
-import { groupRanges } from '../src/tzx/programs';
+import { groupRanges, serializeTzx, fileHashes } from '../src/tzx/core';
 import { newTape, loadBytes } from '../src/state/files';
-import { serializeTzx } from '../src/tzx/writer';
-import { fileHashes } from '../src/tzx/hash';
 import { createBlock, Block } from '../src/tzx/types';
 
 const ids = () => tapes[0].value.blocks.map((b) => b.id);

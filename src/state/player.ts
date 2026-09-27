@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
 import { Block } from '../tzx/types';
-import { renderTape, playbackTimeline, playbackOrder, positionAt, TSTATES_PER_SEC } from '../tzx/audio';
+import { renderTape, playbackTimeline, playbackOrder, positionAt, TSTATES_PER_SEC } from '../tzx/core';
 import { Side, audioMode, setStatus } from './store';
 
 export const playing = signal(false);

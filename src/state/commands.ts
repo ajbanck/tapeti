@@ -7,7 +7,7 @@ import {
   stepNext, stepReset, backup, toggleCollapse, collapseAll,
   runCompareTapes, runFindMatch, clearCompare, clipboard, theme, applyTheme,
 } from './store';
-import { groupRanges } from '../tzx/programs';
+import { groupRanges } from '../tzx/core';
 import { newTape, saveTzx, saveTap, pickAndOpen, confirmDiscard } from './files';
 import { setSelectionTimings, viewData, playTape, playSelection, openInsertDialog, openInEmulator, selectProgram, openProgramPicker, extractToOtherPane } from './actions';
 import { stopPlayback, playing } from './player';

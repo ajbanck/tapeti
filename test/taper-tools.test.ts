@@ -1,9 +1,18 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { disassemble, disassemblyText, checkSymbols } from '../src/spectrum/z80dis';
-import { decryptBytes, encryptBytes, CRYPT_PRESETS } from '../src/tzx/bits';
-import { decodeHeader } from '../src/tzx/describe';
-import { detectContent, detectContentAsLoaded } from '../src/tzx/content';
-import { checkConsistency } from '../src/tzx/consistency';
+import {
+  disassemble,
+  disassemblyText,
+  checkSymbols,
+  decryptBytes,
+  encryptBytes,
+  CRYPT_PRESETS,
+  decodeHeader,
+  detectContent,
+  detectContentAsLoaded,
+  checkConsistency,
+  listBasic,
+  basicToText,
+} from '../src/tzx/core';
 import { tapes, dialog } from '../src/state/store';
 import { loadBytes, insertDataFile, headerName, newTape, MAX_FILE_BYTES } from '../src/state/files';
 import { StandardBlock } from '../src/tzx/types';
@@ -116,7 +125,6 @@ describe('inserting a file as data', () => {
 import { insertBlocks, setCursor, toggleCollapse, undo, status, backup } from '../src/state/store';
 import { runCommand } from '../src/state/commands';
 import { createBlock, Block, PureDataBlock, GroupStartBlock, LoopStartBlock } from '../src/tzx/types';
-import { listBasic, basicToText } from '../src/spectrum/basic';
 
 describe('stepping through the play order', () => {
   it('goes twice round a loop, opens a collapsed group, and says when the tape is over', () => {

@@ -1,8 +1,10 @@
 //! Parser tests. Two halves:
 //!
-//! * `matches_the_typescript_dumps`: every dump in `tests/fixtures/`, written from the
-//!   frozen `test/reference/parser.ts` by `node scripts/dump-blocks.mjs`, must be
-//!   reproduced byte for byte by this crate. That is the differential test.
+//! * `matches_the_dumps`: every dump in `tests/fixtures/` must be reproduced byte for
+//!   byte: the parse of a sample tape as `dump.rs` prints it, recorded when the tape was
+//!   added or the format changed. `UPDATE_FIXTURES=1 cargo test --test parser` writes
+//!   them anew (a new tape needs a file holding just its `file <path>` line first);
+//!   review the diff, never hand-edit them.
 //! * the rest: the hand-built cases of `test/tzx.test.ts`.
 
 use std::path::{Path, PathBuf};
@@ -21,7 +23,7 @@ fn tzx(body: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn matches_the_typescript_dumps() {
+fn matches_the_dumps() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("fixtures directory")
@@ -37,6 +39,10 @@ fn matches_the_typescript_dumps() {
         let bytes = std::fs::read(&tape_path).unwrap_or_else(|e| panic!("{}: {e}", tape_path.display()));
         let tape = parse_tape(&bytes).expect("parses");
         let got = dump_tape(&tape);
+        if std::env::var_os("UPDATE_FIXTURES").is_some() {
+            std::fs::write(&fixture, format!("{head}\n{got}")).unwrap();
+            continue;
+        }
         if got != expected {
             let g: Vec<&str> = got.lines().collect();
             let e: Vec<&str> = expected.lines().collect();

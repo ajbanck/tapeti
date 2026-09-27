@@ -1,0 +1,24 @@
+# One workspace for the two crates: one lock file, one target directory, one `cargo test`.
+# The build profiles live here because cargo reads them from the workspace root only.
+[workspace]
+members = ["core", "desktop"]
+resolver = "2"
+
+# The desktop binary. `strip = "debuginfo"` rather than `true`: the symbol table is what
+# makes the backtrace in desktop/src/crashlog.rs name functions instead of repeating
+# `__mh_execute_header`, and a report that names the call path is the whole point of
+# writing one. It costs 0.77 MB of 6.2, which is a trade this profile is already on the
+# right side of.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = "debuginfo"
+
+# The wasm module, which ships in the web bundle, so it is built for size: no unwinding
+# tables, symbols stripped. scripts/build-wasm.mjs builds core/ with `--profile wasm`.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+panic = "abort"
+strip = true

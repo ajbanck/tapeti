@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { snapshotKind, snapshotInfo, snapshotToTape, DEFAULT_SNAPSHOT_SPEED } from '../src/tzx/snapshot';
-import { decodeHeader } from '../src/tzx/describe';
-import { serializeTzx } from '../src/tzx/writer';
-import { parseTape } from '../src/tzx/parser';
+import {
+  snapshotKind,
+  snapshotInfo,
+  snapshotToTape,
+  DEFAULT_SNAPSHOT_SPEED,
+  decodeHeader,
+  serializeTzx,
+  parseTape,
+} from '../src/tzx/core';
 import { StandardBlock, TextBlock, TurboBlock } from '../src/tzx/types';
 import { tapes, dialog } from '../src/state/store';
 import { loadBytes, importSnapshot, newTape } from '../src/state/files';

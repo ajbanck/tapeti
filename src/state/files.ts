@@ -1,12 +1,23 @@
 // Getting tapes in and out of the store: parsing loaded bytes, saving through the platform
 // adapter, and routing files that arrive from dialogs or drops.
 import { Side, tapes, active, dialog, emptyTape, markSaved, insertBlocks, setStatus, showMessage, blockNo } from './store';
-import { parseTape, isTzx } from '../tzx/parser';
-import { serializeTzx, serializeTap, saveVersion } from '../tzx/writer';
+import {
+  parseTape,
+  isTzx,
+  serializeTzx,
+  serializeTap,
+  saveVersion,
+  checksum,
+  encodeHeader,
+  fileHashes,
+  snapshotKind,
+  snapshotInfo,
+  snapshotToTape,
+  SnapshotKind,
+  SnapshotOptions,
+  SNAPSHOT_SPEEDS,
+} from '../tzx/core';
 import { Block, ParsedTape, StandardBlock, createBlock } from '../tzx/types';
-import { checksum, encodeHeader } from '../tzx/describe';
-import { fileHashes } from '../tzx/hash';
-import { snapshotKind, snapshotInfo, snapshotToTape, SnapshotKind, SnapshotOptions, SNAPSHOT_SPEEDS } from '../tzx/snapshot';
 import { platform, OpenedFile, TAPE_FILTERS, filtersForName, FileFilter, fileToOpened } from '../platform';
 
 export function newTape(side: Side) {

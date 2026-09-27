@@ -16,7 +16,7 @@
 //                           the WiX `wix` command on PATH, an .msi that registers
 //                           .tzx/.tap (and offers itself for .z80/.sna)
 //   --universal  macOS: build both architectures and lipo them into one binary
-//   --no-build   package what is already in desktop/target
+//   --no-build   package what is already in target/
 //
 // It never opens a window: running the app is the person's job. On macOS the
 // binary is wrapped in an .app even for a plain build, because an unbundled
@@ -85,19 +85,19 @@ function build() {
       console.log(`Building Tapeti (${profile})…`);
       run(cargo, ['build', ...flags], { cwd: crate });
     }
-    return join(crate, 'target', profile, exe);
+    return join(root, 'target', profile, exe);
   }
 
   // A universal macOS binary is two builds and a lipo; Rust has no fat target.
   const targets = ['aarch64-apple-darwin', 'x86_64-apple-darwin'];
-  const built = targets.map((t) => join(crate, 'target', t, profile, exe));
+  const built = targets.map((t) => join(root, 'target', t, profile, exe));
   if (!has('--no-build')) {
     for (const target of targets) {
       console.log(`Building Tapeti (${profile}, ${target})…`);
       run(cargo, ['build', ...flags, '--target', target], { cwd: crate });
     }
   }
-  const fat = join(crate, 'target', `universal-${profile}`, exe);
+  const fat = join(root, 'target', `universal-${profile}`, exe);
   mkdirSync(dirname(fat), { recursive: true });
   run('lipo', ['-create', '-output', fat, ...built]);
   return fat;

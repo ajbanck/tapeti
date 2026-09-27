@@ -20,8 +20,6 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: core
       - run: npm ci
       - run: npm run core:test
       - run: npm run typecheck
@@ -54,16 +52,12 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: desktop
       - name: Install Linux dependencies
         if: matrix.name == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+      # The whole workspace: the core's tests run here too, on all three platforms.
       - run: cargo fmt --check
-        working-directory: desktop
       - run: cargo clippy --all-targets -- -D warnings
-        working-directory: desktop
       - run: cargo test
-        working-directory: desktop

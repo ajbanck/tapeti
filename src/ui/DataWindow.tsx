@@ -3,13 +3,41 @@ import { ComponentChildren } from 'preact';
 import { dataWindow, tapes, Side, commit, locked, disSymbols, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
 import { downloadBytes, pickFile } from '../state/files';
 import { Block, isUnknown } from '../tzx/types';
-import { detectContentAsLoaded } from '../tzx/content';
-import { decodeHeader, encodeHeader, checksum, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
-import { BitData, joinBits, dropBits, addBits, shiftLeftBits, shiftRightBits, flipBytes, decryptBytes, encryptBytes, CRYPT_PRESETS, totalBits } from '../tzx/bits';
-import { renderScreen, hasFlash, SCREEN_SIZE } from '../spectrum/screen';
-import { listBasic, listVariables, basicToText, basicSource, editBasic, BasicOptions, SourceError } from '../spectrum/basic';
-import { disassemble, disassemblyText, checkSymbols, DisLine } from '../spectrum/z80dis';
-import { zxChar, dumpChar } from '../spectrum/charset';
+import {
+  detectContentAsLoaded,
+  decodeHeader,
+  encodeHeader,
+  checksum,
+  HEADER_TYPE_NAMES,
+  HeaderInfo,
+  BitData,
+  joinBits,
+  dropBits,
+  addBits,
+  shiftLeftBits,
+  shiftRightBits,
+  flipBytes,
+  decryptBytes,
+  encryptBytes,
+  CRYPT_PRESETS,
+  totalBits,
+  renderScreen,
+  hasFlash,
+  SCREEN_SIZE,
+  listBasic,
+  listVariables,
+  basicToText,
+  basicSource,
+  editBasic,
+  BasicOptions,
+  SourceError,
+  disassemble,
+  disassemblyText,
+  checkSymbols,
+  DisLine,
+  zxChar,
+  dumpChar,
+} from '../tzx/core';
 import { NumInput, TextInput, Check } from './fields';
 import { Icon } from './icons';
 import { Modal } from './Dialogs';

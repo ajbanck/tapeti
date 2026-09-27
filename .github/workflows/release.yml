@@ -49,8 +49,6 @@ jobs:
           targets: ${{ matrix.targets }}
 
       - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: desktop
 
       # ALSA for cpal's output; the rest of the stack (winit, glutin, rfd's portal
       # dialogs, arboard) loads what it needs at runtime.

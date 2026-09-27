@@ -19,6 +19,7 @@ pub mod pokes;
 pub mod programs;
 pub mod snapshot;
 pub mod spectrum;
+pub mod tables;
 pub mod types;
 pub mod wasm;
 pub mod wire;

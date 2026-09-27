@@ -2,9 +2,16 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import { Side, tapes, active, setCursor, unitIndices, moveBlocks, toggleCollapse, hex, blockNo, zeroBased, fmtTime } from '../state/store';
 import { openFiles } from '../state/files';
 import { runCommand, commandLabel } from '../state/commands';
-import { checkConsistency, Issue } from '../tzx/consistency';
-import { groupRanges } from '../tzx/programs';
-import { describeBlock, blockLength, isMetadata } from '../tzx/describe';
+import {
+  checkConsistency,
+  Issue,
+  groupRanges,
+  describeBlock,
+  blockLength,
+  isMetadata,
+  requiredVersion,
+  contentLabels,
+} from '../tzx/core';
 import { isDataBlock, isUnknown as isUnknownBlock, BLOCK_NAMES } from '../tzx/types';
 import { fmtNum } from '../state/store';
 import { BlockEditor } from './BlockEditor';
@@ -12,8 +19,6 @@ import { MenuItems, contextMenu, paneMenu } from './MenuBar';
 import { viewData } from '../state/actions';
 import { IconBtn } from './icons';
 import { playing, playingSide, playingBlock, playPos } from '../state/player';
-import { requiredVersion } from '../tzx/writer';
-import { contentLabels } from '../tzx/content';
 import { useMemo } from 'preact/hooks';
 
 const DRAG_TYPE = 'application/x-tapeti-blocks';

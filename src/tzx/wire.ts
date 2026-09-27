@@ -1,7 +1,7 @@
 // Decoder for the byte format the Rust core answers in; `core/src/wire.rs` is
 // the encoder and documents the layout. Fields are read in the order the block
-// literals below declare them, matching `test/reference/parser.ts`'s order, so
-// key order (and therefore anything comparing JSON) stays the same.
+// literals below declare them, matching `types.ts`, so key order (and therefore
+// anything comparing JSON) stays the same.
 import { Reader, Writer } from './bytes';
 import {
   ArchiveEntry, AsLoaded, BasicLine, BasicToken, BitData, Block, CompareResult, ContentInfo, ContentKind,
@@ -214,9 +214,9 @@ function block(r: Reader): Block {
  *
  * `withData: false` leaves the byte payloads out: for a call that only looks at
  * block types, copying them costs more than the call. Only for entry points that
- * provably ignore the data (`core_required_version`, `core_save_version`); the
- * differential tests compare those against the reference on blocks that do
- * carry data, so a core that started reading it would fail there.
+ * provably ignore the data (`core_required_version`, `core_save_version`);
+ * `test/core.test.ts` records their answers on blocks that do carry data, so a
+ * core that started reading it would fail there.
  */
 export function encodeBlocks(blocks: Block[], opts: { withData?: boolean } = {}): Uint8Array {
   const w = new Writer();

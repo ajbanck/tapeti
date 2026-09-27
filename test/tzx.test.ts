@@ -1,16 +1,36 @@
 import { describe, it, expect } from 'vitest';
-import { parseTzx, parseTap, isTzx } from '../src/tzx/parser';
-import { serializeTzx, serializeTap, requiredVersion, saveVersion } from '../src/tzx/writer';
+import {
+  parseTzx,
+  parseTap,
+  isTzx,
+  serializeTzx,
+  serializeTap,
+  requiredVersion,
+  saveVersion,
+  decodeHeader,
+  encodeHeader,
+  describeBlock,
+  checkConsistency,
+  tapeDuration,
+  playbackOrder,
+  renderTape,
+  renderLength,
+  encodeWav,
+  TSTATES_PER_SEC,
+  playbackTimeline,
+  positionAt,
+  blockDuration,
+  blockPulses,
+  LEAD_TSTATES,
+  disassemble,
+  listBasic,
+  decodeNumber,
+  compareTapes,
+  detectContent,
+  basicScore,
+  renderScreen,
+} from '../src/tzx/core';
 import { createBlock, Block, CREATABLE_IDS, isUnknown } from '../src/tzx/types';
-import { decodeHeader, encodeHeader, describeBlock } from '../src/tzx/describe';
-import { checkConsistency } from '../src/tzx/consistency';
-import { tapeDuration, playbackOrder, renderTape, renderLength, encodeWav, TSTATES_PER_SEC, playbackTimeline, positionAt, blockDuration, LEAD_TSTATES } from '../src/tzx/audio';
-// `SampleSink` and `PulseSink` exist only in `test/reference/audio.ts`, the frozen
-// implementation; the sample rendering tests below build their reference on them.
-import { emitBlock, SampleSink, PulseSink } from './reference/audio';
-import { disassemble } from '../src/spectrum/z80dis';
-import { listBasic, decodeNumber } from '../src/spectrum/basic';
-import { compareTapes } from '../src/tzx/compare';
 
 function header(name: string, type = 3, length = 100, p1 = 32768, p2 = 0) {
   return encodeHeader({ type, typeName: '', name, length, param1: p1, param2: p2 });
@@ -149,28 +169,24 @@ describe('flow', () => {
 });
 
 describe('sample rendering', () => {
-  // A reference renderer: samples collected in a plain array and filtered afterwards.
-  // `renderTape` must match it sample for sample.
-  function reference(blocks: Block[], opts: { sampleRate: number; mode: 'square' | 'mic'; amplitude?: number }): Float32Array {
+  // A second renderer over the pulses the core emits for a block: samples
+  // collected in a plain array and filtered afterwards. `renderTape` must match
+  // it sample for sample up to the end of the block. One block at a time, since
+  // a block's pulses are emitted from a low level and a later block starts at
+  // whatever level the previous one left; and only up to the block's end,
+  // because the pulse list does not say which level the lead-out holds.
+  function reference(block: Block, opts: { sampleRate: number; mode: 'square' | 'mic'; amplitude?: number }): Float32Array {
     const samples: number[] = [];
-    let level: 0 | 1 = 0;
     let acc = 0;
     const tPerSample = TSTATES_PER_SEC / opts.sampleRate;
-    const sink: PulseSink = {
-      get level() { return level; },
-      set level(l) { level = l; },
-      pulse(t) { this.hold(t); level = level ? 0 : 1; },
-      hold(t) {
-        acc += t;
-        const n = Math.floor(acc / tPerSample);
-        acc -= n * tPerSample;
-        for (let i = 0; i < n; i++) samples.push(level ? 1 : -1);
-      },
-      setLevel(l) { level = l; },
+    const hold = (t: number, level: 0 | 1) => {
+      acc += t;
+      const n = Math.floor(acc / tPerSample);
+      acc -= n * tPerSample;
+      for (let i = 0; i < n; i++) samples.push(level ? 1 : -1);
     };
-    sink.hold(TSTATES_PER_SEC / 2);
-    for (const i of playbackOrder(blocks)) emitBlock(sink, blocks[i]);
-    sink.hold(TSTATES_PER_SEC / 2);
+    hold(LEAD_TSTATES, 0);
+    for (const p of blockPulses(block)) hold(p.tstates, p.level);
     const amp = opts.amplitude ?? 0.8;
     const out = new Float32Array(samples.length);
     if (opts.mode === 'square') {
@@ -212,29 +228,25 @@ describe('sample rendering', () => {
     return [std, tone, seq, lvl, pause, direct];
   }
 
-  it('matches the reference renderer sample for sample', () => {
-    const blocks = mixedTape();
-    for (const mode of ['square', 'mic'] as const) {
-      for (const sampleRate of [8000, 44100]) {
-        const got = renderTape(blocks, { sampleRate, mode });
-        const want = reference(blocks, { sampleRate, mode });
-        expect(got.length).toBe(want.length);
-        expect(got).toEqual(want);
+  it('renders the pulses of each block sample for sample', () => {
+    for (const block of mixedTape()) {
+      for (const mode of ['square', 'mic'] as const) {
+        for (const sampleRate of [8000, 44100]) {
+          const got = renderTape([block], { sampleRate, mode });
+          const want = reference(block, { sampleRate, mode });
+          // The block, then half a second of lead-out at one level.
+          expect(Math.abs(got.length - want.length - LEAD_TSTATES / (TSTATES_PER_SEC / sampleRate))).toBeLessThanOrEqual(1);
+          expect(got.subarray(0, want.length)).toEqual(want);
+          if (mode === 'square') expect(new Set(got.subarray(want.length)).size).toBe(1);
+        }
       }
     }
   });
-  it('preallocates the exact length and grows when the guess is short', () => {
+  it('preallocates the exact length', () => {
     const blocks = mixedTape();
     const order = playbackOrder(blocks);
     const rendered = renderTape(blocks, { sampleRate: 8000, mode: 'square' });
     expect(Math.abs(rendered.length - renderLength(blocks, 8000, order))).toBeLessThanOrEqual(1);
-    // A sink with no capacity must grow and still end up identical.
-    const small = new SampleSink({ sampleRate: 8000, mode: 'mic' }, 0);
-    small.hold(TSTATES_PER_SEC / 2);
-    for (const i of order) emitBlock(small, blocks[i]);
-    small.hold(TSTATES_PER_SEC / 2);
-    expect(small.length).toBe(rendered.length);
-    expect(small.finish()).toEqual(renderTape(blocks, { sampleRate: 8000, mode: 'mic' }));
   });
   it('MIC mode decays after an edge, square mode holds', () => {
     const tone = createBlock(0x12) as any;
@@ -339,7 +351,6 @@ function replacer(_k: string, v: any) {
   return v;
 }
 
-import { detectContent, basicScore } from '../src/tzx/content';
 describe('content detection', () => {
   const std = (data: Uint8Array) => { const b = createBlock(0x10) as any; b.data = data; return b as Block; };
   const withFlag = (body: number[]) => { const d = new Uint8Array(body.length + 2); d[0] = 0xff; d.set(body, 1); d[d.length - 1] = 0; return d; };
@@ -378,7 +389,6 @@ describe('content detection', () => {
   });
 });
 
-import { renderScreen } from '../src/spectrum/screen';
 describe('screen rendering', () => {
   it('uses the default attribute where the data ends before the attribute area', () => {
     const bitmap = new Uint8Array(6144);

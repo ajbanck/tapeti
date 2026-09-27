@@ -34,6 +34,7 @@ use crate::spectrum::romnames::Symbols;
 use crate::spectrum::screen::{has_flash, render_screen, ScreenOptions};
 use crate::spectrum::source::{basic_source_text, edit_basic, SourceOptions};
 use crate::spectrum::z80dis::{dis_to_text, disassemble_with, DisLine, DisOptions};
+use crate::tables::{ARCHIVE_TYPES, HARDWARE_INFO, HARDWARE_TYPES};
 use crate::types::Block;
 use crate::wire::{
     decode_basic_edit, decode_basic_lines, decode_bit_data, decode_blocks, decode_blocks_and_order,
@@ -616,6 +617,28 @@ fn tape_mode(id: u32) -> TapeCompareMode {
 #[no_mangle]
 pub unsafe extern "C" fn core_char_table(_ptr: *const u8, _len: usize, kind: u32) -> *mut u8 {
     finish(encode_strings(&char_table(kind)))
+}
+
+/// The dropdown tables of `crate::tables`, as strings with tab-separated fields.
+///
+/// `kind`: 0 the archive-info kinds (`key\tname`), 1 the hardware-info wordings, 2 the
+/// hardware classes (`class\tdevice\tdevice…`).
+///
+/// # Safety
+/// `ptr`/`len` are ignored.
+#[no_mangle]
+pub unsafe extern "C" fn core_tables(_ptr: *const u8, _len: usize, kind: u32) -> *mut u8 {
+    let items: Vec<String> = match kind {
+        0 => ARCHIVE_TYPES.iter().map(|(k, n)| format!("{k}\t{n}")).collect(),
+        1 => HARDWARE_INFO.iter().map(|n| (*n).to_string()).collect(),
+        _ => HARDWARE_TYPES
+            .iter()
+            .map(|(name, ids)| {
+                std::iter::once(*name).chain(ids.iter().copied()).collect::<Vec<_>>().join("\t")
+            })
+            .collect(),
+    };
+    finish(encode_strings(&items))
 }
 
 /// Render a screen dump into RGBA pixels. `flags`: 1 hide attributes, 2 flash phase.

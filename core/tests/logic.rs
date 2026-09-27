@@ -1,8 +1,7 @@
 //! Tests for descriptions, content detection, consistency and program structure in the core.
-//! `test/core.test.ts` compares the core against the frozen implementations in
-//! `test/reference/`; what is here is what the core owes on its own, plus the two predicates
-//! (`isMetadata`, `blockBody`) the TypeScript keeps its own copy of, asserted against the
-//! same table on both sides.
+//! `test/core.test.ts` holds the same to recorded answers through the wasm build; what is
+//! here is what the core owes on its own, plus the two predicates (`isMetadata`, `blockBody`)
+//! the TypeScript keeps its own copy of, asserted against the same table on both sides.
 
 use tapeti_core::consistency::{check_consistency, Severity};
 use tapeti_core::content::{basic_score, block_body, detect_content, ContentKind, Source};
@@ -424,4 +423,18 @@ fn a_speedlock_group_decrypts_what_it_holds() {
         Block::new(Body::GroupEnd),
     ];
     assert_eq!(crypt_preset_at(&nested, 2), Some((xor, add)));
+}
+
+#[test]
+fn the_dropdown_tables_have_their_shape() {
+    use tapeti_core::tables::{hardware_ids, ARCHIVE_TYPES, HARDWARE_INFO, HARDWARE_TYPES};
+    // The archive kinds of the specification, comments last; four hardware wordings;
+    // the hardware classes in the specification's order, ids dense from 0.
+    assert_eq!(ARCHIVE_TYPES.first().unwrap(), &(0x00, "Full title"));
+    assert_eq!(ARCHIVE_TYPES.last().unwrap(), &(0xff, "Comment(s)"));
+    assert_eq!(HARDWARE_INFO.len(), 4);
+    assert_eq!(HARDWARE_TYPES[0].0, "Computers");
+    assert_eq!(hardware_ids(0)[0], "ZX Spectrum 16k");
+    assert_eq!(hardware_ids(1)[0], "ZX Microdrive");
+    assert!(hardware_ids(HARDWARE_TYPES.len() as u8).is_empty());
 }

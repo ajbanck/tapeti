@@ -2,11 +2,16 @@
 // files.ts, higher-level actions in actions.ts, and the command table in commands.ts.
 import { signal } from '@preact/signals';
 import { Block, cloneBlock } from '../tzx/types';
-import { BlockCompareMode, TapeCompareMode, CompareResult, compareTapes, findMatches } from '../tzx/compare';
-import { groupRanges } from '../tzx/programs';
-import { playbackOrder } from '../tzx/audio';
-import type { SnapshotInfo, SnapshotKind } from '../tzx/snapshot';
-import type { FileHashes } from '../tzx/hash';
+import {
+  BlockCompareMode,
+  TapeCompareMode,
+  CompareResult,
+  compareTapes,
+  findMatches,
+  groupRanges,
+  playbackOrder,
+} from '../tzx/core';
+import type { SnapshotInfo, SnapshotKind, FileHashes } from '../tzx/core';
 
 export type Side = 0 | 1;
 

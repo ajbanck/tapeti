@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
-import { parseTape } from '../src/tzx/parser';
-import { detectContent } from '../src/tzx/content';
-import { basicSource, editBasic, listBasic, basicToText } from '../src/spectrum/basic';
-import { disassemblyText } from '../src/spectrum/z80dis';
+import {
+  parseTape,
+  detectContent,
+  basicSource,
+  editBasic,
+  listBasic,
+  basicToText,
+  disassemblyText,
+} from '../src/tzx/core';
 import { StandardBlock } from '../src/tzx/types';
 
 // The tokeniser is the core's to prove (core/src/spectrum/source.rs and

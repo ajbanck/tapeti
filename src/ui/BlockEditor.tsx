@@ -1,18 +1,34 @@
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { Side, tapes, replaceBlock, fmtNum, fmtByte, hex, locked, parseNum, showMessage, blockNo } from '../state/store';
-import { convertBlock } from '../tzx/convert';
 import {
-  Block, CREATABLE_IDS, BLOCK_NAMES, isUnknown, ARCHIVE_TYPES, HARDWARE_TYPES, HARDWARE_INFO,
+  convertBlock,
+  decodeHeader,
+  encodeHeader,
+  checksum,
+  HEADER_TYPE_NAMES,
+  HeaderInfo,
+  decodePokes,
+  encodePokes,
+  pokesToText,
+  textToPokes,
+  TSTATES_PER_SEC,
+  blockDuration,
+  detectContent,
+  blockBody,
+  ContentInfo,
+  renderScreen,
+  listBasic,
+  basicToText,
+  archiveTypes,
+  hardwareTypes,
+  hardwareInfo,
+} from '../tzx/core';
+import {
+  Block, CREATABLE_IDS, BLOCK_NAMES, isUnknown,
   SymDef, PilotRun, isDataBlock,
 } from '../tzx/types';
-import { decodeHeader, encodeHeader, checksum, HEADER_TYPE_NAMES, HeaderInfo } from '../tzx/describe';
 import { NumInput, TextInput, Field } from './fields';
 import { viewData } from '../state/actions';
-import { decodePokes, encodePokes, pokesToText, textToPokes } from '../tzx/pokes';
-import { TSTATES_PER_SEC, blockDuration } from '../tzx/audio';
-import { detectContent, blockBody, ContentInfo } from '../tzx/content';
-import { renderScreen } from '../spectrum/screen';
-import { listBasic, basicToText } from '../spectrum/basic';
 import { useRef } from 'preact/hooks';
 
 function Preview({ info, data, compact }: { info: ContentInfo; data: Uint8Array; compact?: boolean }) {
@@ -331,7 +347,7 @@ function Fields(p: FP) {
           render={(e: any, upd: (x: any) => void) => (
             <>
               <select value={e.type} disabled={disabled} onChange={(ev) => upd({ ...e, type: Number((ev.target as HTMLSelectElement).value) })}>
-                {Object.entries(ARCHIVE_TYPES).map(([k, v]) => <option key={k} value={Number(k)}>{v}</option>)}
+                {archiveTypes().map((t) => <option key={t.kind} value={t.kind}>{t.name}</option>)}
               </select>
               <textarea rows={e.text.includes('\n') ? 3 : 1} maxLength={255} disabled={disabled} value={e.text} onInput={(ev) => upd({ ...e, text: (ev.target as HTMLTextAreaElement).value })} />
             </>
@@ -348,14 +364,14 @@ function Fields(p: FP) {
           render={(e: any, upd: (x: any) => void) => (
             <>
               <select value={e.type} disabled={disabled} onChange={(ev) => upd({ ...e, type: Number((ev.target as HTMLSelectElement).value), id: 0 })}>
-                {HARDWARE_TYPES.map((t, i) => <option key={i} value={i}>{t.name}</option>)}
+                {hardwareTypes().map((t, i) => <option key={i} value={i}>{t.name}</option>)}
               </select>
               <select value={e.id} disabled={disabled} onChange={(ev) => upd({ ...e, id: Number((ev.target as HTMLSelectElement).value) })}>
-                {(HARDWARE_TYPES[e.type]?.ids ?? []).map((n, i) => <option key={i} value={i}>{n}</option>)}
-                {!(HARDWARE_TYPES[e.type]?.ids ?? [])[e.id] && <option value={e.id}>Unknown ({e.id})</option>}
+                {(hardwareTypes()[e.type]?.ids ?? []).map((n, i) => <option key={i} value={i}>{n}</option>)}
+                {!(hardwareTypes()[e.type]?.ids ?? [])[e.id] && <option value={e.id}>Unknown ({e.id})</option>}
               </select>
               <select value={e.info} disabled={disabled} onChange={(ev) => upd({ ...e, info: Number((ev.target as HTMLSelectElement).value) })}>
-                {HARDWARE_INFO.map((n, i) => <option key={i} value={i}>{n}</option>)}
+                {hardwareInfo().map((n, i) => <option key={i} value={i}>{n}</option>)}
               </select>
             </>
           )}

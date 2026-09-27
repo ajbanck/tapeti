@@ -1,10 +1,9 @@
-//! Tables the UI shows and the core does not need: the archive-info kinds and
-//! the hardware list of `src/tzx/types.ts`.
+//! The labels of the TZX specification's enumerations: the archive-info kinds and
+//! the hardware list, as both editors' dropdowns offer them.
 //!
-//! They stay out of `core/`: they are labels, not data the parser or writer
-//! depends on. Copied from the TypeScript once, in its order, so the two
-//! dropdowns offer the same choices in the same places; a change there needs
-//! copying here too.
+//! Nothing here is parsed or written; the tables live in the core so that the two
+//! apps show one list, in one order. The web app fetches them once through
+//! `core_tables`.
 
 /// `ARCHIVE_TYPES`: the kind byte of an Archive info entry.
 pub const ARCHIVE_TYPES: &[(u8, &str)] = &[

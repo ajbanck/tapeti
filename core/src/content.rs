@@ -135,8 +135,7 @@ fn looks_like_screen(len: usize) -> bool {
 /// The data of a block that carries some, or `None` for the block types that
 /// content detection ignores. A direct recording is ignored like a CSW block: its
 /// bytes are packed samples, and a run of silence (0x00 or 0xFF) would pass for a
-/// flag byte and hide the first and last eight samples in a data window. The frozen
-/// TypeScript reference still reads them, so `test/core.test.ts` leaves them out.
+/// flag byte and hide the first and last eight samples in a data window.
 fn data_of(b: &Block) -> Option<&[u8]> {
     match &b.body {
         Body::Standard { data, .. }

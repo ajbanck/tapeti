@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { convertBlock } from '../src/tzx/convert';
+import { convertBlock } from '../src/tzx/core';
 import { createBlock, ROM_TIMINGS, TurboBlock, GeneralizedBlock, PauseBlock, TextBlock, GroupStartBlock, StandardBlock } from '../src/tzx/types';
 
 describe('block type conversion', () => {
