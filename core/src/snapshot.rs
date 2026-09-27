@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 AJ Banck
-// Portions Copyright (C) 1997-2001 Martijn van der Heide (Taper, tpsnap.c), GPL-2.0-or-later
+// Portions Copyleft (C) 1997-2001 ThunderWare Research Center, written by Martijn van der Heide
+// (Taper, tpsnap.c, GPL-2.0-or-later)
 
 //! Turning a snapshot (.z80, .sna) into a tape that loads it: a BASIC loader
 //! followed by the memory as compressed turbo blocks.

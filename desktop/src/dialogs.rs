@@ -288,6 +288,14 @@ fn confirm_body(ui: &mut Ui, app: &mut App, lines: &[String], then: Then) -> Out
     })
 }
 
+/// The notice the GPL asks an interactive program to show: holder, licence, no warranty.
+const LICENCE: &str = "Copyright (C) 2026 AJ Banck. Tapeti is free software under the GNU General Public \
+                       License, version 2 or (at your option) any later version, and comes with \
+                       absolutely no warranty.";
+const TAPER: &str =
+    "Parts derive from Taper, Copyleft (C) 1997-2001 ThunderWare Research Center, written by \
+                     Martijn van der Heide.";
+
 fn about_body(ui: &mut Ui, tok: &Tokens) -> Outcome {
     ui.label(RichText::new("Tapeti").strong());
     ui.label("An editor for ZX Spectrum TZX and TAP tape images, for the desktop and the browser.");
@@ -301,6 +309,9 @@ fn about_body(ui: &mut Ui, tok: &Tokens) -> Outcome {
     );
     ui.add_space(4.0);
     w::note(ui, tok, format!("Version {}", env!("CARGO_PKG_VERSION")));
+    ui.add_space(4.0);
+    w::note(ui, tok, LICENCE);
+    w::note(ui, tok, TAPER);
     // Shown only once a crash log exists: this is for someone reporting a crash,
     // not general information text everyone else would see.
     if let Some(path) = crate::crashlog::path().filter(|p| p.exists()) {

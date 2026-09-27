@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 AJ Banck
-// Portions Copyright (C) 1997-2001 Martijn van der Heide (Taper, tpbasic.c), GPL-2.0-or-later
+// Portions Copyleft (C) 1997-2001 ThunderWare Research Center, written by Martijn van der Heide
+// (Taper, tpbasic.c, GPL-2.0-or-later)
 
 //! Does a tokenised line say something a Spectrum would accept?
 //!

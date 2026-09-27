@@ -70,6 +70,8 @@ export function Dialogs() {
           <p><b>Tapeti</b> — an editor for ZX Spectrum TZX and TAP tape images, for the desktop and the browser.</p>
           <p>Everything runs locally; files never leave your machine.</p>
           <p class="note">Supports TZX 1.20 blocks 10–19, 20–28, 2A, 2B, 30–33, 35 and 5A; unknown and deprecated blocks are preserved untouched.</p>
+          <p class="note">Copyright (C) 2026 AJ Banck. Tapeti is free software under the GNU General Public License, version 2 or (at your option) any later version, and comes with absolutely no warranty.</p>
+          <p class="note">Parts derive from Taper, Copyleft (C) 1997-2001 ThunderWare Research Center, written by Martijn van der Heide.</p>
         </Modal>
       );
     case 'insert':
