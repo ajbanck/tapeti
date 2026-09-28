@@ -142,7 +142,9 @@ Backup When Saving the version it replaces stays beside it as `name.tzx.bak`. `.
 files are associated with the app, so they open with a double click. Tapes can also be dropped
 onto a tape pane or named on the command line: `tapeti left.tzx right.tzx` fills both panes. In
 the browser, Save downloads a copy, and tapes on the same site can be given in the URL:
-`?open=tapes/one.tzx&right=tapes/other.tzx`.
+`?open=tapes/one.tzx&right=tapes/other.tzx`. A page that embeds the app can set its theme with
+`?theme=dark`, `light` or `auto` (or just `?dark`, `?light`); the app then leaves the theme to
+that page and hides its own switch.
 
 ### Keyboard and mouse
 

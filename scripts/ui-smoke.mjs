@@ -245,6 +245,26 @@ await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
 await wait(150);
 await page.screenshot({ path: `${OUT}/03-dark.png` });
 
+// ?theme= pins the theme for a page that embeds the app: no switch of the app's own, nothing remembered
+expect(!!(await page.$('.menubar > button')), 'the menu bar has a theme switch');
+await page.evaluate(() => localStorage.setItem('tapeti.theme', 'light'));
+const pinned = new globalThis.URL(URL);
+pinned.searchParams.set('theme', 'dark');
+// a page of its own: the tapes above were edited, and leaving would ask about unsaved changes
+const embed = await browser.newPage();
+embed.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+await embed.goto(pinned.href, { waitUntil: 'networkidle0' });
+await embed.waitForSelector('.menubar');
+const root = await embed.evaluate(() => ({ ...document.documentElement.dataset }));
+expect(root.theme === 'dark' && root.themePinned === 'dark', '?theme=dark wins over the remembered light');
+expect(!(await embed.$('.menubar > button')), 'a pinned theme has no menu bar switch');
+for (const t of await embed.$$('.menubar .menu .title')) if ((await t.evaluate((e) => e.textContent)).trim() === 'View') await t.click();
+await wait(120);
+const viewItems = await embed.$$eval('.menu .dropdown .item', (its) => its.map((e) => e.textContent));
+expect(viewItems.length > 0 && !viewItems.some((t) => t.startsWith('Theme')), 'nor Theme items in the View menu');
+expect((await embed.$$eval('.menu .dropdown > *', (els) => els.filter((e, i) => e.classList.contains('sep') && els[i - 1]?.classList.contains('sep')).length)) === 0, 'and no doubled separator where they were');
+expect((await embed.evaluate(() => localStorage.getItem('tapeti.theme'))) === 'light', 'the remembered choice is left alone');
+
 await browser.close();
 if (errors.length) {
   console.error('\nErrors:\n' + errors.join('\n'));

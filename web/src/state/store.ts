@@ -72,7 +72,20 @@ export const clipboard = signal<Block[]>([]);
 export const status = signal<string>('');
 
 export type Theme = 'light' | 'dark' | 'system';
+/**
+ * The theme a `?theme=` parameter pinned, as the head script in `index.html` left it on
+ * `<html>`, or null. A page that embeds the app decides the theme this way: while pinned,
+ * the app offers no switch of its own and leaves the remembered choice alone.
+ */
+export const themePinned: Theme | null = (() => {
+  try {
+    const v = document.documentElement.dataset.themePinned;
+    if (v === 'light' || v === 'dark' || v === 'system') return v;
+  } catch { /* no document: the tests */ }
+  return null;
+})();
 function loadTheme(): Theme {
+  if (themePinned) return themePinned;
   try {
     const v = localStorage.getItem('tapeti.theme');
     if (v === 'light' || v === 'dark' || v === 'system') return v;
@@ -102,7 +115,7 @@ export function setOption(opt: 'zeroBased' | 'hexBytes' | 'backup', on: boolean)
 }
 export function applyTheme(t: Theme) {
   theme.value = t;
-  try { localStorage.setItem('tapeti.theme', t); } catch { /* ignore */ }
+  if (!themePinned) try { localStorage.setItem('tapeti.theme', t); } catch { /* ignore */ }
   const dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 }

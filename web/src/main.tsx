@@ -3,12 +3,16 @@
 
 import { render } from 'preact';
 import { App } from './ui/App';
-import { applyTheme, theme } from './state/store';
+import { applyTheme, theme, themePinned } from './state/store';
 import { loadBytes } from './state/files';
 import { initCore } from './tzx/core';
 
 applyTheme(theme.value);
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(theme.value));
+// A pinned theme (?theme=auto included) is settled at load: the embedding page may flip
+// data-theme itself afterwards, and following the system here would undo that.
+if (!themePinned) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(theme.value));
+}
 
 // start() can parse a tape immediately, so the core is instantiated first; the module
 // is inlined in the bundle, so this costs no request. Written as a callback rather than

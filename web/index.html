@@ -10,10 +10,17 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📼</text></svg>" />
     <script>
       // Before first paint, so a dark window never flashes light. Mirrors applyTheme() in
-      // state/store.ts; keep the key and the attribute in step with it.
+      // state/store.ts; keep the key and the attributes in step with it.
+      // A page embedding the app pins the theme with ?theme=dark|light|auto (or ?dark, ?light):
+      // data-theme-pinned then holds light, dark or system, the store reads it from there, and
+      // the remembered choice is neither read nor written.
       (function () {
-        var t = 'system';
-        try { t = localStorage.getItem('tapeti.theme') || 'system'; } catch (e) { /* storage unavailable */ }
+        var q = new URLSearchParams(location.search), p = q.get('theme');
+        var pin = p === 'dark' || p === 'light' ? p : p === 'auto' ? 'system'
+          : q.has('dark') ? 'dark' : q.has('light') ? 'light' : null;
+        var t = pin || 'system';
+        if (pin) document.documentElement.dataset.themePinned = pin;
+        else try { t = localStorage.getItem('tapeti.theme') || 'system'; } catch (e) { /* storage unavailable */ }
         var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
       })();

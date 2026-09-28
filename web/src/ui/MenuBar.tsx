@@ -2,7 +2,7 @@
 // Copyright (C) 2026 AJ Banck
 
 import { useState, useEffect } from 'preact/hooks';
-import { Side, active, theme, cycleTheme } from '../state/store';
+import { Side, active, theme, themePinned, cycleTheme } from '../state/store';
 import { COMMANDS, Command, CommandId, commandEnabled, commandKey, commandLabel, runCommand } from '../state/commands';
 import { Icon, IconBtn } from './icons';
 
@@ -136,6 +136,14 @@ export function contextMenu(side: Side): MenuItem[] {
   ]);
 }
 
+const THEME_IDS: Entry[] = ['theme-light', 'theme-dark', 'theme-system'];
+
+/** The menus as shown: a pinned theme (`?theme=`) is the embedding page's to switch, so its items go. */
+const SHOWN_MENUS: [string, Entry[]][] = !themePinned ? MENUS : MENUS.map(([title, entries]) => [
+  title,
+  entries.filter((e) => !THEME_IDS.includes(e)).filter((e, i, a) => !(e === 'sep' && (i === 0 || a[i - 1] === 'sep'))),
+]);
+
 export function MenuBar() {
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
@@ -144,7 +152,7 @@ export function MenuBar() {
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
   }, [open]);
-  const menus: [string, MenuItem[]][] = MENUS.map(([title, entries]) => [title, items(active.value, entries)]);
+  const menus: [string, MenuItem[]][] = SHOWN_MENUS.map(([title, entries]) => [title, items(active.value, entries)]);
   return (
     <div class="menubar" onClick={(e) => e.stopPropagation()}>
       <div class="brand"><span class="logo"><Icon name="cassette" size={15} /></span>Tapeti</div>
@@ -154,11 +162,13 @@ export function MenuBar() {
         </div>
       ))}
       <span class="spacer" />
-      <IconBtn
-        name={theme.value === 'dark' ? 'moon' : theme.value === 'light' ? 'sun' : 'monitor'}
-        title={`Theme: ${theme.value} (click to change)`}
-        onClick={cycleTheme}
-      />
+      {!themePinned && (
+        <IconBtn
+          name={theme.value === 'dark' ? 'moon' : theme.value === 'light' ? 'sun' : 'monitor'}
+          title={`Theme: ${theme.value} (click to change)`}
+          onClick={cycleTheme}
+        />
+      )}
     </div>
   );
 }
