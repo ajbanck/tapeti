@@ -16,8 +16,7 @@ Desktop builds for macOS, Linux and Windows are attached to each
 | Windows | `.msi`, or the portable `.exe` | 10 | One executable; the `.msi` only adds the shortcut and the file associations. |
 | Browser | — | Safari 14.1, Chrome 90, Firefox 90 | Also runs on web views that never received updates. |
 
-The desktop app is a single native executable with no web view, and the `.tzx`/`.tap` file
-associations come with the bundle (macOS) or the installer (Windows).
+The `.tzx`/`.tap` file associations come with the bundle (macOS) or the installer (Windows).
 
 The browser version is the same app without native file dialogs: Open reads a file you pick,
 Save downloads a copy. To run it yourself, see [Building from source](#building-from-source).

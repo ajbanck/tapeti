@@ -297,16 +297,7 @@ const TAPER: &str =
                      Martijn van der Heide.";
 
 fn about_body(ui: &mut Ui, tok: &Tokens) -> Outcome {
-    ui.label(RichText::new("Tapeti").strong());
-    ui.label("An editor for ZX Spectrum TZX and TAP tape images, for the desktop and the browser.");
-    ui.add_space(4.0);
-    ui.label("Everything runs locally; files never leave your machine.");
-    ui.add_space(4.0);
-    w::note(
-        ui,
-        tok,
-        "Supports TZX 1.20 blocks 10–19, 20–28, 2A, 2B, 30–33, 35 and 5A; unknown and deprecated blocks are preserved untouched.",
-    );
+    ui.label("An editor for ZX Spectrum TZX and TAP tape images.");
     ui.add_space(4.0);
     w::note(ui, tok, format!("Version {}", env!("CARGO_PKG_VERSION")));
     ui.add_space(4.0);

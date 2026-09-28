@@ -60,8 +60,6 @@ pub const WAVE: Icon = Icon::Path("wave");
 pub const COMPARE: Icon = Icon::Path("compare");
 pub const HASH: Icon = Icon::Path("hash");
 pub const LIST: Icon = Icon::Path("list");
-/// The wordmark's cassette.
-pub const CASSETTE: Icon = Icon::Path("cassette");
 /// An arrow leaving a box: open in the emulator.
 pub const LAUNCH: Icon = Icon::Path("launch");
 /// Three dots: the rest of a toolbar.
@@ -356,7 +354,6 @@ mod tests {
         ("caret right", &CARET_RIGHT),
         ("caret down", &CARET_DOWN),
         ("dot", &DOT),
-        ("cassette", &CASSETTE),
         ("launch", &LAUNCH),
         ("more", &MORE),
         ("minus", &MINUS),

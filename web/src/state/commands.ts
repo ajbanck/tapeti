@@ -101,8 +101,8 @@ export const COMMANDS = {
   'emu-selection': { label: 'Download selection for emulator', enabled: hasCursor, run: (s) => openInEmulator(s, 'selection') },
   'emu-settings': { label: 'Emulator settings…', run: () => (dialog.value = { kind: 'emulator' }) },
   'programs': { label: 'Programs…', key: fmtKey('Mod+J'), enabled: hasBlocks, run: openProgramPicker },
-  'tape-info': { label: 'Tape info…', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'tapeinfo', side: s }) },
-  'consistency': { label: 'Check consistency…', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'consistency', side: s }) },
+  'tape-info': { label: 'Tape info', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'tapeinfo', side: s }) },
+  'consistency': { label: 'Check consistency', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'consistency', side: s }) },
   'compare': { label: 'Compare tapes', run: () => runCompareTapes() },
   'clear-compare': { label: 'Clear compare marks', run: () => clearCompare() },
   'switch-pane': { label: 'Switch active pane', key: 'Tab', run: (s) => (active.value = other(s)) },
@@ -116,7 +116,7 @@ export const COMMANDS = {
   'theme-dark': { label: 'Theme: dark', checked: () => theme.value === 'dark', run: () => applyTheme('dark') },
   'theme-system': { label: 'Theme: system', checked: () => theme.value === 'system', run: () => applyTheme('system') },
   // ---- help
-  'about': { label: 'About Tapeti…', run: () => (dialog.value = { kind: 'about' }) },
+  'about': { label: 'About Tapeti', run: () => (dialog.value = { kind: 'about' }) },
 } satisfies Record<string, Command>;
 
 export type CommandId = keyof typeof COMMANDS;

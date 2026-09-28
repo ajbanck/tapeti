@@ -337,7 +337,7 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
           <IconBtn name={playing.value ? 'stop' : 'play'} title={playing.value ? 'Stop playback' : 'Play from cursor'} disabled={!has} onClick={() => runCommand(playing.value ? 'stop' : 'play-cursor', side)} />
           <IconBtn name="launch" title={commandLabel('emu-tape', side)} disabled={!has} onClick={() => runCommand('emu-tape', side)} />
           <IconBtn name="list" title="Programs…" disabled={!has} onClick={() => runCommand('programs', side)} />
-          <IconBtn name="info" title="Tape info…" disabled={!has} onClick={() => runCommand('tape-info', side)} />
+          <IconBtn name="info" title="Tape info" disabled={!has} onClick={() => runCommand('tape-info', side)} />
           <span class="vsep" />
           <div class={'menu pane-more' + (more ? ' open' : '')}>
             <IconBtn name="more" title="More for this tape" active={more} onClick={() => setMore(!more)} />

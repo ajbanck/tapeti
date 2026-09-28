@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { Side, active, theme, themePinned, cycleTheme } from '../state/store';
 import { COMMANDS, Command, CommandId, commandEnabled, commandKey, commandLabel, runCommand } from '../state/commands';
-import { Icon, IconBtn } from './icons';
+import { IconBtn } from './icons';
 
 export interface MenuItem {
   label?: string;
@@ -155,7 +155,6 @@ export function MenuBar() {
   const menus: [string, MenuItem[]][] = SHOWN_MENUS.map(([title, entries]) => [title, items(active.value, entries)]);
   return (
     <div class="menubar" onClick={(e) => e.stopPropagation()}>
-      <div class="brand"><span class="logo"><Icon name="cassette" size={15} /></span>Tapeti</div>
       {menus.map(([title, items]) => (
         <div key={title} onMouseEnter={() => open && open !== title && setOpen(title)}>
           <Menu title={title} items={items} open={open === title} onOpen={() => setOpen(title)} onClose={() => setOpen(null)} />

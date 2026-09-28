@@ -128,17 +128,15 @@ jobs:
       # The notes a release page carries: a
       # heredoc here rather than a file in the repo, because this job only
       # downloads the packages and never checks the tree out. VERSION becomes
-      # the tag, which is also what the file names hold. Anything about this
-      # release in particular is added to the draft by hand before publishing.
+      # the tag, which is also what the file names hold. These notes are the whole
+      # text of the release page: nothing is added by hand before publishing.
       - name: Write the release notes
         run: |
           sed "s|VERSION|$V|g" > release-notes.md <<'NOTES'
-          Tapeti is an editor for ZX Spectrum TZX and TAP tape images. Everything
-          runs locally: no file is uploaded anywhere.
+          Tapeti is an editor for ZX Spectrum TZX and TAP tape images.
 
-          The desktop app is one native executable — no WebView2, no system
-          WebKit, no WebKitGTK — and the `.tzx` and `.tap` file associations come
-          with the bundle on macOS and with the installer on Windows.
+          The `.tzx` and `.tap` file associations come with the bundle on macOS
+          and with the installer on Windows.
 
           **macOS** (Intel and Apple Silicon)
 

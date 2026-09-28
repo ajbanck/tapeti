@@ -80,17 +80,15 @@ mod platform {
             let bar = MudaMenu::new();
 
             // macOS expects the first menu to be the application's own; muda, unlike
-            // Slint, does not add it for you.
+            // Slint, does not add it for you. Its About is the table's `about`, the
+            // app's own dialog, rather than AppKit's standard panel, and it leaves
+            // the Help menu, which is dropped once it has nothing else.
+            let about = crate::menutable::flat().into_iter().find(|i| i.id == "about").expect("about");
+            let about = MenuItem::with_id(about.id, about.label, true, None);
             {
-                let about = muda::AboutMetadata {
-                    name: Some("Tapeti".into()),
-                    version: Some(env!("CARGO_PKG_VERSION").into()),
-                    comments: Some("ZX Spectrum TZX/TAP tape editor".into()),
-                    ..Default::default()
-                };
                 let app_menu = Submenu::new("Tapeti", true);
                 let _ = app_menu.append_items(&[
-                    &PredefinedMenuItem::about(Some("About Tapeti"), Some(about)),
+                    &about,
                     &PredefinedMenuItem::separator(),
                     &PredefinedMenuItem::services(None),
                     &PredefinedMenuItem::separator(),
@@ -107,7 +105,9 @@ mod platform {
             for menu in MENUS {
                 let sub = Submenu::new(menu.title, true);
                 for item in menu.items {
-                    if item.id.is_empty() {
+                    if item.id == about.id().0 {
+                        handles.push(Handle::Item(about.clone()));
+                    } else if item.id.is_empty() {
                         let sep = PredefinedMenuItem::separator();
                         let _ = sub.append(&sep);
                         handles.push(Handle::Separator);
@@ -121,7 +121,9 @@ mod platform {
                         handles.push(Handle::Item(it));
                     }
                 }
-                let _ = bar.append(&sub);
+                if !sub.items().is_empty() {
+                    let _ = bar.append(&sub);
+                }
             }
 
             bar.init_for_nsapp();
@@ -177,16 +179,6 @@ mod in_window {
         injected: std::cell::RefCell<Option<(String, usize)>>,
     }
 
-    /// `.brand` in `style.css`: the cassette in a rounded square, then the
-    /// wordmark. This bar is the app's own, so it says whose it is.
-    fn brand(ui: &mut egui::Ui, tok: &Tokens) {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
-        ui.painter().rect_filled(rect, egui::CornerRadius::same(7), tok.brand);
-        crate::icons::paint(ui.painter(), rect.shrink(5.5), &crate::icons::CASSETTE, tok.accent_text);
-        ui.label(egui::RichText::new("Tapeti").size(13.0).strong().color(tok.text));
-        ui.add_space(8.0);
-    }
-
     /// The left padding every item of a dropdown gets, and the box the tick is
     /// drawn in.
     const TICK_GUTTER: f32 = 20.0;
@@ -239,7 +231,6 @@ mod in_window {
             let checked = self.checked.borrow();
             let mut fired = None;
             egui::MenuBar::new().ui(ui, |ui| {
-                brand(ui, tok);
                 for menu in MENUS {
                     ui.menu_button(menu.title, |ui| {
                         // Reserves room for a tick like `.menu .item`'s 28px `::before`
@@ -467,7 +458,6 @@ mod tests {
     /// The left pane's overflow button in an 1100 point window with no menu bar.
     const MORE_AT: egui::Pos2 = egui::pos2(506.0, 28.0);
 
-    /// Where "View" sits in the bar: after the brand and File, Edit, Block,
-    /// Tape, Play.
-    const VIEW_X: f32 = 300.0;
+    /// Where "View" sits in the bar: after File, Edit, Block, Tape, Play.
+    const VIEW_X: f32 = 213.0;
 }

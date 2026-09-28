@@ -499,7 +499,7 @@ impl App {
                 }
             });
             crate::widgets::vsep(ui, &tok);
-            if icons::button(ui, &icons::INFO, "Tape info…", has).clicked() {
+            if icons::button(ui, &icons::INFO, "Tape info", has).clicked() {
                 run = Some("tape-info");
             }
             if icons::button(ui, &icons::LIST, "Programs…", has).clicked() {

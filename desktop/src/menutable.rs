@@ -154,8 +154,8 @@ pub const MENUS: &[MenuDef] = &[
         title: "Tape",
         items: &[
             cmd("programs", "Programs…", "CmdOrCtrl+J", Blocks),
-            cmd("tape-info", "Tape Info…", "CmdOrCtrl+I", Blocks),
-            cmd("consistency", "Check Consistency…", "CmdOrCtrl+K", Blocks),
+            cmd("tape-info", "Tape Info", "CmdOrCtrl+I", Blocks),
+            cmd("consistency", "Check Consistency", "CmdOrCtrl+K", Blocks),
             sep(),
             cmd("compare", "Compare Tapes", "", Always),
             cmd("find-match", "Find Match", "CmdOrCtrl+F", Cursor),
@@ -196,7 +196,7 @@ pub const MENUS: &[MenuDef] = &[
             cmd("switch-pane", "Switch Active Pane", "CmdOrCtrl+`", Always),
         ],
     },
-    MenuDef { title: "Help", items: &[cmd("about", "About Tapeti…", "", Always)] },
+    MenuDef { title: "Help", items: &[cmd("about", "About Tapeti", "", Always)] },
 ];
 
 /// The pane header's overflow menu (`paneMenu` in `MenuBar.tsx`): what is per

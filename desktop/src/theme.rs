@@ -42,9 +42,6 @@ pub struct Tokens {
     /// Which icon the theme button shows: 0 sun, 1 moon, 2 follow the system.
     /// A token because the bar that draws it has no other route to the setting.
     pub theme_icon: u8,
-    /// The wordmark's square. The web fills it with a blue-to-violet gradient;
-    /// this is that gradient's midpoint, which is all a 26px square shows.
-    pub brand: Color32,
 }
 
 pub const LIGHT: Tokens = Tokens {
@@ -70,7 +67,6 @@ pub const LIGHT: Tokens = Tokens {
     ignored: rgb(0xa0a8b6),
     cat: [rgb(0x2f6fed), rgb(0x0e9f9f), rgb(0xd97706), rgb(0x7c3aed), rgb(0x64748b), rgb(0xb91c1c)],
     theme_icon: 2,
-    brand: rgb(0x5655ed),
 };
 
 pub const DARK: Tokens = Tokens {
@@ -98,7 +94,6 @@ pub const DARK: Tokens = Tokens {
     ignored: rgb(0x5e6878),
     cat: [rgb(0x6b9cff), rgb(0x2dd4bf), rgb(0xfbbf24), rgb(0xa78bfa), rgb(0x94a3b8), rgb(0xf87171)],
     theme_icon: 2,
-    brand: rgb(0x5655ed),
 };
 
 impl Tokens {
