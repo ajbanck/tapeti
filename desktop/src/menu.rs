@@ -28,6 +28,18 @@ use crate::theme::Tokens;
 /// id — the View menu's three items each name a theme instead.
 pub const THEME: &str = "\0theme";
 
+/// What the File menu's last item reports: leaving the app. Windows and Linux
+/// put it there, macOS in the application menu muda builds. Not a command id,
+/// because the browser build has nothing to quit.
+pub const QUIT: &str = "\0quit";
+
+/// Its label and accelerator. Windows calls it Exit and leaves the key to
+/// Alt+F4, which the system handles; GNOME and KDE call it Quit, on Ctrl+Q.
+#[cfg(windows)]
+pub const QUIT_ITEM: (&str, &str) = ("Exit", "");
+#[cfg(not(windows))]
+pub const QUIT_ITEM: (&str, &str) = ("Quit", "CmdOrCtrl+Q");
+
 #[derive(Default)]
 pub struct Queue(Arc<Mutex<Vec<String>>>);
 
@@ -253,6 +265,15 @@ mod in_window {
                                 ui.close();
                             }
                         }
+                        if menu.title == "File" {
+                            ui.separator();
+                            let (label, keys) = QUIT_ITEM;
+                            let button = egui::Button::new(label).shortcut_text(crate::fmt::accel(keys));
+                            if ui.add(button).clicked() {
+                                fired = Some((QUIT.to_string(), active));
+                                ui.close();
+                            }
+                        }
                     });
                 }
                 // The theme cycle sits at the right end of the bar. `theme` is not a
@@ -454,6 +475,60 @@ mod tests {
         let changed = closed.diff(&open);
         assert!(changed > 2000, "clicking the overflow button changed {changed} pixels: no menu opened");
     }
+
+    /// The File menu of the in-window bar ends in Quit (Exit on Windows), and a
+    /// click on it closes the window: open the menu, find the label where it was
+    /// painted, click that.
+    #[test]
+    fn the_file_menu_quits() {
+        let (ctx, mut app) = app_with(false);
+        let mut run = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 720.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+            out.textures_delta.clear();
+            out
+        };
+        let click = |at: egui::Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            vec![egui::Event::PointerMoved(at), button(true), button(false)]
+        };
+        fn find(shape: &egui::Shape, label: &str) -> Option<egui::Rect> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => {
+                    Some(t.galley.rect.translate(t.pos.to_vec2()))
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, label)),
+                _ => None,
+            }
+        }
+        let closes = |out: &egui::FullOutput| {
+            out.viewport_output
+                .values()
+                .any(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::Close)))
+        };
+
+        run(Vec::new());
+        run(click(egui::pos2(FILE_X, 22.0)));
+        let out = run(Vec::new());
+        assert!(!closes(&out), "opening the File menu closed the window");
+        let label = QUIT_ITEM.0;
+        let at = out.shapes.iter().find_map(|c| find(&c.shape, label));
+        let at = at.unwrap_or_else(|| panic!("the File menu has no {label:?}"));
+        let quit = [run(click(at.center())), run(Vec::new())];
+        assert!(quit.iter().any(closes), "clicking {label:?} did not close the window");
+    }
+
+    /// Where "File" sits in the bar: first.
+    const FILE_X: f32 = 30.0;
 
     /// The left pane's overflow button in an 1100 point window with no menu bar.
     const MORE_AT: egui::Pos2 = egui::pos2(506.0, 28.0);

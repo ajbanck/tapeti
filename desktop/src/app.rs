@@ -104,6 +104,10 @@ pub struct App {
     pub view_h: [f32; 2],
     /// An action a dialog agreed to, run once the dialog is gone.
     pub pending: Option<Then>,
+    /// The tapes a quit in progress was told not to save (see `actions::quit`).
+    pub quit_discard: [bool; 2],
+    /// Every unsaved tape has been answered for: the next close is let through.
+    pub quit_ok: bool,
     theme_applied: Option<(Theme, bool)>,
 
     start: Instant,
@@ -160,6 +164,8 @@ impl App {
             scroll_offset: [0.0, 0.0],
             view_h: [400.0, 400.0],
             pending: None,
+            quit_discard: [false; 2],
+            quit_ok: false,
             theme_applied: None,
             start,
             first_frame: true,
@@ -168,6 +174,11 @@ impl App {
             benching: bench > 0,
             perf: Perf::default(),
         }
+    }
+
+    /// Whether either tape has changes a quit would lose.
+    pub fn unsaved(&self) -> bool {
+        (0..2).any(|side| self.store.tape(side).dirty())
     }
 
     pub fn scroll_to_cursor(&mut self, side: Side) {
@@ -236,6 +247,13 @@ impl App {
                 commands::run(self, id, side);
                 self.scroll_to_cursor(side);
                 return;
+            }
+            // Quit is the in-window bar's own item, not the table's (see `menu::QUIT`).
+            if let Some((mods, key)) = commands::keys_of(crate::menu::QUIT_ITEM.1) {
+                if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(mods, key))) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    return;
+                }
             }
         }
 
@@ -691,6 +709,22 @@ impl App {
                 self.scroll_to_cursor(self.store.active);
             }
         }
+        // Closing the window, the File menu's Quit and Ctrl+Q all arrive as a close
+        // request; one that would lose unsaved changes asks first.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_ok && self.unsaved() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            crate::actions::quit(self, true);
+        }
+        // macOS's Quit (the app menu, Cmd+Q, the Dock) bypasses the window; `macos.rs`
+        // turns it down while anything is unsaved and asks for a quit here instead. Not in
+        // tests: the flags are process-wide, and the tests draw frames in parallel.
+        #[cfg(all(target_os = "macos", not(test)))]
+        {
+            if crate::macos::take_quit_request() {
+                crate::actions::quit(self, true);
+            }
+            crate::macos::set_may_quit(self.quit_ok || !self.unsaved());
+        }
         self.handle_menu();
         self.handle_keys(ctx);
         if let Some(then) = self.pending.take() {
@@ -724,6 +758,8 @@ impl App {
                 if id == crate::menu::THEME {
                     self.store.settings.theme = self.store.settings.theme.next();
                     self.store.settings.save();
+                } else if id == crate::menu::QUIT {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
                     commands::run(self, &id, side);
                     self.scroll_to_cursor(side);
@@ -797,6 +833,7 @@ mod tests {
     use crate::actions::{Scope, Then};
     use crate::dialogs::Dialog;
     use crate::settings::Settings;
+    use crate::state::Edit;
     use tapeti_core::types::{create_body, Block, CREATABLE_IDS};
 
     /// A tape with one block of every type the editor can create, so one frame
@@ -883,6 +920,164 @@ mod tests {
         }
     }
 
+    /// Ctrl+Q quits on Linux, as the File menu's Quit says. macOS's Cmd+Q is the
+    /// platform menu's, and Windows leaves quitting to Alt+F4.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ctrl_q_quits() {
+        let (ctx, mut app) = app_with(Vec::new());
+        draw(&ctx, &mut app);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+            events: vec![egui::Event::Key {
+                key: Key::Q,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            }],
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let closes = out.viewport_output.values().any(|v| v.commands.contains(&egui::ViewportCommand::Close));
+        assert!(closes, "Ctrl+Q did not close the window");
+    }
+
+    /// One frame with `events` for the window: its viewport events (a close request)
+    /// and its input events (a click).
+    fn frame_with(
+        ctx: &egui::Context,
+        app: &mut App,
+        window: Vec<egui::ViewportEvent>,
+        events: Vec<egui::Event>,
+    ) -> Vec<egui::ViewportCommand> {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+            events,
+            ..Default::default()
+        };
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().events = window;
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        out.viewport_output.into_values().flat_map(|v| v.commands).collect()
+    }
+
+    /// The window's close button, or a Close the app sent itself (Quit, Ctrl+Q).
+    fn request_close(ctx: &egui::Context, app: &mut App) -> Vec<egui::ViewportCommand> {
+        frame_with(ctx, app, vec![egui::ViewportEvent::Close], Vec::new())
+    }
+
+    /// Click the button labelled `label` in the open dialog, and draw the frames it
+    /// takes to act. Returns the window commands those frames sent.
+    fn click_button(ctx: &egui::Context, app: &mut App, label: &str) -> Vec<egui::ViewportCommand> {
+        fn find(shape: &egui::Shape, label: &str) -> Option<egui::Rect> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => {
+                    Some(t.galley.rect.translate(t.pos.to_vec2()))
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, label)),
+                _ => None,
+            }
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let at = out.shapes.iter().find_map(|c| find(&c.shape, label));
+        let at = at.unwrap_or_else(|| panic!("no {label:?} button on screen")).center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let mut commands =
+            frame_with(ctx, app, Vec::new(), vec![egui::Event::PointerMoved(at), button(true)]);
+        commands.extend(frame_with(ctx, app, Vec::new(), vec![button(false)]));
+        commands.extend(frame_with(ctx, app, Vec::new(), Vec::new()));
+        commands
+    }
+
+    /// An app whose tapes have unsaved changes: the left one, and the right one if `both`.
+    fn unsaved_app(both: bool) -> (egui::Context, App) {
+        let (ctx, mut app) = app_with(every_block());
+        app.store.tape_mut(1).load("other.tzx".into(), None, every_block(), None);
+        for side in if both { 0..2 } else { 0..1 } {
+            app.store.commit(side, |bl| {
+                bl.pop();
+                Edit::default()
+            });
+            assert!(app.store.tape(side).dirty());
+        }
+        draw(&ctx, &mut app);
+        (ctx, app)
+    }
+
+    fn asking_about(app: &App) -> Option<Side> {
+        match app.store.dialog {
+            Some(Dialog::SaveChanges(side)) => Some(side),
+            _ => None,
+        }
+    }
+
+    const CANCEL_CLOSE: egui::ViewportCommand = egui::ViewportCommand::CancelClose;
+    const CLOSE: egui::ViewportCommand = egui::ViewportCommand::Close;
+
+    #[test]
+    fn a_tape_with_nothing_unsaved_closes_without_asking() {
+        let (ctx, mut app) = app_with(every_block());
+        draw(&ctx, &mut app);
+        assert!(!request_close(&ctx, &mut app).contains(&CANCEL_CLOSE));
+        assert_eq!(asking_about(&app), None);
+    }
+
+    /// Don't Save answers for one tape and moves on to the next; once both are answered
+    /// the window closes, and that close is not stopped again.
+    #[test]
+    fn closing_asks_about_each_unsaved_tape_in_turn() {
+        let (ctx, mut app) = unsaved_app(true);
+        assert!(request_close(&ctx, &mut app).contains(&CANCEL_CLOSE), "the close went through");
+        assert_eq!(asking_about(&app), Some(0));
+        assert!(!click_button(&ctx, &mut app, "Don't Save").contains(&CLOSE));
+        assert_eq!(asking_about(&app), Some(1));
+        assert!(click_button(&ctx, &mut app, "Don't Save").contains(&CLOSE), "the window stayed open");
+        assert_eq!(asking_about(&app), None);
+        assert!(!request_close(&ctx, &mut app).contains(&CANCEL_CLOSE), "the answered close was stopped");
+        assert!(app.store.tape(0).dirty(), "Don't Save saved the tape");
+    }
+
+    /// Cancel stops the quit, and the next one asks again from the first tape,
+    /// whatever the cancelled one was told.
+    #[test]
+    fn cancel_keeps_the_app_open_and_the_next_close_asks_again() {
+        let (ctx, mut app) = unsaved_app(true);
+        request_close(&ctx, &mut app);
+        click_button(&ctx, &mut app, "Don't Save");
+        assert!(!click_button(&ctx, &mut app, "Cancel").contains(&CLOSE));
+        assert_eq!(asking_about(&app), None);
+        assert!(!app.quit_ok);
+        assert!(request_close(&ctx, &mut app).contains(&CANCEL_CLOSE));
+        assert_eq!(asking_about(&app), Some(0), "the cancelled quit's Don't Save was remembered");
+    }
+
+    /// Save writes the tape back to its file, then the quit goes on.
+    #[test]
+    fn save_saves_the_tape_and_quits() {
+        let (ctx, mut app) = unsaved_app(false);
+        let path = std::env::temp_dir().join(format!("tapeti-quit-test-{}.tzx", std::process::id()));
+        app.store.tape_mut(0).path = Some(path.clone());
+        request_close(&ctx, &mut app);
+        let commands = click_button(&ctx, &mut app, "Save");
+        let written = std::fs::read(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(written.is_ok_and(|b| b.starts_with(b"ZXTape!")), "the tape was not written");
+        assert!(!app.store.tape(0).dirty());
+        assert!(commands.contains(&CLOSE), "the window stayed open after saving");
+    }
+
     #[test]
     fn draws_an_empty_tape() {
         let (ctx, mut app) = app_with(Vec::new());
@@ -896,6 +1091,7 @@ mod tests {
         let dialogs = [
             Dialog::message("Hello", vec!["one".into(), "two".into()]),
             Dialog::confirm("Sure?", vec!["really".into()], Then::NewTape(0)),
+            Dialog::SaveChanges(0),
             Dialog::about(),
             Dialog::insert(0),
             Dialog::tape_info(0),

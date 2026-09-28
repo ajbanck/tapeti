@@ -47,6 +47,8 @@ pub enum Then {
     ExtractStart(Side),
     ExtractGo(Side),
     EmulatorGo(Side, Scope),
+    /// Carry on quitting: the next tape with unsaved changes, or the door.
+    Quit,
 }
 
 pub fn run_then(app: &mut App, then: Then) {
@@ -56,7 +58,37 @@ pub fn run_then(app: &mut App, then: Then) {
         Then::ExtractStart(side) => extract_start(app, side),
         Then::ExtractGo(side) => extract_go(app, side),
         Then::EmulatorGo(side, scope) => launch_emulator(app, side, scope),
+        Then::Quit => quit(app, false),
     }
+}
+
+/// Leave the app, asking first about every tape with unsaved changes, one at a time.
+///
+/// `fresh` starts a quit over, forgetting the Don't Save answers of one the user
+/// cancelled. Once nothing is left to ask about, the window is closed again, and
+/// `App::quit_ok` lets that close through.
+pub fn quit(app: &mut App, fresh: bool) {
+    if fresh {
+        app.quit_discard = [false; 2];
+    }
+    for side in 0..2 {
+        if app.store.tape(side).dirty() && !app.quit_discard[side] {
+            app.store.dialog = Some(Dialog::SaveChanges(side));
+            return;
+        }
+    }
+    app.quit_ok = true;
+    app.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+}
+
+/// Save a tape the way the Save command does: in place, or through Save As when it
+/// has no file of its own.
+///
+/// Returns whether it was saved: a cancelled Save As or a failed write leaves it unsaved.
+pub fn save(app: &mut App, side: Side) -> bool {
+    let save_as = app.store.tape(side).path.is_none();
+    files::save_tzx(&mut app.store, side, save_as);
+    !app.store.tape(side).dirty()
 }
 
 /// Run `then` now, or after the user agrees to drop the tape's unsaved changes.

@@ -93,8 +93,17 @@ pub struct DataFileState {
 }
 
 pub enum Dialog {
-    Message { title: String, lines: Vec<String> },
-    Confirm { title: String, lines: Vec<String>, then: Then },
+    Message {
+        title: String,
+        lines: Vec<String>,
+    },
+    Confirm {
+        title: String,
+        lines: Vec<String>,
+        then: Then,
+    },
+    /// Save, Don't Save or Cancel, for a tape with unsaved changes when the app quits.
+    SaveChanges(Side),
     About,
     Insert(InsertState),
     TapeInfo(Side),
@@ -184,6 +193,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     let tok = app.tokens;
     let (title, width) = match &dialog {
         Dialog::Message { title, .. } | Dialog::Confirm { title, .. } => (title.clone(), 460.0),
+        Dialog::SaveChanges(_) => ("Save changes?".into(), 460.0),
         Dialog::About => ("About Tapeti".into(), 460.0),
         Dialog::Insert(_) => ("Insert block".into(), 420.0),
         Dialog::TapeInfo(side) => (format!("{} tape info", if *side == 0 { "Left" } else { "Right" }), 540.0),
@@ -209,6 +219,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
             let body = match &mut dialog {
                 Dialog::Message { lines, .. } => lines_with_ok(ui, lines),
                 Dialog::Confirm { lines, then, .. } => confirm_body(ui, app, lines, then.clone()),
+                Dialog::SaveChanges(side) => save_changes_body(ui, app, *side),
                 Dialog::About => about_body(ui, &tok),
                 Dialog::Insert(s) => insert_body(ui, app, s),
                 Dialog::TapeInfo(side) => tape_info_body(ui, app, *side, &tok),
@@ -279,6 +290,40 @@ fn confirm_body(ui: &mut Ui, app: &mut App, lines: &[String], then: Then) -> Out
         let ok = ui.button("OK").clicked();
         if ok {
             app.pending = Some(then);
+            return Outcome::Close;
+        }
+        if cancel {
+            return Outcome::Close;
+        }
+        Outcome::Keep
+    })
+}
+
+/// The quit's question about one tape.
+///
+/// Save goes through Save As for a tape with no file; if that is cancelled or fails,
+/// so is the quit. Cancel, the close button and Escape all stop the quit.
+fn save_changes_body(ui: &mut Ui, app: &mut App, side: Side) -> Outcome {
+    let t = app.store.tape(side);
+    ui.label(format!(
+        "Do you want to save the changes to the {} tape \"{}\" before quitting?",
+        if side == 0 { "left" } else { "right" },
+        t.name
+    ));
+    ui.label("Your changes will be lost if you don't save them.");
+    footer(ui, |ui| {
+        let cancel = ui.button("Cancel").clicked();
+        let discard = ui.button("Don't Save").clicked();
+        let save = ui.button("Save").clicked();
+        if save {
+            if crate::actions::save(app, side) {
+                app.pending = Some(Then::Quit);
+            }
+            return Outcome::Close;
+        }
+        if discard {
+            app.quit_discard[side] = true;
+            app.pending = Some(Then::Quit);
             return Outcome::Close;
         }
         if cancel {

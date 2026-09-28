@@ -119,8 +119,7 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
         "open" => actions::confirm_discard(app, side, Then::Open(side)),
         "insert-file" => files::pick_and_open(&mut app.store, side, true),
         "save" => {
-            let save_as = app.store.tape(side).path.is_none();
-            files::save_tzx(&mut app.store, side, save_as);
+            actions::save(app, side);
         }
         "save-as" => files::save_tzx(&mut app.store, side, true),
         "save-tap" => files::save_tap(&mut app.store, side),
@@ -234,12 +233,17 @@ pub const CONTEXT_MENU: &[&str] = &[
 /// bar draws the same table but delivers nothing, and this is what makes the
 /// shortcuts work.
 pub fn accelerator(item: &menutable::Item) -> Option<(Modifiers, Key)> {
-    if item.keys.is_empty() {
+    keys_of(item.keys)
+}
+
+/// An accelerator in the table's spelling, parsed; `None` for `""`.
+pub fn keys_of(keys: &str) -> Option<(Modifiers, Key)> {
+    if keys.is_empty() {
         return None;
     }
     let mut mods = Modifiers::NONE;
     let mut key = None;
-    for part in item.keys.split('+') {
+    for part in keys.split('+') {
         match part {
             "CmdOrCtrl" => mods |= Modifiers::COMMAND,
             "Shift" => mods |= Modifiers::SHIFT,
