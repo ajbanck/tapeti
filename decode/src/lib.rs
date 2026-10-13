@@ -3,5 +3,6 @@
 
 //! Tape recordings to `tapeti-core` blocks. No I/O, and no dependency but `tapeti-core`.
 
+pub mod pulses;
 pub mod readers;
 pub mod waveform;
