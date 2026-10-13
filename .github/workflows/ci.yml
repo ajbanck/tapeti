@@ -24,6 +24,8 @@ jobs:
       - run: npm ci --prefix web
       - run: npm run headers -- --check
       - run: npm run core:test
+      # The decoder is not in the web bundle yet; this keeps it building for the browser.
+      - run: cargo build -p tapeti-decode --target wasm32-unknown-unknown --profile wasm
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

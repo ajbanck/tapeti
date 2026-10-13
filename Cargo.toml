@@ -1,7 +1,7 @@
-# One workspace for the two crates: one lock file, one target directory, one `cargo test`.
+# One workspace for the three crates: one lock file, one target directory, one `cargo test`.
 # The build profiles live here because cargo reads them from the workspace root only.
 [workspace]
-members = ["core", "desktop"]
+members = ["core", "decode", "desktop"]
 resolver = "2"
 
 # The desktop binary. `strip = "debuginfo"` rather than `true`: the symbol table is what

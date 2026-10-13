@@ -9,7 +9,7 @@
 // Source is what `git ls-files` lists with one of the extensions in COMMENT below; data
 // files, fixtures, manifests, lock files and generated files carry no header. A file that
 // already has the tag is left alone, so one whose header names a second copyright holder
-// keeps it. The check also reads the `license` field of the four manifests, which must
+// keeps it. The check also reads the `license` field of the five manifests, which must
 // say the same as the tag.
 
 import { execFileSync } from 'node:child_process';
@@ -29,7 +29,13 @@ const COMMENT = {
   '.css': ['/* ', ' */'],
   '.html': ['<!-- ', ' -->'],
 };
-const MANIFESTS = ['package.json', 'web/package.json', 'core/Cargo.toml', 'desktop/Cargo.toml'];
+const MANIFESTS = [
+  'package.json',
+  'web/package.json',
+  'core/Cargo.toml',
+  'decode/Cargo.toml',
+  'desktop/Cargo.toml',
+];
 
 const check = process.argv.includes('--check');
 const files = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })

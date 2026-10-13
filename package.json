@@ -21,6 +21,7 @@
     "samples": "node scripts/make-samples.mjs",
     "core:wasm": "node scripts/build-wasm.mjs",
     "core:test": "cd core && cargo test",
+    "decode:test": "cd decode && cargo test",
     "desktop": "node scripts/build-desktop.mjs",
     "desktop:debug": "node scripts/build-desktop.mjs --debug",
     "desktop:test": "cd desktop && cargo test",

@@ -5,8 +5,8 @@
 //!
 //! `CARGO_PKG_VERSION` is what ships: the About dialog, the macOS About panel, the
 //! first line of a crash log, and what `scripts/build-desktop.mjs` names a dmg, an
-//! msi and an AppImage after. `core/Cargo.toml` and `package.json` carry the same
-//! number, but nothing that ships reads them, so only this test catches them
+//! msi and an AppImage after. `core/Cargo.toml`, `decode/Cargo.toml` and `package.json`
+//! carry the same number, but nothing that ships reads them, so only this test catches them
 //! drifting.
 
 const APP: &str = env!("CARGO_PKG_VERSION");
@@ -31,6 +31,15 @@ fn the_core_is_on_the_same_version() {
         cargo_version(include_str!("../../core/Cargo.toml"), "core/Cargo.toml"),
         APP,
         "core/Cargo.toml has drifted from desktop/"
+    );
+}
+
+#[test]
+fn the_decoder_is_on_the_same_version() {
+    assert_eq!(
+        cargo_version(include_str!("../../decode/Cargo.toml"), "decode/Cargo.toml"),
+        APP,
+        "decode/Cargo.toml has drifted from desktop/"
     );
 }
 
