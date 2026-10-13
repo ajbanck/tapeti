@@ -74,10 +74,15 @@ pub fn csw_block(rate_hz: u32, compression: u8, pulse_count: Option<u32>, data: 
 }
 
 /// A CSW block holding pulse lengths in T-states, at 3,500,000 samples a second so each is exact.
+pub fn csw_of_tstates(lengths: &[u64]) -> Block {
+    csw_of_runs(TSTATES_PER_SEC, lengths)
+}
+
+/// A CSW block holding pulse lengths in samples at `rate_hz`.
 ///
 /// A pulse of no length is two edges at once: left out, it leaves the pulses either side at one
 /// level, and they join.
-pub fn csw_of_tstates(lengths: &[u64]) -> Block {
+pub fn csw_of_runs(rate_hz: u32, lengths: &[u64]) -> Block {
     // Pulses alternate between two levels; `level` is the parity of each one's index.
     let mut joined: Vec<u64> = Vec::with_capacity(lengths.len());
     let mut last_level = None;
@@ -94,8 +99,8 @@ pub fn csw_of_tstates(lengths: &[u64]) -> Block {
     }
     let mut data = Vec::with_capacity(joined.len());
     for &t in &joined {
-        // A run of 1 to 255 is one byte; a longer one is a 0 and its 32-bit length. A pulse over
-        // 2^32 T-states (20 minutes) is held as the longest a run can say.
+        // A run of 1 to 255 is one byte; a longer one is a 0 and its 32-bit length. A run over
+        // 2^32 samples (20 minutes at 3.5 MHz) is held as the longest a run can say.
         match u8::try_from(t) {
             Ok(n) => data.push(n),
             Err(_) => {
@@ -105,7 +110,7 @@ pub fn csw_of_tstates(lengths: &[u64]) -> Block {
         }
     }
     let pulse_count = joined.len() as u32;
-    Block::new(Body::Csw { pause: 0, sample_rate: TSTATES_PER_SEC, compression: 1, pulse_count, data })
+    Block::new(Body::Csw { pause: 0, sample_rate: rate_hz, compression: 1, pulse_count, data })
 }
 
 /// The size of a TZX file holding `samples` bits in Direct Recording blocks: the 10-byte file
