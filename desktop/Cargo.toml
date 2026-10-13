@@ -14,6 +14,7 @@ path = "src/main.rs"
 eframe = { version = "0.36", default-features = false, features = ["glow", "wayland", "x11"] }
 egui = "0.36"
 tapeti-core = { path = "../core" }
+tapeti-decode = { path = "../decode" }
 # Native file dialogs (open/save/pick a program), the rfd the Tauri build reaches
 # through its dialog plugin.
 rfd = "0.16"

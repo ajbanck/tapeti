@@ -3277,6 +3277,7 @@ dependencies = [
  "png",
  "rfd",
  "tapeti-core",
+ "tapeti-decode",
 ]
 
 [[package]]

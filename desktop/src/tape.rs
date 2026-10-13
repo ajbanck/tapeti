@@ -21,6 +21,11 @@ fn csw_rle_data(data: &[u8]) -> Vec<u8> {
     miniz_oxide::inflate::decompress_to_vec_zlib(data).unwrap_or_default()
 }
 
+/// Inflates a Z-RLE CSW file's data, for keeping the file as raw signal.
+pub fn inflate(data: &[u8]) -> Result<Vec<u8>, String> {
+    miniz_oxide::inflate::decompress_to_vec_zlib(data).map_err(|e| e.to_string())
+}
+
 /// The tape as the core should see it: compressed CSW blocks with their data
 /// already inflated. A tape without them is borrowed, not copied.
 pub fn playable(blocks: &[Block]) -> Cow<'_, [Block]> {

@@ -29,7 +29,14 @@ export function newTape(side: Side) {
   active.value = side;
 }
 
+/** Tape recordings: the desktop app keeps them as raw signal; this build does not read them yet. */
+const RECORDING = /\.(wav|voc|iff|8svx|csw|out)$/i;
+
 export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtCursor = false) {
+  if (RECORDING.test(name)) {
+    showMessage('Cannot load file', `${name} is a tape recording. The desktop app opens recordings; the browser does not yet.`);
+    return;
+  }
   const format = snapshotKind(name);
   // Inserting something that is no tape goes in as a data block, once the
   // dialog has said where it loads. Opening still reads anything as a TAP,

@@ -57,6 +57,16 @@ loader uses the bottom three pixel lines of the screen, so those are lost. A 128
 loaded with `LOAD ""` from 128 BASIC. And anything that was in a paged-in ROM (Interface 1,
 Multiface) cannot be restored. The method and the loader come from [Taper](#credits).
 
+**Tape recordings** (desktop app): opening a `.wav`, `.voc`, `.iff` or `.csw` recording, or an
+emulator's `.out` trace, keeps its signal as it is in a tape. A WAV, VOC or IFF becomes Direct
+Recording blocks, one bit per sample. A CSW file goes into a CSW block unchanged, and an OUT trace
+into a CSW block of its exact timings. Nothing is decoded, so the tape loads in an emulator whatever
+loader made it, but it shows no headers or programs. A dialog asks which channel of a stereo
+recording to keep, and offers a band-pass filter that cleans hiss but changes what is kept. A
+recording is only as good as the tape it came from, and hiss can become stray pulses. Direct
+Recording takes about 330 KB a minute at 44.1 kHz, and a recording longer than about 50 minutes
+continues in a second block.
+
 **Block operations**: insert any block type, an empty BASIC program, or a file. A tape or snapshot
 file is inserted as its blocks. Any other file (a `.scr`, a binary) becomes the Bytes header and
 data block that `SAVE "name" CODE` would have produced. Also: cut / copy / paste / duplicate /

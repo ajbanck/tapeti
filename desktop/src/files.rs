@@ -21,6 +21,13 @@ use crate::state::{Side, Store};
 pub const TAPE_EXTENSIONS: [&str; 4] = ["tzx", "tap", "TZX", "TAP"];
 /// Snapshots open too: as the tape that loads them, once the dialog has been answered.
 pub const SNAPSHOT_EXTENSIONS: [&str; 4] = ["z80", "sna", "Z80", "SNA"];
+/// Recordings open as a tape that keeps their signal, once the dialog has been answered.
+pub const RECORDING_EXTENSIONS: [&str; 12] =
+    ["wav", "voc", "iff", "8svx", "csw", "out", "WAV", "VOC", "IFF", "8SVX", "CSW", "OUT"];
+
+fn is_recording(name: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(_, ext)| RECORDING_EXTENSIONS.contains(&ext))
+}
 
 pub fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
@@ -28,7 +35,7 @@ pub fn file_name(p: &Path) -> String {
 
 /// The tape's name without a `.tzx`/`.tap` extension (or a snapshot's), or `tape`.
 pub fn stem(name: &str) -> String {
-    let known = TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS);
+    let known = TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS).chain(&RECORDING_EXTENSIONS);
     let s = known.filter_map(|e| name.strip_suffix(e)?.strip_suffix('.')).next().unwrap_or(name);
     if s.is_empty() {
         "tape".to_string()
@@ -51,6 +58,18 @@ pub fn load_bytes(
     insert_at_cursor: bool,
     path: Option<PathBuf>,
 ) {
+    if is_recording(name) {
+        // A recording becomes a tape only once the dialog has its answers.
+        match tapeti_decode::entry::describe(name, bytes, &crate::tape::inflate) {
+            Ok(summary) => {
+                let dialog =
+                    crate::dialogs::Dialog::recording(side, name, bytes.to_vec(), summary, insert_at_cursor);
+                store.dialog = Some(dialog);
+            }
+            Err(e) => store.message("Cannot load file", vec![e.to_string()]),
+        }
+        return;
+    }
     // Something that is not a tape goes in as a data block once the dialog says
     // where it loads. Opening still reads anything as a TAP, which is what a
     // tape with an odd extension needs.
@@ -148,12 +167,52 @@ pub fn import_snapshot(
     store.set_status(format!("Imported {}: {count} blocks, loading at {bps} bps", opts.name));
 }
 
+/// The recording dialog's OK: the recording kept whole as raw signal, as a tape of its own or
+/// at the cursor.
+pub fn import_recording(
+    store: &mut Store,
+    side: Side,
+    name: &str,
+    bytes: &[u8],
+    channel: tapeti_decode::readers::Channel,
+    filter: tapeti_decode::waveform::filter::Filter,
+    insert_at_cursor: bool,
+) {
+    let blocks =
+        match tapeti_decode::entry::keep_as_raw_signal(name, bytes, channel, filter, &crate::tape::inflate) {
+            Ok(b) => b,
+            Err(e) => {
+                store.message("Cannot import recording", vec![e.to_string()]);
+                return;
+            }
+        };
+    let count = blocks.len();
+    let csw = matches!(blocks.first().map(|b| &b.body), Some(tapeti_core::types::Body::Csw { .. }));
+    if insert_at_cursor {
+        let t = store.tape(side);
+        let at = if t.cursor < 0 { t.blocks.len() } else { t.cursor as usize };
+        store.insert_blocks(side, at, blocks);
+    } else {
+        // No path: saving must ask where, not write a TZX over the recording.
+        store.tape_mut(side).load(name.to_string(), None, blocks, None);
+    }
+    store.active = side;
+    let what = match count {
+        _ if csw => "a CSW block".to_string(),
+        1 => "a Direct Recording block".to_string(),
+        n => format!("{n} Direct Recording blocks"),
+    };
+    store.set_status(format!("Imported {name} as raw signal: {what}"));
+}
+
 fn tape_dialog() -> rfd::FileDialog {
-    let all: Vec<&str> = TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS).copied().collect();
+    let all: Vec<&str> =
+        TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS).chain(&RECORDING_EXTENSIONS).copied().collect();
     rfd::FileDialog::new()
-        .add_filter("Tape images and snapshots", &all)
+        .add_filter("Tape images, snapshots and recordings", &all)
         .add_filter("Tape images", &TAPE_EXTENSIONS)
         .add_filter("Snapshots (imported as a tape)", &SNAPSHOT_EXTENSIONS)
+        .add_filter("Recordings (kept as raw signal)", &RECORDING_EXTENSIONS)
         .add_filter("All files", &["*"])
 }
 
@@ -476,6 +535,81 @@ pub mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A WAV of a standard block, as the core renders and encodes it.
+    pub fn recording() -> Vec<u8> {
+        use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
+        use tapeti_core::types::{Block, Body};
+        let blocks = [Block::new(Body::Standard { pause: 100, data: vec![0xFF, 1, 2, 3] })];
+        let order = playback_order(&blocks, FlowOptions::default());
+        let samples =
+            render_tape(&blocks, RenderOptions { sample_rate: 22050, mic: false, amplitude: 0.8 }, &order);
+        encode_wav(&samples, 22050, 16)
+    }
+
+    fn ids(store: &Store) -> Vec<u8> {
+        store.tape(0).blocks.iter().map(|b| b.id()).collect()
+    }
+
+    #[test]
+    fn a_recording_asks_first_and_is_kept_as_raw_signal_on_ok() {
+        use tapeti_decode::entry::Kept;
+        use tapeti_decode::readers::Channel;
+        use tapeti_decode::waveform::filter::Filter;
+        let mut store = Store::new(Settings::default());
+        load_bytes(&mut store, 0, "side-a.wav", &recording(), false, Some(PathBuf::from("/x/side-a.wav")));
+        assert!(store.tape(0).blocks.is_empty(), "nothing loads before the dialog is answered");
+        let Some(Dialog::Recording(s)) = store.dialog.take() else { panic!("no import dialog") };
+        assert_eq!((s.summary.format, s.summary.kept), ("WAV", Kept::DirectRecording));
+        assert_eq!((s.channel, s.filter, s.insert_at_cursor), (Channel::Mix, false, false));
+
+        import_recording(&mut store, 0, &s.name, &s.bytes, s.channel, Filter::None, false);
+        assert_eq!(ids(&store), [0x15]);
+        let t = store.tape(0);
+        assert_eq!(t.name, "side-a.wav");
+        // Saving must ask where: the recording is not the tape's file.
+        assert!(t.path.is_none() && t.loaded_version.is_none() && !t.dirty());
+        assert_eq!(stem(&t.name), "side-a");
+
+        // Insert File asks the same way, and puts the blocks at the cursor.
+        load_bytes(&mut store, 0, "side-b.WAV", &recording(), true, None);
+        let Some(Dialog::Recording(s)) = store.dialog.take() else { panic!("no import dialog") };
+        assert!(s.insert_at_cursor);
+        import_recording(&mut store, 0, &s.name, &s.bytes, s.channel, Filter::None, true);
+        assert_eq!(ids(&store), [0x15, 0x15]);
+        assert_eq!(store.status(), "Imported side-b.WAV as raw signal: a Direct Recording block");
+    }
+
+    #[test]
+    fn csw_files_and_out_traces_are_kept_in_a_csw_block() {
+        use tapeti_decode::readers::Channel;
+        use tapeti_decode::waveform::filter::Filter;
+        let mut csw = b"Compressed Square Wave\x1a".to_vec();
+        csw.extend([1, 1, 0x44, 0xAC, 1, 0, 0, 0, 0, 3, 5, 7]);
+        let out: Vec<u8> = [100u16, 300, 450]
+            .iter()
+            .flat_map(|t| [t.to_le_bytes()[0], t.to_le_bytes()[1], 0xFE, 0, 0])
+            .collect();
+        for (name, bytes) in [("tape.csw", csw), ("TAPE.OUT", out)] {
+            let mut store = Store::new(Settings::default());
+            load_bytes(&mut store, 0, name, &bytes, false, None);
+            let Some(Dialog::Recording(s)) = store.dialog.take() else { panic!("{name}: no import dialog") };
+            import_recording(&mut store, 0, &s.name, &s.bytes, Channel::Mix, Filter::None, false);
+            assert_eq!(ids(&store), [0x18], "{name}");
+            assert_eq!(store.status(), format!("Imported {name} as raw signal: a CSW block"));
+        }
+    }
+
+    #[test]
+    fn a_broken_recording_says_why() {
+        let mut store = Store::new(Settings::default());
+        load_bytes(&mut store, 0, "broken.wav", b"RIFF\x04\x00\x00\x00WAVE", false, None);
+        let Some(Dialog::Message { title, lines }) = &store.dialog else { panic!("no message") };
+        assert_eq!(
+            (title.as_str(), lines.as_slice()),
+            ("Cannot load file", ["WAV: there is no fmt chunk".to_string()].as_slice())
+        );
+    }
+
     #[test]
     fn a_broken_snapshot_says_so() {
         let mut store = Store::new(Settings::default());
@@ -484,11 +618,12 @@ pub mod tests {
     }
 
     #[test]
-    fn stems_drop_tape_and_snapshot_extensions() {
+    fn stems_drop_tape_snapshot_and_recording_extensions() {
         assert_eq!(stem("a.tzx"), "a");
         assert_eq!(stem("a.TAP"), "a");
         assert_eq!(stem("a.z80"), "a");
-        assert_eq!(stem("a.wav"), "a.wav");
+        assert_eq!(stem("a.wav"), "a");
+        assert_eq!(stem("a.bin"), "a.bin");
         assert_eq!(stem(".tzx"), "tape");
     }
 }

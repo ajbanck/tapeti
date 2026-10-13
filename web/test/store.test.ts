@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   tapes, locked, clipboard, insertBlocks, unitIndices, moveUnit, undo, redo, markSaved, toggleCollapse, groupSelection,
-  copyUnit, paste, deleteUnit, setCursor, selectUids, commit, collapseAll,
+  copyUnit, paste, deleteUnit, setCursor, selectUids, commit, collapseAll, dialog,
 } from '../src/state/store';
 import { groupRanges, serializeTzx, fileHashes } from '../src/tzx/core';
 import { newTape, loadBytes } from '../src/state/files';
@@ -154,6 +154,17 @@ describe('store: undo and dirty tracking', () => {
 
     newTape(0);
     expect(tapes[0].value.fileHashes).toBe(null);
+  });
+
+  it('says a recording opens in the desktop app rather than reading it as a TAP', () => {
+    loadBytes(0, 'side-a.WAV', new Uint8Array([82, 73, 70, 70]));
+    expect(tapes[0].value.blocks).toEqual([]);
+    expect(dialog.value).toEqual({
+      kind: 'message',
+      title: 'Cannot load file',
+      lines: ['side-a.WAV is a tape recording. The desktop app opens recordings; the browser does not yet.'],
+    });
+    dialog.value = null;
   });
 
   it('a tape with nothing left on it becomes a new tape, and undo brings it back', () => {

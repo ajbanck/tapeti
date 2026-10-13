@@ -19,6 +19,9 @@ use tapeti_core::snapshot::{LoaderOptions, Snapshot, DEFAULT_SPEED, SPEED_BPS};
 use tapeti_core::spectrum::screen::{render_screen, ScreenOptions, SCREEN_SIZE};
 use tapeti_core::types::{block_name, create_body, Block, CREATABLE_IDS};
 use tapeti_core::writer::{required_version, save_version, serialize_tzx, Version};
+use tapeti_decode::entry::{tape_band, Kept, Summary};
+use tapeti_decode::readers::Channel;
+use tapeti_decode::waveform::filter::Filter;
 
 use crate::actions::{self, Then};
 use crate::app::App;
@@ -82,6 +85,16 @@ pub struct SnapshotState {
     tex: Option<(bool, egui::TextureHandle)>,
 }
 
+pub struct RecordingState {
+    pub side: Side,
+    pub name: String,
+    pub bytes: Vec<u8>,
+    pub summary: Summary,
+    pub insert_at_cursor: bool,
+    pub channel: Channel,
+    pub filter: bool,
+}
+
 pub struct DataFileState {
     pub side: Side,
     pub file: String,
@@ -112,6 +125,7 @@ pub enum Dialog {
     Programs(ProgramsState),
     Emulator(EmulatorState),
     Snapshot(Box<SnapshotState>),
+    Recording(Box<RecordingState>),
     DataFile(DataFileState),
 }
 
@@ -138,6 +152,23 @@ impl Dialog {
             screen: None,
             error: String::new(),
             tex: None,
+        }))
+    }
+    pub fn recording(
+        side: Side,
+        name: &str,
+        bytes: Vec<u8>,
+        summary: Summary,
+        insert_at_cursor: bool,
+    ) -> Dialog {
+        Dialog::Recording(Box::new(RecordingState {
+            side,
+            name: name.to_string(),
+            bytes,
+            summary,
+            insert_at_cursor,
+            channel: Channel::Mix,
+            filter: false,
         }))
     }
     pub fn message(title: &str, lines: Vec<String>) -> Dialog {
@@ -204,6 +235,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         Dialog::Programs(_) => ("Programs".into(), 460.0),
         Dialog::Emulator(_) => ("Emulator".into(), 560.0),
         Dialog::Snapshot(_) => ("Import snapshot".into(), 520.0),
+        Dialog::Recording(_) => ("Import recording".into(), 480.0),
         Dialog::DataFile(_) => ("Insert file as data".into(), 440.0),
     };
 
@@ -228,6 +260,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 Dialog::Programs(s) => programs_body(ui, app, s, &tok),
                 Dialog::Emulator(s) => emulator_body(ui, app, s, &tok),
                 Dialog::Snapshot(s) => snapshot_body(ui, app, s, &tok),
+                Dialog::Recording(s) => recording_body(ui, app, s, &tok),
                 Dialog::DataFile(s) => data_file_body(ui, app, s, &tok),
             };
             // The close button is drawn after the body, at the right edge the body left: a body
@@ -745,6 +778,109 @@ fn snapshot_body(ui: &mut Ui, app: &mut App, s: &mut SnapshotState, tok: &Tokens
             screen: s.screen.as_ref().map(|(_, b)| b.as_slice()),
         };
         files::import_snapshot(&mut app.store, s.side, &s.snap, &opts, s.insert_at_cursor);
+        return Outcome::Close;
+    }
+    outcome
+}
+
+/// A recording was opened: ask which channel and whether to filter it, and say what keeping it
+/// as raw signal makes.
+fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Tokens) -> Outcome {
+    let hex = app.store.hex;
+    let sum = &s.summary;
+    let audio = sum.kept == Kept::DirectRecording;
+    let band = tape_band(sum.rate_hz);
+    egui::Grid::new("recording-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        ui.label("Recording");
+        ui.label(&s.name);
+        ui.end_row();
+
+        ui.label("Format");
+        let rate = if sum.format == "OUT" {
+            "T-states at 3.5 MHz".to_string()
+        } else {
+            format!("{} Hz", fmt::num(i64::from(sum.rate_hz), hex))
+        };
+        let channels = if sum.channels == 2 { "stereo" } else { "mono" };
+        ui.label(format!("{}, {rate}, {channels}", sum.format));
+        ui.end_row();
+
+        ui.label("Length");
+        ui.label(fmt::duration(sum.seconds()));
+        ui.end_row();
+
+        if audio && sum.channels == 2 {
+            ui.label("Channel");
+            let options = [
+                (Channel::Mix, "Both, mixed".to_string()),
+                (Channel::Left, "Left".to_string()),
+                (Channel::Right, "Right".to_string()),
+            ];
+            w::combo(ui, "recording-channel", &mut s.channel, &options, 160.0, true);
+            ui.end_row();
+        }
+
+        if audio {
+            ui.label("Filter");
+            let label = match band {
+                Filter::Butterworth { low_hz, high_hz, .. } => {
+                    format!("Band-pass, {low_hz:.0} Hz to {:.1} kHz", high_hz / 1000.0)
+                }
+                _ => "Band-pass".to_string(),
+            };
+            w::check(ui, &label, &mut s.filter, true);
+            ui.end_row();
+        }
+
+        ui.label("Kept as");
+        let blocks = match (sum.kept, sum.blocks) {
+            (Kept::Csw, _) => "a CSW block".to_string(),
+            (Kept::DirectRecording, 1) => "a Direct Recording block".to_string(),
+            (Kept::DirectRecording, n) => format!("{n} Direct Recording blocks"),
+        };
+        ui.label(format!("{blocks}, a TZX file of {} bytes", fmt::num(sum.tzx_size as i64, hex)));
+        ui.end_row();
+    });
+    if sum.missing_bytes > 0 {
+        let short = format!(
+            "The file is {} bytes shorter than its header says; what it holds is kept.",
+            fmt::num(sum.missing_bytes as i64, hex)
+        );
+        ui.label(RichText::new(short).color(tok.danger));
+    }
+    if !sum.skipped.is_empty() {
+        w::note(ui, tok, format!("Passed over: {}.", sum.skipped.join(", ")));
+    }
+    let note = if audio {
+        "The recording is kept as it is, one bit per sample. It loads in an emulator whatever \
+         loader made it, but shows no headers or programs until it is decoded. Hiss can become \
+         stray pulses; the filter cleans it, and changes what is kept."
+    } else {
+        "The pulses are kept exactly as they are. The tape loads in an emulator whatever loader \
+         made it, but shows no headers or programs until it is decoded."
+    };
+    w::note(ui, tok, note);
+
+    let mut go = false;
+    let outcome = footer(ui, |ui| {
+        let cancel = ui.button("Cancel").clicked();
+        go = ui.button("Import").clicked();
+        if cancel {
+            return Outcome::Close;
+        }
+        Outcome::Keep
+    });
+    if go {
+        let filter = if audio && s.filter { band } else { Filter::None };
+        files::import_recording(
+            &mut app.store,
+            s.side,
+            &s.name,
+            &s.bytes,
+            s.channel,
+            filter,
+            s.insert_at_cursor,
+        );
         return Outcome::Close;
     }
     outcome

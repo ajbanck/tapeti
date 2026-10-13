@@ -1084,6 +1084,18 @@ mod tests {
         draw(&ctx, &mut app);
     }
 
+    fn recording_dialog(name: &str, bytes: Vec<u8>) -> Dialog {
+        let summary = tapeti_decode::entry::describe(name, &bytes, &crate::tape::inflate).unwrap();
+        let mut d = Dialog::recording(0, name, bytes, summary, false);
+        if let Dialog::Recording(s) = &mut d {
+            // A stereo-looking dialog: the channel row shows only for two channels.
+            s.summary.channels = 2;
+            s.summary.missing_bytes = 7;
+            s.summary.skipped = vec!["block type 5 at byte 34".into()];
+        }
+        d
+    }
+
     #[test]
     fn draws_every_dialog() {
         let (ctx, mut app) = app_with(every_block());
@@ -1100,6 +1112,12 @@ mod tests {
             Dialog::programs(0),
             Dialog::emulator(true, Some(Then::EmulatorGo(0, Scope::Tape)), &Settings::default()),
             Dialog::snapshot(0, "game.sna", crate::files::tests::snapshot(), false),
+            recording_dialog("side-a.wav", crate::files::tests::recording()),
+            recording_dialog("tape.csw", {
+                let mut csw = b"Compressed Square Wave\x1a".to_vec();
+                csw.extend([1, 1, 0x44, 0xAC, 1, 0, 0, 0, 0, 3, 5, 7]);
+                csw
+            }),
             Dialog::data_file(0, "title.scr", vec![0; 6912]),
             Dialog::data_file(0, "huge.bin", vec![0; 70_000]),
         ];
