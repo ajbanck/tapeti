@@ -27,6 +27,7 @@
 use crate::bytes::{ReadResult, Reader};
 use crate::parser::ParsedTape;
 use crate::types::{ArchiveEntry, Block, Body, HardwareEntry, PilotRun, SelectEntry, SymDef};
+use crate::writer::WriteError;
 
 pub const WIRE_VERSION: u8 = 1;
 const UNKNOWN_TAG: u8 = 0xff;
@@ -85,6 +86,21 @@ pub fn encode_tap(b: &[u8], skipped: &[u32]) -> Vec<u8> {
     u32v(&mut w, skipped.len());
     for i in skipped {
         u32v(&mut w, *i as usize);
+    }
+    w
+}
+
+/// A write check's answer: 0 when every block fits the format, or 1, the block's index and
+/// what is too large in it.
+pub fn encode_write_problem(problem: Option<&WriteError>) -> Vec<u8> {
+    let mut w = vec![WIRE_VERSION, 0];
+    match problem {
+        None => w.push(0),
+        Some(e) => {
+            w.push(1);
+            u32v(&mut w, e.block);
+            string(&mut w, &e.what);
+        }
     }
     w
 }

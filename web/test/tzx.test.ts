@@ -8,6 +8,7 @@ import {
   isTzx,
   serializeTzx,
   serializeTap,
+  writeProblem,
   requiredVersion,
   saveVersion,
   decodeHeader,
@@ -122,6 +123,20 @@ describe('TAP', () => {
     expect(describeBlock(parsed.blocks[0], false)).toBe('Std speed Prog: TEST; L: 10, P: 10, S: 10');
     const out = serializeTap(parsed.blocks);
     expect(Array.from(out.bytes)).toEqual(Array.from(tap));
+  });
+});
+
+describe('what a file cannot hold', () => {
+  it('names the block that is too large instead of cutting it', () => {
+    const big: Block = { ...createBlock(0x10), data: new Uint8Array(65536) } as Block;
+    const blocks = [createBlock(0x20), big];
+    const what = 'a standard block holds at most 65535 bytes, and this one has 65536';
+    expect(writeProblem(blocks, 'tzx')).toEqual({ block: 1, what });
+    expect(() => serializeTzx(blocks)).toThrow(`block 1: ${what}`);
+    expect(writeProblem([createBlock(0x20)], 'tzx')).toBeNull();
+    const turbo: Block = { ...createBlock(0x11), data: new Uint8Array(65536) } as Block;
+    expect(writeProblem([turbo], 'tzx')).toBeNull();
+    expect(writeProblem([turbo], 'tap')).toEqual({ block: 0, what: 'a TAP block holds at most 65535 bytes, and this one has 65536' });
   });
 });
 

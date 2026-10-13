@@ -28,7 +28,7 @@ import {
   decodeDuration, decodePulses, decodeSamples, decodeTimeline, encodeBlocksAndOrder,
   decodeDescribed, decodeDisLines, decodeF64, decodeHeaderInfo, decodeIssues, decodeOptString,
   decodeBasicEdit, encodeBasicEdit, decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
-  decodeTape, decodeU32s, decodeU8, decodeVariables, decodeVersion, encodeBasicLines, encodeBitData,
+  decodeTape, decodeU32s, decodeU8, decodeVariables, decodeVersion, decodeWriteProblem, encodeBasicLines, encodeBitData,
   encodeBlocks, encodeHeaderInfo, encodePokesInfo, encodeSnapshotRequest, WIRE_VERSION,
 } from './wire';
 
@@ -50,6 +50,7 @@ interface CoreExports {
   core_snapshot_to_tape(ptr: number, len: number, kind: number, speed: number, border: number, flags: number): number;
   core_serialize_tzx(ptr: number, len: number, major: number, minor: number): number;
   core_serialize_tap(ptr: number, len: number): number;
+  core_write_problem(ptr: number, len: number, tap: number): number;
   core_serialize_blocks(ptr: number, len: number): number;
   core_required_version(ptr: number, len: number): number;
   core_save_version(ptr: number, len: number, major: number, minor: number): number;
@@ -306,6 +307,11 @@ export function serializeTzx(blocks: Block[], version?: { major: number; minor: 
 /** Serialize a single block to bytes (ID + body); used for comparison and size display. */
 export function serializeBlock(b: Block): Uint8Array {
   return decodeBytes(call('core_serialize_blocks', encodeBlocks([b])));
+}
+
+/** The first block a TZX or TAP file cannot hold as it is, and what in it is too large. */
+export function writeProblem(blocks: Block[], format: 'tzx' | 'tap'): { block: number; what: string } | null {
+  return decodeWriteProblem(call('core_write_problem', encodeBlocks(blocks), format === 'tap' ? 1 : 0));
 }
 
 /** TAP export: only standard-speed blocks can be represented. Returns skipped block indices. */

@@ -46,9 +46,13 @@ use crate::wire::{
     encode_content_as_loaded, encode_described, encode_dis_lines, encode_duration, encode_error, encode_f64,
     encode_header_info, encode_issues, encode_opt_string, encode_pokes_info, encode_programs, encode_pulses,
     encode_ranges, encode_samples, encode_snapshot_info, encode_strings, encode_tap, encode_tape,
-    encode_timeline, encode_u32s, encode_u8, encode_variables, encode_version, WIRE_VERSION,
+    encode_timeline, encode_u32s, encode_u8, encode_variables, encode_version, encode_write_problem,
+    WIRE_VERSION,
 };
-use crate::writer::{required_version, save_version, serialize_block, serialize_tap, serialize_tzx, Version};
+use crate::writer::{
+    check_tap, check_tzx, required_version, save_version, serialize_block, serialize_tap, serialize_tzx,
+    Version,
+};
 use std::alloc::{alloc, dealloc, Layout};
 
 fn layout(len: usize) -> Layout {
@@ -150,7 +154,10 @@ pub unsafe extern "C" fn core_serialize_tzx(ptr: *const u8, len: usize, major: u
     } else {
         Some(Version { major: major as u8, minor: minor as u8 })
     };
-    with_blocks(ptr, len, |blocks| encode_bytes(&serialize_tzx(blocks, version)))
+    with_blocks(ptr, len, |blocks| match serialize_tzx(blocks, version) {
+        Ok(bytes) => encode_bytes(&bytes),
+        Err(e) => encode_error(&e.to_string()),
+    })
 }
 
 /// Write the blocks as a TAP file, with the indices of those left out.
@@ -159,9 +166,21 @@ pub unsafe extern "C" fn core_serialize_tzx(ptr: *const u8, len: usize, major: u
 /// `ptr` must point at `len` bytes of wire-encoded block list.
 #[no_mangle]
 pub unsafe extern "C" fn core_serialize_tap(ptr: *const u8, len: usize) -> *mut u8 {
+    with_blocks(ptr, len, |blocks| match serialize_tap(blocks) {
+        Ok((bytes, skipped)) => encode_tap(&bytes, &skipped),
+        Err(e) => encode_error(&e.to_string()),
+    })
+}
+
+/// The first block the file format cannot hold as it is: TZX for `tap` 0, TAP otherwise.
+///
+/// # Safety
+/// `ptr` must point at `len` bytes of wire-encoded block list.
+#[no_mangle]
+pub unsafe extern "C" fn core_write_problem(ptr: *const u8, len: usize, tap: u32) -> *mut u8 {
     with_blocks(ptr, len, |blocks| {
-        let (bytes, skipped) = serialize_tap(blocks);
-        encode_tap(&bytes, &skipped)
+        let checked = if tap == 0 { check_tzx(blocks) } else { check_tap(blocks) };
+        encode_write_problem(checked.err().as_ref())
     })
 }
 

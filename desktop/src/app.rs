@@ -1315,7 +1315,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("dropped.tzx");
         let blocks = [Block::new(create_body(0x10)), Block::new(create_body(0x20))];
-        std::fs::write(&path, tapeti_core::writer::serialize_tzx(&blocks, None)).unwrap();
+        std::fs::write(&path, tapeti_core::writer::serialize_tzx(&blocks, None).unwrap()).unwrap();
 
         let drop_at = |at: Option<egui::Pos2>, active: Side| {
             let (ctx, mut app) = app_with(Vec::new());

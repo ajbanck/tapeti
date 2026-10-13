@@ -9,6 +9,7 @@ import {
   isTzx,
   serializeTzx,
   serializeTap,
+  writeProblem,
   saveVersion,
   checksum,
   encodeHeader,
@@ -130,9 +131,20 @@ function stem(name: string) {
   return name.replace(/\.(tap|tzx|z80|sna)$/i, '') || 'tape';
 }
 
+/**
+ * The line that says which block a file format cannot hold, and why, or null when all fit.
+ * `at` maps the blocks' indices to the tape's, for a part of it.
+ */
+export function cannotWrite(blocks: Block[], format: 'tzx' | 'tap', at?: number[]): string | null {
+  const p = writeProblem(blocks, format);
+  return p && `Block ${blockNo(at ? at[p.block] : p.block)}: ${p.what}.`;
+}
+
 /** Save as TZX. The browser downloads it; the desktop app (desktop/) writes in place. */
 export async function saveTzx(side: Side) {
   const t = tapes[side].value;
+  const problem = cannotWrite(t.blocks, 'tzx');
+  if (problem) return showMessage('Cannot save', problem);
   const v = saveVersion(t.blocks, t.loadedVersion);
   const bytes = serializeTzx(t.blocks, v);
   const p = await platform();
@@ -144,6 +156,8 @@ export async function saveTzx(side: Side) {
 
 export async function saveTap(side: Side) {
   const t = tapes[side].value;
+  const problem = cannotWrite(t.blocks, 'tap');
+  if (problem) return showMessage('Cannot export TAP', problem);
   const { bytes, skipped } = serializeTap(t.blocks);
   const p = await platform();
   const r = await p.saveFile({ suggestedName: stem(t.name) + '.tap', filters: [{ name: 'TAP tape image', extensions: ['tap'] }], bytes });

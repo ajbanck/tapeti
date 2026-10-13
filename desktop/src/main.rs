@@ -206,7 +206,7 @@ fn measure(blocks: &[Block], parse_ms: f64, hex: bool) {
     );
     println!(
         "  serializeTzx                   {:7.2} ms",
-        ms(|| sink += writer::serialize_tzx(blocks, None).len())
+        ms(|| sink += writer::serialize_tzx(blocks, None).map_or(0, |b| b.len()))
     );
     debug_assert!(sink > 0);
 }

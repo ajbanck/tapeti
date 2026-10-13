@@ -7,6 +7,96 @@ use crate::bytes::{string_to_latin1, Writer};
 use crate::parser::bits_per_symbol;
 use crate::types::{Block, Body};
 
+/// A block that a file format cannot hold as it is.
+///
+/// One of its counts or lengths is larger than the format's field for it. Writing it anyway would
+/// cut the length, or make a count disagree with what follows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WriteError {
+    /// The block's index in the list.
+    pub block: usize,
+    /// What is too large, as the end of a sentence that starts with the block's number.
+    pub what: String,
+}
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "block {}: {}", self.block, self.what)
+    }
+}
+
+impl std::error::Error for WriteError {}
+
+const U24_MAX: usize = 0xFF_FFFF;
+
+/// `Some` when `n` is more than `max`, saying what holds at most `max` of what.
+fn over(n: usize, max: usize, holder: &str, unit: &str) -> Option<String> {
+    (n > max).then(|| format!("{holder} holds at most {max} {unit}, and this one has {n}"))
+}
+
+/// What in `body` is larger than its TZX field.
+fn tzx_overflow(body: &Body) -> Option<String> {
+    // A text field is cut at 255 bytes on purpose (`short_str`), so only the entries count
+    // toward a list's 16-bit length.
+    let text_len = |t: &str| string_to_latin1(t).len().min(255);
+    match body {
+        Body::Standard { data, .. } => over(data.len(), 0xFFFF, "a standard block", "bytes"),
+        Body::Turbo { data, .. } => over(data.len(), U24_MAX, "a turbo block", "bytes"),
+        Body::PureData { data, .. } => over(data.len(), U24_MAX, "a pure data block", "bytes"),
+        Body::Direct { data, .. } => over(data.len(), U24_MAX, "a direct recording", "bytes"),
+        Body::PulseSeq { pulses } => over(pulses.len(), 255, "a pulse sequence", "pulses"),
+        Body::Csw { sample_rate, data, .. } => {
+            over(*sample_rate as usize, U24_MAX, "a CSW block's rate", "Hz")
+                .or_else(|| over(data.len(), u32::MAX as usize - 10, "a CSW block", "bytes"))
+        }
+        Body::Generalized { pilot_symbols, data_symbols, pilot_stream, .. } => {
+            over(pilot_symbols.len(), 256, "a generalized block's pilot alphabet", "symbols")
+                .or_else(|| over(data_symbols.len(), 256, "a generalized block's data alphabet", "symbols"))
+                .or_else(|| {
+                    over(pilot_stream.len(), u32::MAX as usize, "a generalized block's pilot", "runs")
+                })
+        }
+        Body::Call { offsets } => over(offsets.len(), 0xFFFF, "a call sequence", "calls"),
+        Body::Select { entries } => over(entries.len(), 255, "a select block", "entries").or_else(|| {
+            let len = 1 + entries.iter().map(|e| 3 + text_len(&e.text)).sum::<usize>();
+            over(len, 0xFFFF, "a select block", "bytes")
+        }),
+        Body::Archive { entries } => {
+            over(entries.len(), 255, "an archive info block", "entries").or_else(|| {
+                let len = 1 + entries.iter().map(|e| 2 + text_len(&e.text)).sum::<usize>();
+                over(len, 0xFFFF, "an archive info block", "bytes")
+            })
+        }
+        Body::Hardware { entries } => over(entries.len(), 255, "a hardware info block", "entries"),
+        Body::Custom { data, .. } => over(data.len(), u32::MAX as usize, "a custom info block", "bytes"),
+        _ => None,
+    }
+}
+
+/// The first block a TZX file cannot hold as it is.
+pub fn check_tzx(blocks: &[Block]) -> Result<(), WriteError> {
+    match blocks.iter().enumerate().find_map(|(i, b)| tzx_overflow(&b.body).map(|what| (i, what))) {
+        Some((block, what)) => Err(WriteError { block, what }),
+        None => Ok(()),
+    }
+}
+
+/// The first block a TAP file cannot hold: one that [`serialize_tap`] writes, with more data
+/// than a TAP block's 16-bit length.
+pub fn check_tap(blocks: &[Block]) -> Result<(), WriteError> {
+    for (block, b) in blocks.iter().enumerate() {
+        let data = match &b.body {
+            Body::Standard { data, .. } | Body::Turbo { data, .. } | Body::PureData { data, .. } => data,
+            Body::Generalized { data, .. } => data,
+            _ => continue,
+        };
+        if let Some(what) = over(data.len(), 0xFFFF, "a TAP block", "bytes") {
+            return Err(WriteError { block, what });
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Version {
     pub major: u8,
@@ -293,7 +383,9 @@ pub fn write_block(w: &mut Writer, b: &Block) {
     }
 }
 
-pub fn serialize_tzx(blocks: &[Block], version: Option<Version>) -> Vec<u8> {
+/// The blocks as a TZX file, or the first one it cannot hold ([`check_tzx`]).
+pub fn serialize_tzx(blocks: &[Block], version: Option<Version>) -> Result<Vec<u8>, WriteError> {
+    check_tzx(blocks)?;
     let v = version.unwrap_or_else(|| required_version(blocks));
     let mut w = Writer::new();
     w.str("ZXTape!\u{1a}");
@@ -302,10 +394,11 @@ pub fn serialize_tzx(blocks: &[Block], version: Option<Version>) -> Vec<u8> {
     for b in blocks {
         write_block(&mut w, b);
     }
-    w.into_vec()
+    Ok(w.into_vec())
 }
 
-/// Encodes one block as ID plus body, for comparison and size display.
+/// Encodes one block as ID plus body, for comparison and size display. A block that
+/// [`check_tzx`] refuses comes out with its lengths cut.
 pub fn serialize_block(b: &Block) -> Vec<u8> {
     let mut w = Writer::new();
     write_block(&mut w, b);
@@ -313,8 +406,10 @@ pub fn serialize_block(b: &Block) -> Vec<u8> {
 }
 
 /// TAP export: only standard-speed blocks can be represented. Returns the
-/// indices of the blocks that had to be left out.
-pub fn serialize_tap(blocks: &[Block]) -> (Vec<u8>, Vec<u32>) {
+/// indices of the blocks that had to be left out, or the first block too large to
+/// write ([`check_tap`]).
+pub fn serialize_tap(blocks: &[Block]) -> Result<(Vec<u8>, Vec<u32>), WriteError> {
+    check_tap(blocks)?;
     let mut w = Writer::new();
     let mut skipped: Vec<u32> = Vec::new();
     for (i, b) in blocks.iter().enumerate() {
@@ -342,5 +437,5 @@ pub fn serialize_tap(blocks: &[Block]) -> (Vec<u8>, Vec<u32>) {
             _ => skipped.push(i as u32),
         }
     }
-    (w.into_vec(), skipped)
+    Ok((w.into_vec(), skipped))
 }

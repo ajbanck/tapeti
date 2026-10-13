@@ -13,7 +13,7 @@ use tapeti_core::describe::file_blocks;
 use tapeti_core::hash::file_hashes;
 use tapeti_core::parser::{is_tzx, parse_tape};
 use tapeti_core::snapshot::{parse_snapshot, snapshot_to_blocks, LoaderOptions, SnapshotKind, SPEED_BPS};
-use tapeti_core::writer::{save_version, serialize_tap, serialize_tzx, Version};
+use tapeti_core::writer::{save_version, serialize_tap, serialize_tzx, Version, WriteError};
 
 use crate::fmt;
 use crate::state::{Side, Store};
@@ -275,11 +275,23 @@ pub fn save_bytes(suggested: &str, filter: (&str, &[&str]), bytes: &[u8]) -> Opt
     }
 }
 
+/// The line that says which block a file format cannot hold, and why.
+pub fn cannot_write(store: &Store, e: &WriteError) -> String {
+    format!("Block {}: {}.", fmt::block_no(e.block, store.settings.zero_based), e.what)
+}
+
 /// Save as TZX. With `save_as` false the file it was opened from is written back.
 pub fn save_tzx(store: &mut Store, side: Side, save_as: bool) {
     let t = store.tape(side);
     let v = save_version(&t.blocks, t.loaded_version);
-    let bytes = serialize_tzx(&t.blocks, Some(v));
+    let bytes = match serialize_tzx(&t.blocks, Some(v)) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let line = cannot_write(store, &e);
+            store.message("Cannot save", vec![line]);
+            return;
+        }
+    };
     let in_place = (!save_as)
         .then(|| t.path.clone())
         .flatten()
@@ -307,7 +319,14 @@ pub fn save_tzx(store: &mut Store, side: Side, save_as: bool) {
 
 pub fn save_tap(store: &mut Store, side: Side) {
     let t = store.tape(side);
-    let (bytes, skipped) = serialize_tap(&t.blocks);
+    let (bytes, skipped) = match serialize_tap(&t.blocks) {
+        Ok(tap) => tap,
+        Err(e) => {
+            let line = cannot_write(store, &e);
+            store.message("Cannot export TAP", vec![line]);
+            return;
+        }
+    };
     let Some(path) = save_bytes(&(stem(&t.name) + ".tap"), ("TAP tape image", &["tap"]), &bytes) else {
         return;
     };
@@ -430,7 +449,8 @@ pub mod tests {
         let dir = std::env::temp_dir().join(format!("tapeti-hashes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("game.tzx");
-        let file = serialize_tzx(&[Block::new(create_body(0x10))], Some(Version { major: 1, minor: 20 }));
+        let file =
+            serialize_tzx(&[Block::new(create_body(0x10))], Some(Version { major: 1, minor: 20 })).unwrap();
         std::fs::write(&path, &file).unwrap();
 
         let mut store = Store::new(Settings::default());

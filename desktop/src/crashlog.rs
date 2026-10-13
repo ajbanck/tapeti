@@ -72,8 +72,10 @@ fn write_rescued(held: &[Unsaved; 2], dir: &Path) -> String {
     for (side, tape) in held.iter().enumerate() {
         let Some((_, name, blocks)) = tape else { continue };
         let path = dir.join(rescue_name(side));
-        let written =
-            std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, serialize_tzx(blocks, None)));
+        // A tape the format cannot hold is not written: cut lengths would not read back.
+        let written = serialize_tzx(blocks, None)
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|bytes| std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, bytes)));
         lines.push_str(&match written {
             Ok(()) => format!("unsaved {} tape {name:?} kept as {}\n", SIDES[side], path.display()),
             Err(e) => format!("unsaved {} tape {name:?} could not be kept: {e}\n", SIDES[side]),

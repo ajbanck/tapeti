@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 AJ Banck
 
-import { Side, tapes, commit, unitIndices, setStatus, dialog, dataWindow, active, blockNo, selectUids, setCursor, insertBlocks } from './store';
-import { downloadBytes, newTape, confirmDiscard } from './files';
+import { Side, tapes, commit, unitIndices, setStatus, showMessage, dialog, dataWindow, active, blockNo, selectUids, setCursor, insertBlocks } from './store';
+import { cannotWrite, downloadBytes, newTape, confirmDiscard } from './files';
 import {
   Program,
   detectPrograms,
@@ -136,6 +136,8 @@ export function openInEmulator(side: Side, scope: EmulatorScope) {
 async function launchEmulator(side: Side, scope: EmulatorScope, idx: number[]) {
   const t = tapes[side].value;
   const blocks = idx.map((i) => t.blocks[i]);
+  const problem = cannotWrite(blocks, 'tzx', idx);
+  if (problem) return showMessage('Cannot open in emulator', problem);
   const bytes = serializeTzx(blocks, requiredVersion(blocks));
   const stem = t.name.replace(/\.(tap|tzx)$/i, '') || 'tape';
   const name = scope === 'tape' ? stem : `${stem}-${scope === 'cursor' ? 'from' : 'sel'}${blockNo(idx[0])}`;

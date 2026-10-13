@@ -419,7 +419,7 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
         check_consistency(&t.blocks, 1).into_iter().filter(|i| i.severity == Severity::Error).count();
     let dur = (errors == 0).then(|| crate::tape::tape_duration(&t.blocks));
     let v = save_version(&t.blocks, t.loaded_version);
-    let size = serialize_tzx(&t.blocks, Some(v)).len();
+    let size = serialize_tzx(&t.blocks, Some(v)).map(|b| b.len());
     let data_bytes: usize = t.blocks.iter().filter_map(|b| b.body.data()).map(<[u8]>::len).sum();
     let version = |v: Version| format!("{}.{:02}", v.major, v.minor);
 
@@ -442,7 +442,11 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
     row(ui, "TZX version of the file", file);
     row(ui, "TZX version the blocks need", version(required_version(&t.blocks)));
     row(ui, "TZX version when saved", version(v));
-    row(ui, "File size", format!("{} bytes", fmt::num(size as i64, hex)));
+    let size = match &size {
+        Ok(n) => format!("{} bytes", fmt::num(*n as i64, hex)),
+        Err(e) => format!("cannot be saved: {}", crate::files::cannot_write(&app.store, e)),
+    };
+    row(ui, "File size", size);
     row(ui, "Data payload", format!("{} bytes", fmt::num(data_bytes as i64, hex)));
     row(
         ui,

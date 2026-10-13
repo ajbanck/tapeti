@@ -394,7 +394,16 @@ fn launch_emulator(app: &mut App, side: Side, scope: Scope) {
     let idx = emulator_indices(&app.store, side, scope);
     let t = app.store.tape(side);
     let blocks: Vec<Block> = idx.iter().map(|i| t.blocks[*i].clone()).collect();
-    let bytes = serialize_tzx(&blocks, Some(required_version(&blocks)));
+    let bytes = match serialize_tzx(&blocks, Some(required_version(&blocks))) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            // The blocks were taken from the tape at these indices, so the error's is one of `idx`.
+            let e = tapeti_core::writer::WriteError { block: idx[e.block], ..e };
+            let line = files::cannot_write(&app.store, &e);
+            app.store.message("Cannot open in emulator", vec![line]);
+            return;
+        }
+    };
     let stem = files::stem(&t.name);
     let zero = app.store.settings.zero_based;
     let name = if scope == Scope::Tape {

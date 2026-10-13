@@ -75,6 +75,15 @@ export function decodeTap(buf: Uint8Array): { bytes: Uint8Array; skipped: number
   return { bytes: out, skipped };
 }
 
+/** A write check's answer: the first block the format cannot hold, or null when all fit. */
+export function decodeWriteProblem(buf: Uint8Array): { block: number; what: string } | null {
+  const r = new Reader(buf);
+  readHeader(r);
+  if (r.u8() === 0) return null;
+  const block = r.u32();
+  return { block, what: str(r) };
+}
+
 /** A TZX version answer. */
 export function decodeVersion(buf: Uint8Array): { major: number; minor: number } {
   const r = new Reader(buf);

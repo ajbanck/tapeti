@@ -4,7 +4,7 @@
 import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
 import { Dialog, dialog, tapes, Side, insertBlocks, setCursor, audioMode, fmtNum, fmtTime, unitIndices, hex, blockNo, zeroBased } from '../state/store';
-import { downloadBytes, importSnapshot, insertDataFile, headerName, MAX_FILE_BYTES, pickFile } from '../state/files';
+import { cannotWrite, downloadBytes, importSnapshot, insertDataFile, headerName, MAX_FILE_BYTES, pickFile } from '../state/files';
 import {
   SNAPSHOT_SPEEDS,
   SNAPSHOT_SPEED_NAMES,
@@ -187,9 +187,10 @@ function TapeInfo({ side }: { side: Side }) {
     const dur = issues.length ? null : tapeDuration(t.blocks);
     const v = saveVersion(t.blocks, t.loadedVersion);
     const needed = requiredVersion(t.blocks);
-    const size = serializeTzx(t.blocks, v).length;
+    const problem = cannotWrite(t.blocks, 'tzx');
+    const size = problem ? null : serializeTzx(t.blocks, v).length;
     const dataBytes = t.blocks.reduce((a, b) => a + ('data' in b ? (b as any).data.length : 0), 0);
-    return { issues, dur, v, needed, size, dataBytes };
+    return { issues, dur, v, needed, size, problem, dataBytes };
   }, [t.blocks, t.loadedVersion]);
   const h = hex.value;
   return (
@@ -200,7 +201,7 @@ function TapeInfo({ side }: { side: Side }) {
         <tr><td>TZX version of the file</td><td>{t.loadedVersion ? fmtVersion(t.loadedVersion) : 'none (not loaded from a TZX file)'}</td></tr>
         <tr><td>TZX version the blocks need</td><td>{fmtVersion(info.needed)}</td></tr>
         <tr><td>TZX version when saved</td><td>{fmtVersion(info.v)}</td></tr>
-        <tr><td>File size</td><td>{fmtNum(info.size)} bytes</td></tr>
+        <tr><td>File size</td><td>{info.size === null ? `cannot be saved: ${info.problem}` : `${fmtNum(info.size)} bytes`}</td></tr>
         <tr><td>Data payload</td><td>{fmtNum(info.dataBytes)} bytes</td></tr>
         <tr><td>Estimated length</td><td>{info.dur ? `${fmtTime(info.dur.seconds)} (${info.dur.order.length} blocks played)` : 'n/a — fix consistency errors first'}</td></tr>
         {t.fileHashes ? <>
