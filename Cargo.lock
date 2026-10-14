@@ -3252,18 +3252,18 @@ dependencies = [
 
 [[package]]
 name = "tapeti-core"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "tapeti-decode"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "tapeti-core",
 ]
 
 [[package]]
 name = "tapeti-desktop"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "block2 0.6.2",
