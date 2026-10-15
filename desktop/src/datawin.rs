@@ -26,6 +26,7 @@ use tapeti_core::spectrum::screen::{has_flash, render_screen, ScreenOptions, SCR
 use tapeti_core::spectrum::source::{basic_source_text, edit_basic, SourceError, SourceOptions};
 use tapeti_core::spectrum::z80dis::{dis_to_text, disassemble_with, DisOptions};
 use tapeti_core::types::{Block, Body, Uid};
+use tapeti_core::writer::{check_tzx, WriteError};
 
 use crate::app::App;
 use crate::files;
@@ -568,17 +569,26 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if let Some(replace) = pick_file {
         if let Some((name, bytes)) = files::pick_any_file() {
             let n = bytes.len();
-            if replace {
-                dw.work = BitData { data: bytes, used_bits: 8 };
+            let work = if replace {
+                BitData { data: bytes, used_bits: 8 }
             } else {
-                dw.work.data.extend_from_slice(&bytes);
-                dw.work.used_bits = 8;
+                let mut data = dw.work.data.clone();
+                data.extend_from_slice(&bytes);
+                BitData { data, used_bits: 8 }
+            };
+            if let Some(line) = too_large(&app.store, &dw, &work) {
+                app.store.set_status(format!(
+                    "{} {line}",
+                    if replace { "Not replaced." } else { "Not appended." }
+                ));
+            } else {
+                dw.work = work;
+                dw.dirty = true;
+                app.store.set_status(format!(
+                    "{} {n} bytes from {name}",
+                    if replace { "Replaced with" } else { "Appended" }
+                ));
             }
-            dw.dirty = true;
-            app.store.set_status(format!(
-                "{} {n} bytes from {name}",
-                if replace { "Replaced with" } else { "Appended" }
-            ));
         }
     }
     if save_file {
@@ -607,25 +617,7 @@ pub(crate) fn apply(app: &mut App, dw: &DataWin) {
     }
     let uid = dw.uids[0];
     let Some(block) = app.store.tape(dw.side).blocks.iter().find(|b| b.uid == uid) else { return };
-    let mut body = block.body.clone();
-    match &mut body {
-        Body::Standard { data, .. } | Body::Csw { data, .. } | Body::Custom { data, .. } => {
-            *data = dw.work.data.clone();
-        }
-        Body::Turbo { data, used_bits, .. }
-        | Body::PureData { data, used_bits, .. }
-        | Body::Direct { data, used_bits, .. } => {
-            *data = dw.work.data.clone();
-            *used_bits = dw.work.used_bits;
-        }
-        Body::Generalized { data, totd, data_symbols, .. } => {
-            *data = dw.work.data.clone();
-            if data_symbols.len() <= 2 {
-                *totd = total_bits(&dw.work) as u32;
-            }
-        }
-        _ => return,
-    }
+    let Some(body) = edited_body(&block.body, &dw.work) else { return };
     let mut bodies = vec![(uid, body)];
     // An edited program has a new length and a new VARS: the Program header in
     // front says both, and the tape would not load with the old ones.
@@ -647,6 +639,41 @@ pub(crate) fn apply(app: &mut App, dw: &DataWin) {
         app.store.set_status("Program changed; the header in front now has its new length".to_string());
     }
     app.editor[dw.side].uid = None;
+}
+
+/// The block's body with `work` for its data, or `None` for a block that has no data to edit.
+fn edited_body(body: &Body, work: &BitData) -> Option<Body> {
+    let mut body = body.clone();
+    match &mut body {
+        Body::Standard { data, .. } | Body::Csw { data, .. } | Body::Custom { data, .. } => {
+            *data = work.data.clone();
+        }
+        Body::Turbo { data, used_bits, .. }
+        | Body::PureData { data, used_bits, .. }
+        | Body::Direct { data, used_bits, .. } => {
+            *data = work.data.clone();
+            *used_bits = work.used_bits;
+        }
+        Body::Generalized { data, totd, data_symbols, .. } => {
+            *data = work.data.clone();
+            if data_symbols.len() <= 2 {
+                *totd = total_bits(work) as u32;
+            }
+        }
+        _ => return None,
+    }
+    Some(body)
+}
+
+/// The line saying why the block could not be saved with `work` for its data, as Save would
+/// put it; `None` when it fits.
+fn too_large(store: &crate::state::Store, dw: &DataWin, work: &BitData) -> Option<String> {
+    let uid = *dw.uids.first()?;
+    let blocks = &store.tape(dw.side).blocks;
+    let index = blocks.iter().position(|b| b.uid == uid)?;
+    let body = edited_body(&blocks[index].body, work)?;
+    let e = check_tzx(&[Block { uid, body }]).err()?;
+    Some(files::cannot_write(store, &WriteError { block: index, ..e }))
 }
 
 fn bit_buttons(dw: &mut DataWin, ui: &mut Ui, n: usize, editable: bool, scale: usize) {
@@ -1676,5 +1703,25 @@ mod tests {
         store.hex = false;
         assert!(dw.hex, "which does not reach back into the window either");
         assert!(!DataWin::new(&blocks, 0, vec![uid]).hex, "the next window starts on Dec again");
+    }
+
+    /// Append file and Replace from file refuse data the block could not be saved with, as
+    /// Save would say it, rather than letting the save find out.
+    #[test]
+    fn appending_past_what_the_block_can_hold_is_refused() {
+        let blocks = vec![
+            Block::new(Body::Pause { pause: 0 }),
+            Block::new(Body::Standard { pause: 1000, data: vec![0xff; 65_000] }),
+        ];
+        let uid = blocks[1].uid;
+        let mut store = crate::state::Store::new(crate::settings::Settings::default());
+        store.tape_mut(0).load("t".into(), None, blocks.clone(), None);
+        let dw = DataWin::new(&blocks, 0, vec![uid]);
+
+        let fits = BitData { data: vec![0; 65_535], used_bits: 8 };
+        assert_eq!(too_large(&store, &dw, &fits), None);
+        let over = BitData { data: vec![0; 65_536], used_bits: 8 };
+        let line = too_large(&store, &dw, &over).expect("refused");
+        assert!(line.starts_with("Block 1: a standard block holds at most 65535 bytes"), "{line}");
     }
 }

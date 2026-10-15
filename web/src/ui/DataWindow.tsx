@@ -4,7 +4,7 @@
 import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
 import { ComponentChildren } from 'preact';
 import { dataWindow, tapes, Side, commit, locked, disSymbols, fmtNum, parseNum, setStatus, blockNo } from '../state/store';
-import { downloadBytes, pickFile } from '../state/files';
+import { cannotWrite, downloadBytes, pickFile } from '../state/files';
 import { Block, isUnknown } from '../tzx/types';
 import {
   detectContentAsLoaded,
@@ -170,11 +170,17 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
   };
 
   const close = () => (dataWindow.value = null);
+  // What OK writes into the block: its data, used bits and, for a two-symbol generalized block,
+  // its bit count.
+  const patchFor = (bits: BitData) => {
+    const patch: any = { data: bits.data };
+    if (hasUsedBits) patch.usedBits = bits.usedBits;
+    if (block.id === 0x19 && (block as any).dataSymbols.length <= 2) patch.totd = totalBits(bits);
+    return patch;
+  };
   const ok = () => {
     if (dirty && single) {
-      const patch: any = { data: work.data };
-      if (hasUsedBits) patch.usedBits = work.usedBits;
-      if (block.id === 0x19 && (block as any).dataSymbols.length <= 2) patch.totd = totalBits(work);
+      const patch = patchFor(work);
       let fixedHeader = false;
       commit(side, (bl) => {
         const i = bl.findIndex((b) => b.uid === block.uid);
@@ -200,14 +206,17 @@ function Inner({ side, blocks }: { side: Side; blocks: Block[] }) {
     const f = await pickFile();
     if (!f) return;
     const bytes = f.bytes;
-    if (replace) setBits(() => ({ data: bytes, usedBits: 8 }));
-    else {
-      const cur = work.data;
-      const out = new Uint8Array(cur.length + bytes.length);
-      out.set(cur);
-      out.set(bytes, cur.length);
-      setBits(() => ({ data: out, usedBits: 8 }));
+    let data = bytes;
+    if (!replace) {
+      data = new Uint8Array(work.data.length + bytes.length);
+      data.set(work.data);
+      data.set(bytes, work.data.length);
     }
+    // Refused here, as Save would put it, rather than left for the save to find.
+    const i = tapes[side].value.blocks.findIndex((b) => b.uid === block.uid);
+    const problem = cannotWrite([{ ...(block as any), ...patchFor({ data, usedBits: 8 }) }], 'tzx', [i]);
+    if (problem) return setStatus(`${replace ? 'Not replaced.' : 'Not appended.'} ${problem}`);
+    setBits(() => ({ data, usedBits: 8 }));
     setStatus(`${replace ? 'Replaced with' : 'Appended'} ${bytes.length} bytes from ${f.name}`);
   };
   const fileStem = (tapes[side].value.name.replace(/\.(tzx|tap|z80|sna)$/i, '') || 'block') + `-block${blockNo(tapes[side].value.cursor)}`;
