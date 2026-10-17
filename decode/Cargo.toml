@@ -8,6 +8,8 @@ edition = "2021"
 [lib]
 name = "tapeti_decode"
 path = "src/lib.rs"
+# The browser's one module: this crate's entry points and, through `tapeti-core`, the core's.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 tapeti-core = { path = "../core" }

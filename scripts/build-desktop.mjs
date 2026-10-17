@@ -17,7 +17,7 @@
 //                           is there) and a .tar.gz, always
 //                  Windows  Tapeti-v<version>-windows-x86_64-portable.exe and, with
 //                           the WiX `wix` command on PATH, an .msi that registers
-//                           .tzx/.tap (and offers itself for .z80/.sna)
+//                           .tzx/.tap (and offers itself for .z80/.sna and recordings)
 //   --universal  macOS: build both architectures and lipo them into one binary
 //   --no-build   package what is already in target/
 //
@@ -83,10 +83,11 @@ mkdirSync(dist, { recursive: true });
 /** The binary to package, built unless --no-build said it is already there. */
 function build() {
   const flags = release ? ['--release'] : [];
+  const at = { cwd: crate };
   if (!universal) {
     if (!has('--no-build')) {
       console.log(`Building Tapeti (${profile})…`);
-      run(cargo, ['build', ...flags], { cwd: crate });
+      run(cargo, ['build', ...flags], at);
     }
     return join(root, 'target', profile, exe);
   }
@@ -97,7 +98,7 @@ function build() {
   if (!has('--no-build')) {
     for (const target of targets) {
       console.log(`Building Tapeti (${profile}, ${target})…`);
-      run(cargo, ['build', ...flags, '--target', target], { cwd: crate });
+      run(cargo, ['build', ...flags, '--target', target], at);
     }
   }
   const fat = join(root, 'target', `universal-${profile}`, exe);
@@ -110,6 +111,27 @@ const bin = build();
 console.log(`\nBinary: ${bin} (${mb(bin)} MB)`);
 
 // ---- macOS ----------------------------------------------------------------
+
+/** The document types for recordings. Alternate rank, Viewer role: Tapeti turns up under "Open With" and takes a
+ *  recording dropped on its Dock icon, but never becomes what a double-click on a .wav
+ *  opens, and does not claim to save them. WAV has a system content type; the others have
+ *  none, so they go by extension in a dict of their own: Launch Services ignores extensions
+ *  in a dict that names content types. Must match RECORDING_EXTENSIONS in desktop/src/files.rs. */
+const RECORDING_TYPES = `
+    <dict>
+      <key>CFBundleTypeName</key><string>Tape recording</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>com.microsoft.waveform-audio</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Tape recording</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>voc</string><string>iff</string><string>8svx</string><string>csw</string></array>
+    </dict>`;
 
 /** `Tapeti.app`: the document types live in its Info.plist, and nothing else can
  *  declare them. That is what makes a tape open Tapeti when it is double-clicked. */
@@ -160,7 +182,7 @@ function macApp() {
       <key>LSHandlerRank</key><string>Alternate</string>
       <key>CFBundleTypeExtensions</key>
       <array><string>z80</string><string>sna</string></array>
-    </dict>
+    </dict>${RECORDING_TYPES}
   </array>
   <key>UTExportedTypeDeclarations</key>
   <array>
@@ -217,7 +239,7 @@ Comment=ZX Spectrum TZX/TAP tape editor
 Exec=tapeti %F
 Icon=tapeti
 Categories=Utility;AudioVideo;Development;
-MimeType=application/x-tzx;application/x-tap;application/x-z80;application/x-sna;
+MimeType=application/x-tzx;application/x-tap;application/x-z80;application/x-sna;audio/x-wav;audio/x-voc;audio/x-8svx;
 Terminal=false
 `;
 
@@ -264,11 +286,17 @@ function linuxPackages() {
 
 // ---- Windows --------------------------------------------------------------
 
+/** The recordings Windows offers Tapeti for, as macOS's RECORDING_TYPES does. */
+const WINDOWS_RECORDING_EXTENSIONS = ['wav', 'voc', 'iff', '8svx', 'csw'];
+
 /** WiX v4+ source: one component with the exe, a Start menu shortcut, the two
- *  file associations and an "Open with" entry for snapshots. Windows has no bundle
- *  to declare them in: they are registry entries an installer writes, which is why
- *  there is an .msi at all. */
+ *  file associations and "Open with" entries for snapshots and recordings. Windows has
+ *  no bundle to declare them in: they are registry entries an installer writes, which is
+ *  why there is an .msi at all. */
 function wxs() {
+  const openWith = (progId, ext) => `
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\.${ext}\\OpenWithProgids" Name="${progId}"
+                       Type="string" Value="" />`;
   return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Tapeti" Manufacturer="Tapeti" Version="${version}" Language="1033"
@@ -303,11 +331,12 @@ function wxs() {
         <RegistryValue Root="HKLM" Key="Software\\Classes\\Tapeti.snapshot" Type="string"
                        Value="ZX Spectrum snapshot" />
         <RegistryValue Root="HKLM" Key="Software\\Classes\\Tapeti.snapshot\\shell\\open\\command" Type="string"
-                       Value="&quot;[#TapetiExeFile]&quot; &quot;%1&quot;" />
-        <RegistryValue Root="HKLM" Key="Software\\Classes\\.z80\\OpenWithProgids" Name="Tapeti.snapshot"
-                       Type="string" Value="" />
-        <RegistryValue Root="HKLM" Key="Software\\Classes\\.sna\\OpenWithProgids" Name="Tapeti.snapshot"
-                       Type="string" Value="" />
+                       Value="&quot;[#TapetiExeFile]&quot; &quot;%1&quot;" />${['z80', 'sna'].map((ext) => openWith('Tapeti.snapshot', ext)).join('')}
+        <!-- Recordings the same way: a .wav belongs to the user's player. -->
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\Tapeti.recording" Type="string"
+                       Value="Tape recording" />
+        <RegistryValue Root="HKLM" Key="Software\\Classes\\Tapeti.recording\\shell\\open\\command" Type="string"
+                       Value="&quot;[#TapetiExeFile]&quot; &quot;%1&quot;" />${WINDOWS_RECORDING_EXTENSIONS.map((ext) => openWith('Tapeti.recording', ext)).join('')}
       </Component>
     </ComponentGroup>
     <Feature Id="Main">

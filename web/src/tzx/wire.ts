@@ -424,6 +424,41 @@ export function decodeU8(buf: Uint8Array): number {
   return r.u8();
 }
 
+/** What a recording file holds, for the import dialog (`encode_recording_summary`). */
+export interface RecordingSummary {
+  /** WAV, VOC, IFF/8SVX, CSW or OUT. */
+  format: string;
+  /** Samples a second; an OUT trace counts T-states, 3,500,000 a second. */
+  rateHz: number;
+  channels: number;
+  samples: number;
+  /** Bytes of audio the header announces that the file does not hold. */
+  missingBytes: number;
+  /** Parts of the file passed over, each in words. */
+  skipped: string[];
+  /** Kept as raw signal, a CSW block (CSW and OUT); otherwise Direct Recording blocks. */
+  keptCsw: boolean;
+  /** How many blocks keeping it as raw signal makes, and the TZX file's size. */
+  blocks: number;
+  tzxSize: number;
+}
+
+export function decodeRecordingSummary(buf: Uint8Array): RecordingSummary {
+  const r = new Reader(buf);
+  readHeader(r);
+  const format = str(r);
+  const rateHz = r.u32();
+  const channels = r.u16();
+  const samples = f64(r, buf);
+  const missingBytes = f64(r, buf);
+  const skipped: string[] = [];
+  for (let n = r.u32(); n > 0; n--) skipped.push(str(r));
+  const keptCsw = r.u8() === 1;
+  const blocks = r.u32();
+  const tzxSize = f64(r, buf);
+  return { format, rateHz, channels, samples, missingBytes, skipped, keptCsw, blocks, tzxSize };
+}
+
 export function decodeF64(buf: Uint8Array): number {
   const r = new Reader(buf);
   readHeader(r);

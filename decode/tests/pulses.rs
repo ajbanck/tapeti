@@ -19,9 +19,9 @@ fn t_state_lengths_are_placed_one_after_the_other() {
     assert_eq!(
         p,
         [
-            Pulse { tstates: 2168.0, start: 0.0 },
-            Pulse { tstates: 667.0, start: 2168.0 },
-            Pulse { tstates: 735.0, start: 2835.0 }
+            Pulse { tstates: 2168.0, start: 0.0, quiet: false },
+            Pulse { tstates: 667.0, start: 2168.0, quiet: false },
+            Pulse { tstates: 735.0, start: 2835.0, quiet: false }
         ]
     );
 }
@@ -33,9 +33,9 @@ fn csw_runs_become_t_states_and_keep_their_place_in_samples() {
     assert_eq!(
         p,
         [
-            Pulse { tstates: 300.0, start: 0.0 },
-            Pulse { tstates: 500.0, start: 3.0 },
-            Pulse { tstates: 30000.0, start: 8.0 }
+            Pulse { tstates: 300.0, start: 0.0, quiet: false },
+            Pulse { tstates: 500.0, start: 3.0, quiet: false },
+            Pulse { tstates: 30000.0, start: 8.0, quiet: false }
         ]
     );
     let p = from_runs(&[1], 44100);
@@ -90,7 +90,13 @@ fn a_pulse_of_no_length_is_two_edges_at_once_and_leaves_one_pulse() {
 #[test]
 fn a_speed_change_scales_every_pulse() {
     let p = speed(&pulses(&[1000, 2000]), 1.5);
-    assert_eq!(p, [Pulse { tstates: 1500.0, start: 0.0 }, Pulse { tstates: 3000.0, start: 1500.0 }]);
+    assert_eq!(
+        p,
+        [
+            Pulse { tstates: 1500.0, start: 0.0, quiet: false },
+            Pulse { tstates: 3000.0, start: 1500.0, quiet: false }
+        ]
+    );
 }
 
 #[test]

@@ -7,9 +7,9 @@
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, tape_band, Decoded};
+use tapeti_decode::entry::{decode_file, tape_band, Channels, Decoded, Finding};
 use tapeti_decode::readers::Channel;
-use tapeti_decode::waveform::edges::{detect, pulses};
+use tapeti_decode::waveform::edges::{detect, detect_pulses, pulses};
 use tapeti_decode::waveform::filter::Filter;
 
 fn standard(pause: u16, data: Vec<u8>) -> Block {
@@ -43,8 +43,17 @@ fn render(blocks: &[Block], rate: u32, mic: bool) -> Vec<f32> {
 
 fn decode_wav(wav: &[u8], filter: Filter) -> Decoded {
     let no_zlib = |_: &[u8]| -> Result<Vec<u8>, String> { Err("none".into()) };
-    decode_file("t.wav", wav, Channel::Mix, filter, None, &no_zlib, &mut |_| {}, &AtomicBool::new(false))
-        .unwrap()
+    decode_file(
+        "t.wav",
+        wav,
+        Channels::Only(Channel::Mix),
+        filter,
+        None,
+        &no_zlib,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap()
 }
 
 fn datas(blocks: &[Block]) -> Vec<Vec<u8>> {
@@ -67,9 +76,10 @@ fn reads(samples: &[f32], rate: u32, bits: u16, filter: Filter) {
 fn the_spectrums_output_decodes_to_the_same_blocks() {
     for rate in [22050, 44100, 48000] {
         let got = decode_wav(&encode_wav(&render(&tape(), rate, true), rate, 16), Filter::None);
-        // The render opens and closes with half a second of silence.
-        let mut want = vec![Block::new(Body::Pause { pause: 500 })];
-        want.extend(tape());
+        // The render opens and closes with half a second of silence: the first is the lead-in,
+        // left out, and the last lengthens the last pause.
+        assert_eq!(got.findings, [Finding::LeadIn { ms: 500 }], "{rate} Hz");
+        let mut want = tape();
         if let Some(Body::Standard { pause, .. }) = want.last_mut().map(|b| &mut b.body) {
             *pause += 500;
         }
@@ -171,4 +181,69 @@ fn a_spike_in_a_pause_is_not_a_block() {
     let at = s.len() - 20000;
     s[at] += 0.17;
     reads(&s, 44100, 16, Filter::None);
+}
+
+/// Gaussian noise of `sigma` from a seeded generator (the sum of four uniform numbers), so every
+/// run is the same.
+fn hiss(n: usize, sigma: f32, seed: u64) -> Vec<f32> {
+    let mut state = seed;
+    let mut unit = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 40) as f32 / (1u64 << 24) as f32
+    };
+    // Four uniform numbers have a variance of 4/12 around 2.
+    let scale = sigma / (4.0f32 / 12.0).sqrt();
+    (0..n).map(|_| scale * ((0..4).map(|_| unit()).sum::<f32>() - 2.0)).collect()
+}
+
+#[test]
+fn dead_air_is_quiet_and_plays_as_the_pause() {
+    // Three seconds of dead air, the tape with five seconds between its blocks, three seconds
+    // more: the hiss of the tape alone, everywhere, a tenth of the level. The band cuts it into
+    // pulses, which are quiet, and every stretch of it is the pause before the next block.
+    let mut blocks = tape();
+    for b in &mut blocks {
+        if let Body::Standard { pause, .. } = &mut b.body {
+            *pause = 5000;
+        }
+    }
+    let mut s = vec![0.0f32; 3 * 44100];
+    s.extend(render(&blocks, 44100, false));
+    s.extend(vec![0.0f32; 3 * 44100]);
+    let noise = hiss(s.len(), 0.015, 7);
+    for (v, n) in s.iter_mut().zip(noise) {
+        *v += n;
+    }
+    let p = detect_pulses(|| s.iter().copied(), 44100, Filter::None).unwrap();
+    let quiet = p.iter().filter(|p| p.quiet).count();
+    assert!(quiet > 10_000, "{quiet} of {} pulses quiet", p.len());
+
+    let got = decode_wav(&encode_wav(&s, 44100, 16), Filter::None);
+    assert_eq!(datas(&got.blocks), datas(&blocks), "{:?}", got.findings);
+    assert_eq!(got.blocks.len(), blocks.len(), "nothing but the blocks: {:?}", got.findings);
+    for (b, want) in got.blocks.iter().zip([5000, 5000, 8500]) {
+        let Body::Standard { pause, .. } = b.body else { unreachable!() };
+        assert!(pause.abs_diff(want) <= 5, "a pause of {pause} ms for {want}");
+    }
+    assert!(matches!(got.findings[0], Finding::LeadIn { ms: 3400..=3600 }), "{:?}", got.findings);
+    let collapsed: Vec<usize> = got
+        .findings
+        .iter()
+        .filter_map(|f| match *f {
+            Finding::Collapsed { block, .. } => Some(block),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(collapsed, [0, 1, 2], "{:?}", got.findings);
+}
+
+#[test]
+fn a_recording_whose_pauses_hold_no_noise_has_no_quiet_pulse() {
+    // Rendered from a file, the silence is samples that never change: nothing measures a noise
+    // level there, and the signal itself must not be taken for one.
+    let s = render(&tape(), 44100, false);
+    let p = detect_pulses(|| s.iter().copied(), 44100, Filter::None).unwrap();
+    assert!(p.iter().all(|p| !p.quiet));
 }

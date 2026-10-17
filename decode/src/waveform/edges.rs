@@ -9,9 +9,10 @@
 //! below a floor that keeps it off the hiss in a pause. A weak lobe between two strong ones of
 //! the other sign counts; one with a strong neighbour on one side only is noise.
 //!
-//! The samples are walked twice and never held as floats: once for the statistics the floor is
-//! cut from, taken over the whole recording, and once for the edges, with the last second of
-//! samples kept to time them.
+//! The samples are walked three times and never held as floats: once for the statistics the
+//! floor and the noise line are cut from, taken over the whole recording, once for the edges,
+//! with the last second of samples kept to time them, and once to mark the pulses that never
+//! rise over the noise line.
 
 use super::filter::{Filter, FilterError};
 use crate::pulses::Pulse;
@@ -149,6 +150,40 @@ pub fn detect<I: Iterator<Item = f32>>(
     rate_hz: u32,
     filter: Filter,
 ) -> Result<Vec<Edge>, FilterError> {
+    Ok(find(&samples, rate_hz, filter)?.edges)
+}
+
+/// The pulses of a recording at `rate_hz`, each marked quiet where it never rises over the noise.
+///
+/// They are cut from the edges as [`pulses`] cuts them, and the noise is the recording's noise
+/// line (`noise_line`). `samples` is called three times.
+pub fn detect_pulses<I: Iterator<Item = f32>>(
+    samples: impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+) -> Result<Vec<Pulse>, FilterError> {
+    let found = find(&samples, rate_hz, filter)?;
+    let mut pulses = pulses(&found.edges, rate_hz, found.samples);
+    if let Some(line) = found.noise {
+        mark_quiet(&mut pulses, condition(samples(), rate_hz, filter)?, rate_hz, line);
+    }
+    Ok(pulses)
+}
+
+/// What one run of the detector finds.
+struct Found {
+    edges: Vec<Edge>,
+    /// The recording's noise line, `None` where it has none.
+    noise: Option<f32>,
+    /// How many samples it holds.
+    samples: usize,
+}
+
+fn find<I: Iterator<Item = f32>>(
+    samples: &impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+) -> Result<Found, FilterError> {
     let half_win = ((ENV_HALF_WINDOW_MS / 1000.0 * f64::from(rate_hz)) as usize).max(1);
     // The envelope's statistics read it every ~2 ms.
     let stride = (rate_hz as usize / 500).max(1);
@@ -162,15 +197,17 @@ pub fn detect<I: Iterator<Item = f32>>(
             env.push(e);
         }
     });
+    let count = moved.n;
     let moved = moved.strides;
     let mut sorted = env.clone();
     sorted.sort_unstable_by(f32::total_cmp);
     let peak = at_pctile(&sorted, PEAK_PCTILE);
     if peak <= 0.0 {
-        return Ok(Vec::new());
+        return Ok(Found { edges: Vec::new(), noise: None, samples: count });
     }
     let mark = quiet_mark(&sorted, &env, &moved, per_sec, peak);
     let floors = FloorProfile::local(&env, per_sec, stride, peak, mark);
+    let noise = noise_line(&env, &moved, per_sec, peak);
     drop((env, sorted));
 
     let mut d = Detector {
@@ -190,7 +227,7 @@ pub fn detect<I: Iterator<Item = f32>>(
             d.step(x, i, e, floors.at(i));
         }
     });
-    Ok(d.edges)
+    Ok(Found { edges: d.edges, noise, samples: count })
 }
 
 /// The pulses between `edges`, with one from the start of the recording to the first edge and
@@ -203,8 +240,38 @@ pub fn pulses(edges: &[Edge], rate_hz: u32, samples: usize) -> Vec<Pulse> {
     at.push(samples as f64);
     at.windows(2)
         .filter(|w| w[1] > w[0])
-        .map(|w| Pulse { tstates: (w[1] - w[0]) * to_t, start: w[0] })
+        .map(|w| Pulse { tstates: (w[1] - w[0]) * to_t, start: w[0], quiet: false })
         .collect()
+}
+
+/// Marks quiet each of `pulses` over which no sample of `conditioned` stands above `line`,
+/// counting the samples either side of both its edges, so a pulse shorter than a sample is
+/// measured too.
+fn mark_quiet(pulses: &mut [Pulse], conditioned: impl Iterator<Item = f32>, rate_hz: u32, line: f32) {
+    let to_samples = f64::from(rate_hz) / f64::from(TSTATES_PER_SEC);
+    let span = |p: &Pulse| (p.start.floor() as usize, (p.start + p.tstates * to_samples).ceil() as usize);
+    let mut loud = vec![false; pulses.len()];
+    // The first pulse whose span has not ended; spans overlap only at their ends.
+    let mut first = 0;
+    for (j, x) in conditioned.enumerate() {
+        while first < pulses.len() && span(&pulses[first]).1 < j {
+            first += 1;
+        }
+        if first == pulses.len() {
+            break;
+        }
+        if x.abs() > line {
+            for (k, p) in pulses.iter().enumerate().skip(first) {
+                if span(p).0 > j {
+                    break;
+                }
+                loud[k] = true;
+            }
+        }
+    }
+    for (p, loud) in pulses.iter_mut().zip(loud) {
+        p.quiet = !loud;
+    }
 }
 
 /// The DC blocker, a one-pole high-pass `y = x - x₋₁ + r·y₋₁`, then the user's filter.
@@ -393,6 +460,54 @@ fn dead_air_at(env: &[f32], moved: &[(bool, bool)], per_block: usize) -> Option<
     }
     let dead = level.partition_point(|&l| l <= MATERIAL_MULT * est);
     Some((est, (dead as f64) < QUIET_PCTILE * level.len() as f64))
+}
+
+/// The noise line a pulse must stay under to be quiet, as a share of the loudest the recording
+/// gets where it holds tape: [`QUIET_PCTILE`] of the envelope is a noise level only under this.
+/// Dead air alone measures its own ratio, at most 0.64 (a sliding max over hiss against its max,
+/// which material only lowers), so at 0.6 a recording of dead air has no line and none of its
+/// hiss is quiet. Material of one level measures over 0.81 (its level over its level plus the
+/// loudest hiss it stands [`MATERIAL_MULT`] over), so at 0.9 a recording without dead air has a
+/// line, in its own signal. 0.7 is chosen between.
+const QUIET_GUARD: f32 = 0.7;
+
+/// The recording's noise line: [`QUIET_PCTILE`] of the envelope of the seconds that hold tape,
+/// lowered to the tape's own dead air where that percentile's share of dead air is not there.
+/// `None` where the recording has no quiet to measure: the percentile is not under
+/// [`QUIET_GUARD`] of the loudest, or the only quiet is samples that never change (a tape
+/// rendered from a file, whose pauses hold no noise).
+fn noise_line(env: &[f32], moved: &[(bool, bool)], per_sec: usize, peak: f32) -> Option<f32> {
+    let dead = dead_air_mark(env, moved, per_sec, peak);
+    let per_sec = per_sec.max(1);
+    let silent = moved.chunks(per_sec).any(|m| !holds_tape(m));
+    let mut tape: Vec<f32> = env
+        .chunks(per_sec)
+        .zip(moved.chunks(per_sec))
+        .filter(|(_, m)| holds_tape(m))
+        .flat_map(|(e, _)| e.iter().copied())
+        .collect();
+    if tape.is_empty() {
+        return None;
+    }
+    let pct = pctile(&mut tape, QUIET_PCTILE);
+    if silent && dead.is_none() && !is_noise_level(pct, peak) {
+        return None;
+    }
+    let top = tape[tape.len() - 1];
+    (pct <= QUIET_GUARD * top).then(|| dead.map_or(pct, |d| d.min(pct)))
+}
+
+/// The tape's dead air, where [`QUIET_PCTILE`] cannot measure it because dead air fills less
+/// than that share: counted a second at a time, or a tenth of a second where the quietest
+/// seconds are material.
+fn dead_air_mark(env: &[f32], moved: &[(bool, bool)], per_sec: usize, peak: f32) -> Option<f32> {
+    match dead_air_at(env, moved, per_sec)? {
+        (est, _) if !is_noise_level(est, peak) => match dead_air_at(env, moved, per_sec / DEAD_AIR_FINE)? {
+            (fine, true) if is_noise_level(fine, peak) => Some(fine),
+            _ => None,
+        },
+        (est, short) => short.then_some(est),
+    }
 }
 
 /// The band's floor, one value a second.

@@ -22,6 +22,7 @@ import {
   SNAPSHOT_SPEEDS,
 } from '../tzx/core';
 import { Block, ParsedTape, StandardBlock, createBlock } from '../tzx/types';
+import { openRecording } from './recordings';
 import { platform, OpenedFile, TAPE_FILTERS, filtersForName, FileFilter, fileToOpened } from '../platform';
 
 export function newTape(side: Side) {
@@ -29,12 +30,12 @@ export function newTape(side: Side) {
   active.value = side;
 }
 
-/** Tape recordings: the desktop app keeps them as raw signal; this build does not read them yet. */
+/** Tape recordings, which the import dialog decodes or keeps as raw signal (`recordings.ts`). */
 const RECORDING = /\.(wav|voc|iff|8svx|csw|out)$/i;
 
 export function loadBytes(side: Side, name: string, bytes: Uint8Array, insertAtCursor = false) {
   if (RECORDING.test(name)) {
-    showMessage('Cannot load file', `${name} is a tape recording. The desktop app opens recordings; the browser does not yet.`);
+    openRecording(side, name, bytes, insertAtCursor);
     return;
   }
   const format = snapshotKind(name);
@@ -111,7 +112,7 @@ export function importSnapshot(side: Side, name: string, bytes: Uint8Array, form
 }
 
 /** `file` is the bytes of the file the tape was read from; a snapshot's tape is no such file. */
-function loadParsed(side: Side, name: string, parsed: ParsedTape, insertAtCursor: boolean, fromTzx: boolean, file: Uint8Array | null) {
+export function loadParsed(side: Side, name: string, parsed: ParsedTape, insertAtCursor: boolean, fromTzx: boolean, file: Uint8Array | null) {
   if (insertAtCursor) {
     const t = tapes[side].value;
     insertBlocks(side, t.cursor < 0 ? t.blocks.length : t.cursor, parsed.blocks);

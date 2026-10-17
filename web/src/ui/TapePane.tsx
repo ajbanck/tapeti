@@ -362,7 +362,7 @@ export function TapePane({ side, grow = 1 }: { side: Side; grow?: number }) {
         {t.blocks.length === 0 && (
           <div class="empty">
             <div class="big">No tape loaded</div>
-            Drop a TZX or TAP file here, or use the folder button above.
+            Drop a TZX or TAP file or a tape recording here, or use the folder button above.
           </div>
         )}
         {t.blocks.map((b, i) => {

@@ -25,7 +25,8 @@ pub const SNAPSHOT_EXTENSIONS: [&str; 4] = ["z80", "sna", "Z80", "SNA"];
 pub const RECORDING_EXTENSIONS: [&str; 12] =
     ["wav", "voc", "iff", "8svx", "csw", "out", "WAV", "VOC", "IFF", "8SVX", "CSW", "OUT"];
 
-fn is_recording(name: &str) -> bool {
+/// Whether `name` is a recording, by its extension.
+pub fn is_recording(name: &str) -> bool {
     name.rsplit_once('.').is_some_and(|(_, ext)| RECORDING_EXTENSIONS.contains(&ext))
 }
 
@@ -33,7 +34,9 @@ pub fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// The tape's name without a `.tzx`/`.tap` extension (or a snapshot's), or `tape`.
+/// The tape's name without a known tape, snapshot or recording extension, so
+/// `side-a.wav` is saved as `side-a.tzx`; falls back to `tape` if that leaves
+/// nothing.
 pub fn stem(name: &str) -> String {
     let known = TAPE_EXTENSIONS.iter().chain(&SNAPSHOT_EXTENSIONS).chain(&RECORDING_EXTENSIONS);
     let s = known.filter_map(|e| name.strip_suffix(e)?.strip_suffix('.')).next().unwrap_or(name);
@@ -62,8 +65,14 @@ pub fn load_bytes(
         // A recording becomes a tape only once the dialog has its answers.
         match tapeti_decode::entry::describe(name, bytes, &crate::tape::inflate) {
             Ok(summary) => {
-                let dialog =
-                    crate::dialogs::Dialog::recording(side, name, bytes.to_vec(), summary, insert_at_cursor);
+                let dialog = crate::dialogs::Dialog::recording(
+                    side,
+                    name,
+                    bytes.to_vec(),
+                    summary,
+                    insert_at_cursor,
+                    path,
+                );
                 store.dialog = Some(dialog);
             }
             Err(e) => store.message("Cannot load file", vec![e.to_string()]),
@@ -167,7 +176,24 @@ pub fn import_snapshot(
     store.set_status(format!("Imported {}: {count} blocks, loading at {bps} bps", opts.name));
 }
 
-/// The recording dialog's OK: the recording kept whole as raw signal, as a tape of its own or
+/// The recording dialog's OK, to decode: the decode starts on a thread of its own once
+/// `App::frame` hands the queue to the jobs, and its blocks land as a tape of their own or at the
+/// cursor.
+pub fn decode_recording(
+    store: &mut Store,
+    side: Side,
+    path: &Path,
+    choice: crate::state::DecodeChoice,
+    insert_at_cursor: bool,
+) {
+    use crate::state::Landing;
+    let into = if insert_at_cursor { Landing::Cursor } else { Landing::Tape };
+    let path = path.to_path_buf();
+    store.recordings.push(crate::state::RecordingRequest { side, path, into, choice, confirmed: false });
+    store.active = side;
+}
+
+/// The recording dialog's OK, to keep it: the recording kept whole as raw signal, as a tape of its own or
 /// at the cursor.
 pub fn import_recording(
     store: &mut Store,
@@ -552,6 +578,7 @@ pub mod tests {
 
     #[test]
     fn a_recording_asks_first_and_is_kept_as_raw_signal_on_ok() {
+        use crate::state::ChannelChoice;
         use tapeti_decode::entry::Kept;
         use tapeti_decode::readers::Channel;
         use tapeti_decode::waveform::filter::Filter;
@@ -560,9 +587,9 @@ pub mod tests {
         assert!(store.tape(0).blocks.is_empty(), "nothing loads before the dialog is answered");
         let Some(Dialog::Recording(s)) = store.dialog.take() else { panic!("no import dialog") };
         assert_eq!((s.summary.format, s.summary.kept), ("WAV", Kept::DirectRecording));
-        assert_eq!((s.channel, s.filter, s.insert_at_cursor), (Channel::Mix, false, false));
+        assert_eq!((s.channel, s.filter, s.insert_at_cursor), (ChannelChoice::Best, false, false));
 
-        import_recording(&mut store, 0, &s.name, &s.bytes, s.channel, Filter::None, false);
+        import_recording(&mut store, 0, &s.name, &s.bytes, Channel::Mix, Filter::None, false);
         assert_eq!(ids(&store), [0x15]);
         let t = store.tape(0);
         assert_eq!(t.name, "side-a.wav");
@@ -574,7 +601,7 @@ pub mod tests {
         load_bytes(&mut store, 0, "side-b.WAV", &recording(), true, None);
         let Some(Dialog::Recording(s)) = store.dialog.take() else { panic!("no import dialog") };
         assert!(s.insert_at_cursor);
-        import_recording(&mut store, 0, &s.name, &s.bytes, s.channel, Filter::None, true);
+        import_recording(&mut store, 0, &s.name, &s.bytes, Channel::Mix, Filter::None, true);
         assert_eq!(ids(&store), [0x15, 0x15]);
         assert_eq!(store.status(), "Imported side-b.WAV as raw signal: a Direct Recording block");
     }

@@ -53,10 +53,15 @@ export class Reader {
   }
 }
 
+// A byte array of its own is kept as it is rather than copied into `small`: a plain array cannot
+// grow past about 134 million elements, and a recording's file goes through here whole.
 export class Writer {
-  private chunks: number[] = [];
+  private parts: Uint8Array[] = [];
+  private small: number[] = [];
+  private size = 0;
   u8(v: number) {
-    this.chunks.push(v & 0xff);
+    this.small.push(v & 0xff);
+    this.size++;
   }
   u16(v: number) {
     this.u8(v);
@@ -74,17 +79,37 @@ export class Writer {
     this.u24(v);
     this.u8(Math.floor(v / 0x1000000));
   }
+  /** `b` is read when the Writer is turned into bytes, so it must not change before then. */
   bytes(b: Uint8Array | number[]) {
-    for (let i = 0; i < b.length; i++) this.chunks.push(b[i] & 0xff);
+    if (b instanceof Uint8Array && b.length >= 4096) {
+      this.flush();
+      this.parts.push(b);
+      this.size += b.length;
+    } else {
+      for (let i = 0; i < b.length; i++) this.small.push(b[i] & 0xff);
+      this.size += b.length;
+    }
   }
   str(s: string) {
     this.bytes(latin1ToBytes(s));
   }
   get length() {
-    return this.chunks.length;
+    return this.size;
   }
   toUint8Array() {
-    return Uint8Array.from(this.chunks);
+    this.flush();
+    if (this.parts.length === 1) return this.parts[0].slice();
+    const out = new Uint8Array(this.size);
+    let at = 0;
+    for (const p of this.parts) {
+      out.set(p, at);
+      at += p.length;
+    }
+    return out;
+  }
+  private flush() {
+    if (this.small.length) this.parts.push(Uint8Array.from(this.small));
+    this.small = [];
   }
 }
 

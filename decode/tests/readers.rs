@@ -89,6 +89,16 @@ fn voc_sound(divisor: u8, pcm: &[u8]) -> (u8, Vec<u8>) {
     (1, [&[divisor, 0][..], pcm].concat())
 }
 
+/// A VOC 1.20 sound block (type 9): rate, bits, channels, codec, four reserved bytes, the samples.
+fn voc_new(rate: u32, bits: u8, channels: u8, codec: u16, pcm: &[u8]) -> (u8, Vec<u8>) {
+    let mut body = rate.to_le_bytes().to_vec();
+    body.extend([bits, channels]);
+    body.extend(codec.to_le_bytes());
+    body.extend([0; 4]);
+    body.extend(pcm);
+    (9, body)
+}
+
 fn voc_silence(samples: u16, divisor: u8) -> (u8, Vec<u8>) {
     let [lo, hi] = (samples - 1).to_le_bytes();
     (3, vec![lo, hi, divisor])
@@ -245,6 +255,23 @@ fn a_voc_extended_block_sets_the_rate_and_silence_keeps_its_duration() {
 }
 
 #[test]
+fn a_voc_reads_version_1_20_sound_in_8_and_16_bits_mono_and_stereo() {
+    let bytes = voc(&[voc_new(44100, 8, 1, 0, &[128, 192]), (2, vec![64])]);
+    let s = sound("a.voc", &bytes, Channel::Mix);
+    assert_eq!((s.rate_hz, s.channels, s.encoding), (44100, 1, Encoding::U8));
+    assert_eq!(s.samples().collect::<Vec<_>>(), [0.0, 0.5, -0.5]);
+    // Two frames of left and right, then silence at 10,000 Hz (divisor 156) that keeps its
+    // duration at 20,000 Hz: two frames of it.
+    let pcm = i16s(&[16384, -16384, 0, 8192]);
+    let bytes = voc(&[voc_new(20000, 16, 2, 4, &pcm), voc_silence(1, 156)]);
+    for (channel, want) in [(Channel::Left, [0.5, 0.0]), (Channel::Right, [-0.5, 0.25])] {
+        let s = sound("a.voc", &bytes, channel);
+        assert_eq!((s.rate_hz, s.channels, s.encoding), (20000, 2, Encoding::I16));
+        assert_eq!(s.samples().collect::<Vec<_>>(), [want[0], want[1], 0.0, 0.0], "{channel:?}");
+    }
+}
+
+#[test]
 fn a_voc_says_what_it_does_not_read() {
     let cases = [
         (
@@ -257,7 +284,13 @@ fn a_voc_says_what_it_does_not_read() {
             "VOC: stereo sound at byte 26 is not supported",
         ),
         (voc(&[(1, vec![156, 4, 0, 0])]), "VOC: codec 4 at byte 26 is not supported"),
-        (voc(&[(9, vec![0; 12])]), "VOC: block type 9 at byte 26 is not supported"),
+        (voc(&[voc_new(44100, 8, 1, 2, &[1])]), "VOC: codec 2 of 8 bits at byte 26 is not supported"),
+        (voc(&[voc_new(44100, 16, 3, 4, &[1])]), "VOC: 3 channels at byte 26 is not supported"),
+        (
+            voc(&[voc_sound(156, &[1]), voc_new(10000, 16, 1, 4, &[0, 0])]),
+            "VOC: a change of sample format at byte 33 is not supported",
+        ),
+        (voc(&[(10, vec![0])]), "VOC: block type 10 at byte 26 is not supported"),
         (voc(&[(5, b"text\0".to_vec())]), "VOC: there is no sound"),
     ];
     for (bytes, message) in cases {

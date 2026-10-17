@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import { Side, active, theme, themePinned, cycleTheme } from '../state/store';
-import { COMMANDS, Command, CommandId, commandEnabled, commandKey, commandLabel, runCommand } from '../state/commands';
+import { COMMANDS, Command, CommandId, commandEnabled, commandKey, commandLabel, desktopOnly, runCommand } from '../state/commands';
 import { IconBtn } from './icons';
 
 export interface MenuItem {
@@ -59,8 +59,21 @@ function Menu({ title, items, open, onOpen, onClose }: { title: string; items: M
 // A separator, a command id, or a command with a label override.
 type Entry = CommandId | { id: CommandId; label?: string } | 'sep';
 
+const entryId = (e: Entry): CommandId | null => (e === 'sep' ? null : typeof e === 'string' ? e : e.id);
+
+/** `entries` without the given ids, and without the separators that leaves at an end or doubled. */
+function without(entries: Entry[], drop: (id: CommandId) => boolean): Entry[] {
+  const kept = entries.filter((e) => {
+    const id = entryId(e);
+    return id === null || !drop(id);
+  });
+  return kept.filter((e, i, a) => !(e === 'sep' && (i === 0 || i === a.length - 1 || a[i - 1] === 'sep')));
+}
+
+const isDesktopOnly = (id: CommandId) => (COMMANDS[id] as Command).enabled === desktopOnly;
+
 function items(side: Side, entries: Entry[]): MenuItem[] {
-  return entries.map((e) => {
+  return without(entries, isDesktopOnly).map((e) => {
     if (e === 'sep') return { sep: true };
     const id = typeof e === 'string' ? e : e.id;
     const c: Command = COMMANDS[id];
@@ -97,6 +110,7 @@ export const MENUS: [string, Entry[]][] = [
   ]],
   ['Tape', [
     'programs', 'tape-info', 'consistency', 'sep',
+    'redecode', 'redecode-stretch', 'decode-signal', 'sep',
     'compare', 'find-match', 'clear-compare', 'sep',
     'toggle-lock',
   ]],
@@ -120,7 +134,7 @@ export function paneMenu(side: Side): MenuItem[] {
     'new', 'insert-file', 'sep',
     'save-as', 'save-tap', 'export-wav', 'sep',
     'play', 'play-selection', 'sep',
-    'consistency',
+    'consistency', 'redecode',
   ]);
 }
 
@@ -132,7 +146,8 @@ export function contextMenu(side: Side): MenuItem[] {
     'insert', 'group', 'toggle-collapse', 'sep',
     'select-program', 'extract', 'sep',
     { id: 'play-cursor', label: 'Play from here' },
-    { id: 'emu-cursor', label: commandLabel('emu-cursor', side).replace('from cursor', 'from here') },
+    { id: 'emu-cursor', label: commandLabel('emu-cursor', side).replace('from cursor', 'from here') }, 'sep',
+    'decode-signal', 'redecode-stretch',
   ]);
 }
 
@@ -141,7 +156,7 @@ const THEME_IDS: Entry[] = ['theme-light', 'theme-dark', 'theme-system'];
 /** The menus as shown: a pinned theme (`?theme=`) is the embedding page's to switch, so its items go. */
 const SHOWN_MENUS: [string, Entry[]][] = !themePinned ? MENUS : MENUS.map(([title, entries]) => [
   title,
-  entries.filter((e) => !THEME_IDS.includes(e)).filter((e, i, a) => !(e === 'sep' && (i === 0 || a[i - 1] === 'sep'))),
+  without(entries, (id) => THEME_IDS.includes(id)),
 ]);
 
 export function MenuBar() {

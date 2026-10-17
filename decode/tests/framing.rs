@@ -2,7 +2,8 @@
 // Copyright (C) 2026 AJ Banck
 
 //! Standard blocks read from pulses: tapes played by `tapeti-core` and decoded back, clean and
-//! distorted inside the ROM's windows, with the stretches no reader takes kept as raw signal.
+//! distorted inside the ROM's windows, with the stretches no reader takes kept as raw signal or
+//! played as pauses.
 
 mod common;
 
@@ -10,7 +11,8 @@ use common::{clicks, jitter, lengths, pulses, speed, wobble};
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{block_duration, TSTATES_PER_SEC};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, decode_pulses, DecodeError, Decoded, Finding};
+use tapeti_decode::entry::{decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding};
+use tapeti_decode::fallback::{sort, Part, TONE_RUN};
 use tapeti_decode::framing::{bit_timeout, leader_pair, pilot_pulse, ONE_ABOVE, PILOT_PULSE_MOST};
 use tapeti_decode::pulses::{of_blocks, Pulse};
 use tapeti_decode::readers::Channel;
@@ -100,37 +102,114 @@ fn wobble_and_jitter_inside_the_windows_still_read_in_full() {
 
 #[test]
 fn a_tape_too_fast_for_the_rom_is_kept_as_raw_signal_of_the_same_length() {
-    // At 70% speed a pilot pair (3,035 T) is too short for the leader loop.
+    // At 70% speed a pilot pair (3,035 T) is too short for the leader loop. Each block is still a
+    // tone with a payload, kept as raw signal, and the silence between two is its pause.
     let blocks = tape();
     let fast = speed(&of_blocks(&blocks).unwrap(), 0.7);
     let got = decode(&fast);
     assert!(datas(&got.blocks).is_empty());
+    assert_eq!(got.blocks.len(), blocks.len());
+    assert!(got.blocks.iter().all(|b| matches!(b.body, Body::Csw { pause: 1.., .. })));
     let total: f64 = fast.iter().map(|p| p.tstates).sum();
-    // On a T-state grid each pulse is rounded to a whole one.
+    // On a T-state grid each pulse is rounded to a whole T-state, each pause to a millisecond.
     let kept: u64 = got.blocks.iter().map(block_duration).sum();
-    assert!((kept as f64 - total).abs() <= 0.5 * fast.len() as f64, "{kept} against {total}");
-    assert_eq!(got.findings, vec![Finding::RawSignal { block: 0 }]);
+    let most = 0.5 * fast.len() as f64 + 1750.0 * blocks.len() as f64;
+    assert!((kept as f64 - total).abs() <= most, "{kept} against {total}");
+    assert_eq!(got.findings, (0..blocks.len()).map(|block| Finding::RawSignal { block }).collect::<Vec<_>>());
 }
 
 #[test]
-fn a_stretch_between_blocks_is_kept_as_it_is() {
+fn a_stretch_between_blocks_with_no_blocks_shape_is_part_of_the_pause() {
     let junk = [300u16, 5000, 777, 12000, 50];
     let [h, d] = code_pair(b"between   ", 20, 9);
-    let first = standard(
-        0,
-        match &h.body {
-            Body::Standard { data, .. } => data.clone(),
-            _ => unreachable!(),
-        },
-    );
-    let blocks = vec![first.clone(), Block::new(Body::PulseSeq { pulses: junk.to_vec() }), d.clone()];
+    let mut blocks = vec![h, Block::new(Body::PulseSeq { pulses: junk.to_vec() }), d];
     let got = decode(&of_blocks(&blocks).unwrap());
-    assert_eq!(got.blocks.len(), 3);
-    assert_eq!(got.blocks[0], first);
+    // The header's second and the junk's 18,127 T (5 ms).
+    if let Body::Standard { pause, .. } = &mut blocks[0].body {
+        *pause += 5;
+    }
+    blocks.remove(1);
+    assert_eq!(got.blocks, blocks);
+    assert!(matches!(got.findings[..], [Finding::Collapsed { block: 0, pulses: 5.. }]), "{:?}", got.findings);
+}
+
+#[test]
+fn a_block_shaped_stretch_between_blocks_is_kept_as_it_is() {
+    // A turbo block the ROM cannot read: a tone with a payload.
+    let turbo = Block::new(Body::Turbo {
+        pilot: 1500,
+        sync1: 400,
+        sync2: 450,
+        zero: 500,
+        one: 1000,
+        pilot_len: 600,
+        used_bits: 8,
+        pause: 1000,
+        data: vec![0x5A, 0x00, 0xC3, 0xFF],
+    });
+    let [h, d] = code_pair(b"between   ", 20, 9);
+    let got = decode(&of_blocks(&[h.clone(), turbo.clone(), d.clone()]).unwrap());
+    assert_eq!(got.blocks.len(), 3, "{:?}", got.blocks);
+    assert_eq!(got.blocks[0], h);
     assert_eq!(got.blocks[2], d);
+    // Every pulse as it was, but the first pilot pulse, which the silence before it ends, and the
+    // pause; and the whole as long to a millisecond.
     let played = lengths(&of_blocks(&got.blocks[1..2]).unwrap());
-    assert_eq!(played, junk.iter().map(|&t| u64::from(t)).collect::<Vec<_>>());
+    let want = lengths(&of_blocks(std::slice::from_ref(&turbo)).unwrap());
+    let inner = &want[1..want.len() - 1];
+    assert!(played.windows(inner.len()).any(|w| w == inner));
+    let (kept, was) = (block_duration(&got.blocks[1]), block_duration(&turbo));
+    assert!(kept.abs_diff(was) <= 3500, "{kept} against {was}");
     assert_eq!(got.findings, vec![Finding::RawSignal { block: 1 }]);
+}
+
+/// A second of silence, 200 pilot half-waves, `tail`, and a second of silence.
+fn tone_then(tail: &[u64]) -> Vec<Pulse> {
+    let mut l = vec![3_500_000];
+    l.extend([2168; 200]);
+    l.extend(tail);
+    l.push(3_500_000);
+    pulses(&l)
+}
+
+#[test]
+fn a_burst_is_kept_only_block_shaped() {
+    let n = |t: u64, n: usize| vec![t; n];
+    let gap = |p: &[Pulse]| vec![Part::Gap(0..p.len())];
+    let kept =
+        |p: &[Pulse]| vec![Part::Gap(0..1), Part::Signal(1..p.len() - 1), Part::Gap(p.len() - 1..p.len())];
+    // A tone with nothing behind it is an orphan, which no loader loads.
+    let p = tone_then(&[]);
+    assert_eq!(sort(&p, 0), gap(&p));
+    // With TONE_RUN faster pulses behind it, it has a payload; with one fewer, it has none.
+    let p = tone_then(&n(1710, TONE_RUN));
+    assert_eq!(sort(&p, 0), kept(&p));
+    let p = tone_then(&n(1710, TONE_RUN - 1));
+    assert_eq!(sort(&p, 0), gap(&p));
+    // Behind a pair that ends the tone, pulses under nine tenths of it (1,951 T) are a payload, and
+    // pulses over it a second tone.
+    let p = tone_then(&[[1200, 1200].as_slice(), &n(1900, TONE_RUN)].concat());
+    assert_eq!(sort(&p, 0), kept(&p));
+    let p = tone_then(&[[1200, 1200].as_slice(), &n(2000, TONE_RUN)].concat());
+    assert_eq!(sort(&p, 0), gap(&p));
+    // A tone is within ±10%: the ROM's pilot does not run on into its 1 bits.
+    let p = tone_then(&[n(1710, TONE_RUN), n(2168, TONE_RUN), n(855, TONE_RUN)].concat());
+    assert_eq!(sort(&p, 0), kept(&p));
+}
+
+#[test]
+fn quiet_pulses_and_long_ones_are_gaps_and_kept_pulses_are_signal() {
+    let mut p = tone_then(&[1710; 2 * TONE_RUN]);
+    // A quiet stretch between the tone and its payload: neither side is block-shaped.
+    for q in &mut p[195..201] {
+        q.quiet = true;
+    }
+    assert_eq!(sort(&p, 0), vec![Part::Gap(0..p.len())]);
+    // What the caller keeps is signal whatever it is.
+    assert_eq!(sort(&p, 3), vec![Part::Signal(0..3), Part::Gap(3..p.len())]);
+    // Past 65,535 T a pulse is a gap even inside a burst.
+    let p = pulses(&[[2168; 100].as_slice(), &[65536], &[2168; 100]].concat());
+    assert_eq!(sort(&p, 0), vec![Part::Gap(0..p.len())]);
 }
 
 #[test]
@@ -202,7 +281,7 @@ fn a_long_silence_is_a_pause_and_pause_blocks() {
     // One silence of 100 s after the block.
     let tail = p.pop().unwrap();
     let start = tail.start;
-    p.push(Pulse { tstates: 100.0 * f64::from(TSTATES_PER_SEC) - 3500.0, start });
+    p.push(Pulse { tstates: 100.0 * f64::from(TSTATES_PER_SEC) - 3500.0, start, quiet: false });
     let got = decode(&p);
     assert!(matches!(got.blocks[0].body, Body::Standard { pause: 65535, .. }));
     assert_eq!(got.blocks[1].body, Body::Pause { pause: 34465 });
@@ -270,12 +349,84 @@ fn a_set_cancel_flag_stops_the_decode() {
     assert_eq!(got, Err(DecodeError::Cancelled));
 }
 
+/// A cancel set while the edges of a long recording are being found ends the decode then: the
+/// samples stop, so no pass over them runs to the end. With the flag set from the start, ten
+/// minutes of tone come back cancelled at once, where reading them takes seconds.
 #[test]
-fn progress_comes_after_every_block() {
+fn a_set_cancel_flag_stops_the_edge_detector() {
+    use tapeti_core::audio::encode_wav;
+    let rate = 11025;
+    let tone: Vec<f32> = (0..rate * 600).map(|i| if i / 7 % 2 == 0 { 0.5 } else { -0.5 }).collect();
+    let wav = encode_wav(&tone, rate as u32, 8);
+    let no_zlib = |_: &[u8]| -> Result<Vec<u8>, String> { Err("none".into()) };
+    let started = std::time::Instant::now();
+    let got = decode_file(
+        "t.wav",
+        &wav,
+        Channels::Only(Channel::Mix),
+        Filter::None,
+        None,
+        &no_zlib,
+        &mut |_| {},
+        &AtomicBool::new(true),
+    );
+    assert_eq!(got, Err(DecodeError::Cancelled));
+    assert!(started.elapsed().as_millis() < 500, "took {:?}", started.elapsed());
+}
+
+#[test]
+fn progress_comes_after_every_block_and_at_the_end() {
     let p = of_blocks(&tape()).unwrap();
     let mut seen = Vec::new();
-    decode_pulses(&p, TSTATES_PER_SEC, &mut |g| seen.push(g.blocks), &AtomicBool::new(false)).unwrap();
-    assert_eq!(seen, (1..=6).collect::<Vec<_>>());
+    decode_pulses(&p, TSTATES_PER_SEC, &mut |g| seen.push((g.blocks, g.done)), &AtomicBool::new(false))
+        .unwrap();
+    let blocks: Vec<usize> = seen.iter().map(|s| s.0).collect();
+    assert_eq!(blocks, [1, 2, 3, 4, 5, 6, 6]);
+    assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1), "{seen:?}");
+    assert_eq!(seen.last().unwrap().1, 1.0);
+}
+
+/// Sampled audio reports how far the edge detector has come before any block is read, and a
+/// stereo recording read for the best channel counts its three decodes as one.
+#[test]
+fn progress_counts_the_edge_detector_and_every_channel() {
+    use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
+    let blocks = tape();
+    let order = playback_order(&blocks, FlowOptions::default());
+    let mono = render_tape(&blocks, RenderOptions { sample_rate: 44100, mic: true, amplitude: 0.5 }, &order);
+    let no_zlib = |_: &[u8]| -> Result<Vec<u8>, String> { Err("none".into()) };
+    let run = |wav: &[u8]| {
+        let mut seen = Vec::new();
+        let mut progress = |g: tapeti_decode::entry::Progress| seen.push((g.blocks, g.done));
+        decode_file(
+            "t.wav",
+            wav,
+            Channels::Best,
+            Filter::None,
+            None,
+            &no_zlib,
+            &mut progress,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        seen
+    };
+
+    let seen = run(&encode_wav(&mono, 44100, 16));
+    assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1), "never goes back: {seen:?}");
+    assert!(seen[0].0 == 0 && seen[0].1 > 0.0, "the edge detector reports first: {seen:?}");
+    assert_eq!(*seen.last().unwrap(), (6, 1.0));
+
+    let stereo: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
+    let mut wav = encode_wav(&stereo, 44100, 16);
+    wav[22] = 2; // two channels: the same samples, read as pairs
+    wav[28..32].copy_from_slice(&(44100u32 * 4).to_le_bytes());
+    wav[32] = 4;
+    let seen = run(&wav);
+    assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1 && w[0].0 <= w[1].0), "never goes back: {seen:?}");
+    let third = seen.iter().position(|s| s.1 > 2.0 / 3.0).expect("the third decode reports");
+    assert_eq!(seen[third - 1], (6, 2.0 / 3.0), "each decode is a third, ending on its blocks");
+    assert_eq!(*seen.last().unwrap(), (6, 1.0));
 }
 
 #[test]
@@ -290,7 +441,7 @@ fn a_wav_decodes_through_the_file_entry_point() {
     let got = decode_file(
         "t.wav",
         &wav,
-        Channel::Mix,
+        Channels::Only(Channel::Mix),
         Filter::None,
         None,
         &no_zlib,

@@ -49,6 +49,15 @@ pub enum Then {
     EmulatorGo(Side, Scope),
     /// Carry on quitting: the next tape with unsaved changes, or the door.
     Quit,
+    /// Decode a recording whose memory estimate the user has now agreed to.
+    Decode(crate::state::RecordingRequest),
+    /// Put a finished decode into a pane that was edited while it ran.
+    LoadDecoded {
+        side: Side,
+        name: String,
+        blocks: Vec<tapeti_core::types::Block>,
+        recording: Box<crate::state::Recording>,
+    },
 }
 
 pub fn run_then(app: &mut App, then: Then) {
@@ -59,6 +68,13 @@ pub fn run_then(app: &mut App, then: Then) {
         Then::ExtractGo(side) => extract_go(app, side),
         Then::EmulatorGo(side, scope) => launch_emulator(app, side, scope),
         Then::Quit => quit(app, false),
+        Then::Decode(request) => {
+            app.store.recordings.push(crate::state::RecordingRequest { confirmed: true, ..request })
+        }
+        Then::LoadDecoded { side, name, blocks, recording } => {
+            app.store.tape_mut(side).load_unsaved(name, blocks, Some(*recording));
+            app.store.active = side;
+        }
     }
 }
 

@@ -32,6 +32,16 @@ pub enum Need {
     Playing,
     /// Needs the cursor on a group or loop start.
     Collapsible,
+    /// Needs a tape decoded from a recording that is still there to read, and no
+    /// decode already on its way into the pane. This and the next two are the
+    /// desktop app's alone: the browser keeps no recording, and `commands.ts` marks
+    /// them `desktopOnly`.
+    Recording,
+    /// Needs a selection that is one run of blocks whose place in the recording is
+    /// known, and no decode on its way into the pane.
+    Stretch,
+    /// Needs a selection that is one run of blocks with undecoded signal in it.
+    Signal,
 }
 
 /// The state the enabled rules ask about.
@@ -44,6 +54,9 @@ pub struct MenuState {
     pub clipboard: bool,
     pub playing: bool,
     pub collapsible: bool,
+    pub recording: bool,
+    pub stretch: bool,
+    pub signal: bool,
 }
 
 impl Need {
@@ -57,6 +70,9 @@ impl Need {
             Need::Clipboard => s.clipboard,
             Need::Playing => s.playing,
             Need::Collapsible => s.collapsible,
+            Need::Recording => s.recording,
+            Need::Stretch => s.stretch,
+            Need::Signal => s.signal,
         }
     }
 }
@@ -89,7 +105,7 @@ const fn sep() -> Item {
     Item { id: "", label: "", keys: "", check: false, need: Need::Always }
 }
 
-use Need::{Always, Blocks, Clipboard, Collapsible, Cursor, Playing, Redo, Undo};
+use Need::{Always, Blocks, Clipboard, Collapsible, Cursor, Playing, Recording, Redo, Signal, Stretch, Undo};
 
 /// The one grouping, on every platform and in the browser: `MENUS` in
 /// `web/src/ui/MenuBar.tsx` lists the same ids under the same titles, and
@@ -157,6 +173,10 @@ pub const MENUS: &[MenuDef] = &[
             cmd("tape-info", "Tape Info", "CmdOrCtrl+I", Blocks),
             cmd("consistency", "Check Consistency", "CmdOrCtrl+K", Blocks),
             sep(),
+            cmd("redecode", "Decode Recording Again…", "", Recording),
+            cmd("redecode-stretch", "Decode This Stretch Again…", "", Stretch),
+            cmd("decode-signal", "Decode Signal into Blocks…", "", Signal),
+            sep(),
             cmd("compare", "Compare Tapes", "", Always),
             cmd("find-match", "Find Match", "CmdOrCtrl+F", Cursor),
             cmd("clear-compare", "Clear Compare Marks", "", Always),
@@ -214,6 +234,7 @@ pub const PANE_MENU: &[&str] = &[
     "play-selection",
     "",
     "consistency",
+    "redecode",
 ];
 
 /// Flat index of every item, the order `menu.rs` addresses them in.

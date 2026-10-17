@@ -5,12 +5,13 @@
 //!
 //! Kept whole, sampled audio (WAV, VOC, IFF) goes into Direct Recording blocks, a CSW file into a
 //! CSW block as it is, and an OUT trace into a CSW block at 3.5 MHz. Decoded, standard blocks are
-//! read as the ROM reads them and every stretch between them is kept as raw signal.
+//! read as the ROM reads them, and what lies between them is kept as raw signal where it is shaped
+//! like a block and plays as their pause where it is not.
 
 use crate::capture::{
     csw_block, csw_of_tstates, direct_recording, spacing, tzx_size, MAX_BLOCK_BYTES, MAX_CSW_RATE,
 };
-use crate::fallback::raw_signal;
+use crate::fallback::{raw_signal, sort, Part};
 use crate::framing::{next_block, PILOT_PULSE_MOST};
 use crate::pulses::{from_runs, from_tstates, Pulse};
 use crate::readers::{read, Channel, Csw, ReadError, Recording, Sound};
@@ -204,8 +205,11 @@ fn no_sound() -> ImportError {
 }
 
 fn spacing_for(rate_hz: u32) -> Result<u16, ImportError> {
-    spacing(rate_hz)
-        .ok_or_else(|| ImportError::Unsupported(format!("a sample rate of {rate_hz} Hz is too low")))
+    spacing(rate_hz).ok_or_else(|| {
+        // Over twice the clock a sample is under half a T-state, which rounds to none.
+        let side = if f64::from(rate_hz) > 2.0 * f64::from(TSTATES_PER_SEC) { "high" } else { "low" };
+        ImportError::Unsupported(format!("a sample rate of {rate_hz} Hz is too {side}"))
+    })
 }
 
 fn csw_rate(c: &Csw) -> Result<(), ImportError> {
@@ -252,6 +256,51 @@ pub enum Finding {
     Short { block: usize, expected: usize, read: usize },
     /// A stretch no reader took, kept as raw signal.
     RawSignal { block: usize },
+    /// Pulses in a gap, dead air or not shaped like a block, played as the pause of the block
+    /// that holds them.
+    Collapsed { block: usize, pulses: usize },
+    /// Silence before the first block, `ms` long, left out: it holds nothing but its length,
+    /// and a tape starts with its first block.
+    LeadIn { ms: u64 },
+    /// Of a stereo recording's mix and its two channels, the decode of `kept` delivers most.
+    Channel { kept: Channel },
+}
+
+impl Finding {
+    /// The block it is about; `None` for the recording as a whole.
+    pub fn block(&self) -> Option<usize> {
+        match *self {
+            Finding::BadChecksum { block }
+            | Finding::Short { block, .. }
+            | Finding::RawSignal { block }
+            | Finding::Collapsed { block, .. } => Some(block),
+            Finding::LeadIn { .. } | Finding::Channel { .. } => None,
+        }
+    }
+
+    /// What it says, in words, without the block it is about.
+    pub fn text(&self) -> String {
+        match *self {
+            Finding::BadChecksum { .. } => "The checksum does not match the bytes.".into(),
+            Finding::Short { expected, read, .. } => {
+                format!("The header asks for {expected} bytes; the signal holds {read}.")
+            }
+            Finding::RawSignal { .. } => "Kept as raw signal.".into(),
+            Finding::Collapsed { pulses, .. } => {
+                format!("The pause held {pulses} pulses of noise; they play as silence.")
+            }
+            Finding::LeadIn { ms } => {
+                format!("lead-in: {:.1} s of silence before the first block, left out", ms as f64 / 1000.0)
+            }
+            Finding::Channel { kept: Channel::Mix } => {
+                "Read from both channels mixed: neither alone reads more.".into()
+            }
+            Finding::Channel { kept } => format!(
+                "Read from the {} channel: of the mix and each channel alone, it reads the most.",
+                if kept == Channel::Left { "left" } else { "right" }
+            ),
+        }
+    }
 }
 
 /// A decoded recording.
@@ -263,6 +312,10 @@ pub struct Decoded {
     pub findings: Vec<Finding>,
     /// The source's samples a second: 3,500,000 for T-states.
     pub rate_hz: u32,
+    /// How many pulses before the first block read, and after the last, were not a plain pause
+    /// and went into one or the lead-in all the same ([`Finding::Collapsed`]). A decode of part
+    /// of a recording that begins or ends inside a neighbour cuts that neighbour there.
+    pub collapsed_ends: [usize; 2],
 }
 
 /// How far a decode has come.
@@ -270,8 +323,19 @@ pub struct Decoded {
 pub struct Progress {
     pub pulses_read: usize,
     pub pulses: usize,
+    /// Blocks read so far; for [`Channels::Best`], the most any channel's decode has read yet.
     pub blocks: usize,
+    /// The share of the whole decode done, from 0 to 1. Finding the edges in sampled audio takes
+    /// most of the time, before any block is read, and is counted in it.
+    pub done: f32,
 }
+
+/// The share of a decode of sampled audio taken by finding its edges: they are found in about
+/// 97 % of the time (a five-minute WAV at 44.1 kHz in 0.39 of 0.40 s).
+const EDGES_SHARE: f32 = 0.95;
+
+/// The samples a pass reads between two reports of how far the edge detector has come.
+const REPORT_EVERY: usize = 1 << 16;
 
 /// Why a decode ended without a result.
 #[derive(Clone, Debug, PartialEq)]
@@ -298,44 +362,130 @@ impl From<ImportError> for DecodeError {
     }
 }
 
+/// Which channel of a stereo recording a decode reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Channels {
+    /// The mix, the left and the right channel each in turn, keeping the decode that delivers
+    /// most ([`crate::channels`]).
+    #[default]
+    Best,
+    Only(Channel),
+}
+
 /// Decodes a recording file.
 ///
 /// CSW and OUT go by their pulses, sampled audio by the edges the edge detector finds in it,
-/// after `filter`. `window` keeps only the pulses that start inside it, in seconds.
+/// after `filter`. `window` keeps only the pulses that start inside it, in the source's samples
+/// as [`Pulse::start`] counts them; positions stay those of the whole file. A stereo recording
+/// read for [`Channels::Best`] is decoded three times, each a third of [`Progress::done`].
 #[allow(clippy::too_many_arguments)]
 pub fn decode_file(
     name: &str,
     bytes: &[u8],
-    channel: Channel,
+    channels: Channels,
     filter: Filter,
-    window: Option<(f64, f64)>,
+    window: Option<std::ops::Range<f64>>,
     inflate: Inflate,
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<Decoded, DecodeError> {
-    let (pulses, rate_hz) = match read(name, bytes, channel).map_err(ImportError::from)? {
+    let stereo = matches!(read(name, bytes, Channel::Mix), Ok(Recording::Sound(s)) if s.channels == 2);
+    let channel = match channels {
+        Channels::Only(channel) => channel,
+        Channels::Best if stereo => {
+            return best_channel(
+                |channel, progress| {
+                    decode_channel(name, bytes, channel, filter, window.clone(), inflate, progress, cancel)
+                },
+                progress,
+            );
+        }
+        Channels::Best => Channel::Mix,
+    };
+    decode_channel(name, bytes, channel, filter, window, inflate, progress, cancel)
+}
+
+/// The decode `decode` makes of the mix, the left or the right channel that delivers most. A
+/// channel that cannot be decoded delivers nothing; when none can, the mix's error stands.
+fn best_channel(
+    mut decode: impl FnMut(Channel, &mut dyn FnMut(Progress)) -> Result<Decoded, DecodeError>,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Decoded, DecodeError> {
+    const ORDER: [Channel; 3] = [Channel::Mix, Channel::Left, Channel::Right];
+    let mut decodes = Vec::with_capacity(ORDER.len());
+    let mut most = 0;
+    for (i, channel) in ORDER.into_iter().enumerate() {
+        let got = decode(channel, &mut |p| {
+            most = most.max(p.blocks);
+            let done = (i as f32 + p.done) / ORDER.len() as f32;
+            progress(Progress { blocks: most, done, ..p });
+        });
+        match got {
+            Err(DecodeError::Cancelled) => return Err(DecodeError::Cancelled),
+            got => decodes.push(got),
+        }
+    }
+    if decodes.iter().all(Result::is_err) {
+        return decodes.swap_remove(0);
+    }
+    let views: Vec<&[Block]> =
+        decodes.iter().map(|d| d.as_ref().map_or(&[][..], |d| &d.blocks[..])).collect();
+    let i = crate::channels::pick(&views);
+    let mut kept = decodes.swap_remove(i)?;
+    kept.findings.insert(0, Finding::Channel { kept: ORDER[i] });
+    Ok(kept)
+}
+
+/// Decodes `channel` of a recording file, as [`decode_file`] says.
+#[allow(clippy::too_many_arguments)]
+fn decode_channel(
+    name: &str,
+    bytes: &[u8],
+    channel: Channel,
+    filter: Filter,
+    window: Option<std::ops::Range<f64>>,
+    inflate: Inflate,
+    progress: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<Decoded, DecodeError> {
+    let (pulses, rate_hz, sound_read) = match read(name, bytes, channel).map_err(ImportError::from)? {
         Recording::Sound(sound) => {
-            let found =
-                edges::detect(|| sound.samples(), sound.rate_hz, filter).map_err(ImportError::Filter)?;
-            (edges::pulses(&found, sound.rate_hz, sound.len()), sound.rate_hz)
+            // The samples run out when the flag is set, so a cancel ends the edge detector's
+            // passes over a long recording too, not just the reading of blocks after them. They
+            // are counted as they go, against the three passes the detector makes at most.
+            let read = std::cell::Cell::new(0usize);
+            let all = (3 * sound.len()).max(1);
+            let report = std::cell::RefCell::new(&mut *progress);
+            let samples = || {
+                sound.samples().take_while(|_| !cancel.load(Ordering::Relaxed)).inspect(|_| {
+                    read.set(read.get() + 1);
+                    if read.get().is_multiple_of(REPORT_EVERY) {
+                        let done = EDGES_SHARE * (read.get().min(all) as f32 / all as f32);
+                        (report.borrow_mut())(Progress { pulses_read: 0, pulses: 0, blocks: 0, done });
+                    }
+                })
+            };
+            let pulses = edges::detect_pulses(samples, sound.rate_hz, filter).map_err(ImportError::Filter)?;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(DecodeError::Cancelled);
+            }
+            (pulses, sound.rate_hz, true)
         }
         Recording::Csw(c) => {
             csw_rate(&c)?;
-            (from_runs(&csw_runs(&c, inflate)?, c.rate_hz), c.rate_hz)
+            (from_runs(&csw_runs(&c, inflate)?, c.rate_hz), c.rate_hz, false)
         }
-        Recording::Out(lengths) => (from_tstates(&lengths), TSTATES_PER_SEC),
+        Recording::Out(lengths) => (from_tstates(&lengths), TSTATES_PER_SEC, false),
     };
     let pulses = match window {
-        Some((from, to)) => {
-            let inside = |p: &Pulse| (from..to).contains(&(p.start / f64::from(rate_hz)));
-            pulses.into_iter().filter(inside).collect()
-        }
+        Some(window) => pulses.into_iter().filter(|p| window.contains(&p.start)).collect(),
         None => pulses,
     };
     if pulses.is_empty() {
         return Err(no_sound().into());
     }
-    decode_pulses(&pulses, rate_hz, progress, cancel)
+    let from = if sound_read { EDGES_SHARE } else { 0.0 };
+    decode_pulses_from(&pulses, rate_hz, progress, cancel, from)
 }
 
 /// The T-states a pause opens with: TZX plays one as 1 ms at the level the block left, then low.
@@ -348,15 +498,33 @@ const MS: f64 = TSTATES_PER_SEC as f64 / 1000.0;
 ///
 /// Standard blocks are read as the ROM reads them ([`crate::framing`]). What lies between two
 /// blocks becomes the first one's pause when it is the most a pause plays, one level or the 1 ms
-/// opening and a second; anything else is kept as raw signal on the grid, nothing dropped. A
-/// block after a header has the header's length; the rest of a longer one is raw signal.
+/// opening and a second; anything else is sorted ([`crate::fallback`]): its gaps play as pauses
+/// and its block-shaped bursts are kept as raw signal on the grid. A block after a header has the
+/// header's length; the rest of a longer one is raw signal.
 pub fn decode_pulses(
     pulses: &[Pulse],
     grid_hz: u32,
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<Decoded, DecodeError> {
-    let mut out = Decoded { blocks: Vec::new(), extents: Vec::new(), findings: Vec::new(), rate_hz: grid_hz };
+    decode_pulses_from(pulses, grid_hz, progress, cancel, 0.0)
+}
+
+/// [`decode_pulses`], with [`Progress::done`] counted on from `from`.
+fn decode_pulses_from(
+    pulses: &[Pulse],
+    grid_hz: u32,
+    progress: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+    from: f32,
+) -> Result<Decoded, DecodeError> {
+    let mut out = Decoded {
+        blocks: Vec::new(),
+        extents: Vec::new(),
+        findings: Vec::new(),
+        rate_hz: grid_hz,
+        collapsed_ends: [0; 2],
+    };
     let grid_t = f64::from(TSTATES_PER_SEC) / f64::from(grid_hz);
     // Where pulse `i` starts on the grid; the end of the last for `i` past it.
     let at = |i: usize| match pulses.get(i) {
@@ -365,8 +533,8 @@ pub fn decode_pulses(
     };
     let mut pos = 0;
     let mut expected = None;
-    // The last block read, until what follows it is settled.
-    let mut open: Option<usize> = None;
+    // Where the bits of the last block read stop, past its end when it ran on.
+    let mut bits_end = 0;
     loop {
         let found = next_block(pulses, pos, expected, cancel);
         if cancel.load(Ordering::Relaxed) {
@@ -382,8 +550,17 @@ pub fn decode_pulses(
                 last.tstates -= b.pilot_half;
             }
         }
-        settle(&mut out, open.take(), &stretch, at(pos), at(stretch_end), grid_hz);
-        let Some(b) = found else { break };
+        let keep = bits_end.clamp(pos, stretch_end) - pos;
+        let collapsed = settle(&mut out, &stretch, keep, at(stretch_end), grid_hz);
+        if pos == 0 {
+            out.collapsed_ends[0] = collapsed;
+        }
+        let Some(b) = found else {
+            if pos > 0 {
+                out.collapsed_ends[1] = collapsed;
+            }
+            break;
+        };
 
         let index = out.blocks.len();
         if b.data.iter().fold(0, |x, &d| x ^ d) != 0 {
@@ -396,49 +573,110 @@ pub fn decode_pulses(
         expected = header_asks(&b.data);
         out.blocks.push(Block::new(Body::Standard { pause: 0, data: b.data }));
         out.extents.push(Extent { start: at(b.tone), end: at(b.end) });
-        open = Some(index);
         pos = b.end;
-        progress(Progress { pulses_read: pos, pulses: pulses.len(), blocks: out.blocks.len() });
+        bits_end = b.bits_end;
+        let done = from + (1.0 - from) * (pos as f32 / pulses.len() as f32);
+        progress(Progress { pulses_read: pos, pulses: pulses.len(), blocks: out.blocks.len(), done });
     }
+    progress(Progress {
+        pulses_read: pulses.len(),
+        pulses: pulses.len(),
+        blocks: out.blocks.len(),
+        done: 1.0,
+    });
     Ok(out)
 }
 
-/// Places the stretch of pulses from `start` to `end` after the block `open`: its pause when the
-/// stretch is pause-shaped, raw signal otherwise. Before any block, a pause-shaped stretch is a
-/// Pause block.
-fn settle(out: &mut Decoded, open: Option<usize>, stretch: &[Pulse], start: f64, end: f64, grid_hz: u32) {
+/// Places `stretch`, which ends at `end`, after the blocks read so far. A pause-shaped stretch is
+/// the last block's pause; any other is sorted, its first `keep` pulses kept as signal. A gap too
+/// short to round to a millisecond is kept with the signal, since a pause of 0 ms is no pause.
+/// Before any block, a gap is the lead-in, left out and reported. How many pulses went into
+/// gaps that are not a plain pause.
+fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, end: f64, grid_hz: u32) -> usize {
+    let at = |k: usize| stretch.get(k).map_or(end, |p| p.start);
+    let length = |r: &std::ops::Range<usize>| stretch[r.clone()].iter().map(|p| p.tstates).sum::<f64>();
     let opening = PAUSE_OPENING + f64::from(TSTATES_PER_SEC) / f64::from(grid_hz);
-    let pause = match stretch {
-        [] => Some(0.0),
-        [a] => Some(a.tstates),
-        // The opening level may be up to one sample of the grid longer than 1 ms.
-        [a, b] if a.tstates <= opening => Some(a.tstates + b.tstates),
+    // A pause as a player leaves it: nothing, one level, or the 1 ms opening and the rest. The
+    // opening level may be up to one sample of the grid longer than 1 ms.
+    let pause_shaped = |p: &[Pulse]| match p {
+        [] | [_] => true,
+        [a, _] => a.tstates <= opening,
+        _ => false,
+    };
+    if keep == 0 && pause_shaped(stretch) {
+        add_pause(out, stretch.iter().map(|p| p.tstates).sum(), at(0), end);
+        return 0;
+    }
+    let mut collapsed = 0;
+    let mut parts: Vec<Part> = Vec::new();
+    for part in sort(stretch, keep) {
+        let part = match part {
+            Part::Gap(r) if ms(length(&r)) == 0 => Part::Signal(r),
+            part => part,
+        };
+        match (parts.last_mut(), part) {
+            (Some(Part::Signal(r)), Part::Signal(n)) => r.end = n.end,
+            (_, part) => parts.push(part),
+        }
+    }
+    for part in parts {
+        match part {
+            Part::Gap(r) => {
+                let held = add_pause(out, length(&r), at(r.start), at(r.end));
+                if !pause_shaped(&stretch[r.clone()]) {
+                    collapsed += r.len();
+                    if let Some(block) = held {
+                        out.findings.push(Finding::Collapsed { block, pulses: r.len() });
+                    }
+                }
+            }
+            Part::Signal(r) => {
+                if let Some(block) = raw_signal(&stretch[r.clone()], grid_hz) {
+                    out.findings.push(Finding::RawSignal { block: out.blocks.len() });
+                    out.blocks.push(block);
+                    out.extents.push(Extent { start: at(r.start), end: at(r.end) });
+                }
+            }
+        }
+    }
+    collapsed
+}
+
+/// `t` T-states in milliseconds, rounded half to even.
+fn ms(t: f64) -> u64 {
+    (t / MS).round_ties_even() as u64
+}
+
+/// Adds a pause of `t` T-states, from `start` to `end`, to the last block, and past what its field
+/// holds as Pause blocks; the block it starts in, if any. Before any block it is the lead-in.
+fn add_pause(out: &mut Decoded, t: f64, start: f64, end: f64) -> Option<usize> {
+    let mut ms = ms(t);
+    let Some(last) = out.blocks.len().checked_sub(1) else {
+        if ms > 0 {
+            out.findings.push(Finding::LeadIn { ms });
+        }
+        return None;
+    };
+    let held = match &mut out.blocks[last].body {
+        Body::Standard { pause, .. } | Body::Csw { pause, .. } | Body::Pause { pause } => Some(pause),
         _ => None,
     };
-    if let Some(t) = pause {
-        // Milliseconds rounded half to even; past what one block's field holds, Pause blocks.
-        let mut ms = (t / MS).round_ties_even() as u64;
-        if let Some(i) = open {
-            let first = ms.min(u64::from(u16::MAX));
-            if let Body::Standard { pause, .. } = &mut out.blocks[i].body {
-                *pause = first as u16;
-            }
-            out.extents[i].end = end;
-            ms -= first;
-        }
-        while ms > 0 {
-            let part = ms.min(u64::from(u16::MAX));
-            out.blocks.push(Block::new(Body::Pause { pause: part as u16 }));
-            out.extents.push(Extent { start, end });
-            ms -= part;
-        }
-        return;
+    let mut first = None;
+    if let Some(pause) = held {
+        let part = ms.min(u64::from(u16::MAX - *pause));
+        *pause += part as u16;
+        ms -= part;
+        out.extents[last].end = end;
+        first = Some(last);
     }
-    if let Some(block) = raw_signal(stretch, grid_hz) {
-        out.findings.push(Finding::RawSignal { block: out.blocks.len() });
-        out.blocks.push(block);
+    while ms > 0 {
+        let part = ms.min(u64::from(u16::MAX));
+        first.get_or_insert(out.blocks.len());
+        out.blocks.push(Block::new(Body::Pause { pause: part as u16 }));
         out.extents.push(Extent { start, end });
+        ms -= part;
     }
+    first
 }
 
 /// The length, flag and checksum included, that a ROM header in `data` asks the next block for.

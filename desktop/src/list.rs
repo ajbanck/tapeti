@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use egui::{pos2, vec2, Align2, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui};
 
-use tapeti_core::consistency::{check_consistency, Issue, Severity};
+use tapeti_core::consistency::{Issue, Severity};
 use tapeti_core::content::content_labels;
 use tapeti_core::describe::{block_length, describe_block, fmt as core_fmt, is_metadata};
 use tapeti_core::types::{block_name, Block, Body};
@@ -89,7 +89,7 @@ fn is_info_row(b: &Block) -> bool {
 }
 
 impl RowCache {
-    fn rebuild(&mut self, blocks: &[Block], hex: bool, zero_based: bool) {
+    fn rebuild(&mut self, blocks: &[Block], issues: Vec<Issue>, hex: bool, zero_based: bool) {
         let kinds = content_labels(blocks);
         let ranges: HashMap<usize, usize> = tapeti_core::programs::group_ranges(blocks)
             .into_iter()
@@ -121,7 +121,7 @@ impl RowCache {
             })
             .collect();
         self.issues.clear();
-        for is in check_consistency(blocks, fmt::block_no(0, zero_based) as i32) {
+        for is in issues {
             if is.block < 0 || is.severity == Severity::Info {
                 continue;
             }
@@ -144,8 +144,9 @@ pub fn refresh(app: &mut App) {
         let zero = app.store.settings.zero_based;
         // Taken out and put back, so the cache can borrow the blocks while the
         // store stays mutable for the rest of the frame.
+        let issues = app.store.tape(side).issues(fmt::block_no(0, zero) as i32);
         let blocks = std::mem::take(&mut app.store.tape_mut(side).blocks);
-        app.rows[side].rebuild(&blocks, hex, zero);
+        app.rows[side].rebuild(&blocks, issues, hex, zero);
         app.store.tape_mut(side).blocks = blocks;
         app.rows[side].built = Some(want);
     }
@@ -274,18 +275,30 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side) {
     let list_rect = out.inner_rect;
 
     if app.store.tape(side).blocks.is_empty() {
+        // An empty pane that a recording is being decoded into says so: the
+        // status bar shows only one decode, and not always this pane's.
+        let decoding = app.recordings.landing_in(side).map(|j| format!("Decoding {}…", j.name));
+        let (title, hint) = match &decoding {
+            Some(title) => {
+                (title.as_str(), "The blocks appear here when the decoder has read the whole recording.")
+            }
+            None => (
+                "No tape loaded",
+                "Drop a TZX or TAP file or a tape recording here, or use the folder button above.",
+            ),
+        };
         let p = ui.painter();
         p.text(
             list_rect.center() - vec2(0.0, 10.0),
             Align2::CENTER_CENTER,
-            "No tape loaded",
+            title,
             FontId::proportional(15.0),
             tok.muted,
         );
         p.text(
             list_rect.center() + vec2(0.0, 12.0),
             Align2::CENTER_CENTER,
-            "Drop a TZX or TAP file here, or use the folder button above.",
+            hint,
             FontId::proportional(12.0),
             tok.faint,
         );

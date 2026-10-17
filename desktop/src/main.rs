@@ -31,6 +31,7 @@ mod macos;
 mod menu;
 mod menutable;
 mod player;
+mod recording;
 mod settings;
 mod shot;
 mod state;
@@ -145,7 +146,8 @@ fn startup_paths(o: &Opts) -> Vec<PathBuf> {
 }
 
 /// The test tape, looked for up the tree from the working directory and from the
-/// crate's manifest, so both `cargo run` and a bundle built here find it.
+/// crate's manifest (the recordings build's sits a level deeper), so both `cargo
+/// run` and a bundle built here find it.
 fn default_tape() -> Option<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {

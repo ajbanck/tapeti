@@ -3,6 +3,7 @@
 
 import { hex, locked, blockCompare, tapeCompare, audioMode, status, toggleLock, fmtTime, blockNo, tapes } from '../state/store';
 import { playing, playingSide, playingBlock, playPos, stopPlayback } from '../state/player';
+import { decoding } from '../state/recordings';
 import { Icon } from './icons';
 
 const BLOCK_MODES = ['data', 'data+timings', 'data+timings+pauses'] as const;
@@ -43,7 +44,20 @@ export function StatusBar() {
       <div class="cell" title="Waveform used for playback and WAV export" onClick={() => (audioMode.value = audioMode.value === 'mic' ? 'square' : 'mic')}>
         <Icon name="wave" size={13} />{audioMode.value === 'mic' ? 'MIC emulation' : 'Square wave'}
       </div>
-      {playing.value ? <PlayProgress /> : <div class="cell grow">{status.value}</div>}
+      {playing.value ? <PlayProgress /> : decoding.value ? <Decoding /> : <div class="cell grow">{status.value}</div>}
+    </div>
+  );
+}
+
+/** A recording being decoded: its name, how far it has come, and the way to stop it. */
+function Decoding() {
+  const d = decoding.value!;
+  const p = d.progress;
+  const blocks = p && (p.blocks === 1 ? ', 1 block so far' : p.blocks ? `, ${p.blocks} blocks so far` : '');
+  return (
+    <div class="cell grow decoding">
+      <span>{p ? `Decoding ${d.name}: ${Math.floor(p.done * 100)}%${blocks}` : status.value}</span>
+      <button onClick={d.cancel}>Cancel</button>
     </div>
   );
 }

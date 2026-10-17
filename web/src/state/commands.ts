@@ -32,6 +32,12 @@ const other = (side: Side): Side => (side === 0 ? 1 : 0);
 const tape = (side: Side) => tapes[side].value;
 const hasBlocks = (side: Side) => tape(side).blocks.length > 0;
 const hasCursor = (side: Side) => !!tape(side).blocks[tape(side).cursor];
+/**
+ * A command only the desktop app runs: decoding again needs the recording, which the browser does
+ * not keep once a tape is decoded. The id stays in the shared table and the menus leave it out
+ * (`MenuBar.tsx`); `desktop/tests/menu.rs` reads this name.
+ */
+export const desktopOnly = (_side: Side) => false;
 
 const MAC_SYMBOLS: Record<string, string> = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Mod: '⌘' };
 
@@ -103,6 +109,9 @@ export const COMMANDS = {
   'programs': { label: 'Programs…', key: fmtKey('Mod+J'), enabled: hasBlocks, run: openProgramPicker },
   'tape-info': { label: 'Tape info', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'tapeinfo', side: s }) },
   'consistency': { label: 'Check consistency', enabled: hasBlocks, run: (s) => (dialog.value = { kind: 'consistency', side: s }) },
+  'redecode': { label: 'Decode recording again…', enabled: desktopOnly, run: () => {} },
+  'redecode-stretch': { label: 'Decode this stretch again…', enabled: desktopOnly, run: () => {} },
+  'decode-signal': { label: 'Decode signal into blocks…', enabled: desktopOnly, run: () => {} },
   'compare': { label: 'Compare tapes', run: () => runCompareTapes() },
   'clear-compare': { label: 'Clear compare marks', run: () => clearCompare() },
   'switch-pane': { label: 'Switch active pane', key: 'Tab', run: (s) => (active.value = other(s)) },

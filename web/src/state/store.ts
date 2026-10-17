@@ -14,7 +14,7 @@ import {
   groupRanges,
   playbackOrder,
 } from '../tzx/core';
-import type { SnapshotInfo, SnapshotKind, FileHashes } from '../tzx/core';
+import type { SnapshotInfo, SnapshotKind, FileHashes, RecordingSummary } from '../tzx/core';
 
 export type Side = 0 | 1;
 
@@ -141,7 +141,8 @@ export type Dialog =
   | { kind: 'confirm'; title: string; lines: string[]; onOk: () => void }
   | { kind: 'emulator' }
   | { kind: 'datafile'; side: Side; name: string; bytes: Uint8Array }
-  | { kind: 'snapshot'; side: Side; name: string; bytes: Uint8Array; format: SnapshotKind; info: SnapshotInfo; insertAtCursor: boolean };
+  | { kind: 'snapshot'; side: Side; name: string; bytes: Uint8Array; format: SnapshotKind; info: SnapshotInfo; insertAtCursor: boolean }
+  | { kind: 'recording'; side: Side; name: string; request: Uint8Array; summary: RecordingSummary; insertAtCursor: boolean };
 export const dialog = signal<Dialog | null>(null);
 
 /** The disassembler's symbol table, as typed. Kept for the session, so closing a data window does not lose it. */

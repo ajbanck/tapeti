@@ -248,6 +248,9 @@ fn what_cannot_be_kept_says_why() {
     let message = |e: ImportError| e.to_string();
     let slow = encode_wav(&[0.0; 10], 50, 16);
     assert_eq!(message(describe("t.wav", &slow, &no_zlib).unwrap_err()), "a sample rate of 50 Hz is too low");
+    let fast = encode_wav(&[0.0; 10], 7_000_001, 16);
+    let refused = message(describe("t.wav", &fast, &no_zlib).unwrap_err());
+    assert_eq!(refused, "a sample rate of 7000001 Hz is too high");
     let empty = encode_wav(&[], 44100, 16);
     assert_eq!(message(describe("t.wav", &empty, &no_zlib).unwrap_err()), "the recording holds no sound");
     let mut fast = csw_v2_z_rle(&[]);

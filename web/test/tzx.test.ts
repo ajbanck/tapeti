@@ -35,6 +35,7 @@ import {
   renderScreen,
 } from '../src/tzx/core';
 import { createBlock, Block, CREATABLE_IDS, isUnknown } from '../src/tzx/types';
+import { Writer } from '../src/tzx/bytes';
 
 function header(name: string, type = 3, length = 100, p1 = 32768, p2 = 0) {
   return encodeHeader({ type, typeName: '', name, length, param1: p1, param2: p2 });
@@ -137,6 +138,28 @@ describe('what a file cannot hold', () => {
     const turbo: Block = { ...createBlock(0x11), data: new Uint8Array(65536) } as Block;
     expect(writeProblem([turbo], 'tzx')).toBeNull();
     expect(writeProblem([turbo], 'tap')).toEqual({ block: 0, what: 'a TAP block holds at most 65535 bytes, and this one has 65536' });
+  });
+});
+
+describe('the wire writer', () => {
+  // A recording's file goes to the core whole: a plain array of its bytes stopped at about 134
+  // million elements, so a 256 MB WAV failed before it reached the decoder.
+  it('keeps large byte arrays as they are, in order with the small writes around them', () => {
+    const big = Uint8Array.from({ length: 5000 }, (_, i) => i & 0xff);
+    const w = new Writer();
+    w.u8(1);
+    w.bytes(big);
+    w.u16(0x0302);
+    w.bytes([4, 5]);
+    w.bytes(big);
+    const out = w.toUint8Array();
+    expect(w.length).toBe(out.length);
+    expect(Array.from(out.subarray(0, 3))).toEqual([1, 0, 1]);
+    expect(out.subarray(1, 5001)).toEqual(big);
+    expect(Array.from(out.subarray(5001, 5005))).toEqual([2, 3, 4, 5]);
+    expect(out.subarray(5005)).toEqual(big);
+    big[0] = 99;
+    expect(out[1]).toBe(0);
   });
 });
 

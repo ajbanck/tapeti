@@ -19,6 +19,9 @@ pub struct Pulse {
     /// Where the pulse starts, in samples of the source it came from: the recording's samples,
     /// or T-states for a source that has none.
     pub start: f64,
+    /// Whether the recording never rose over its noise all through the pulse: dead air. Only the
+    /// edge detector says so; a source of exact pulses has no noise to measure.
+    pub quiet: bool,
 }
 
 /// Pulses of exact lengths in T-states, as an OUT trace gives them. They are placed on a
@@ -28,7 +31,7 @@ pub fn from_tstates(lengths: &[u64]) -> Vec<Pulse> {
     lengths
         .iter()
         .map(|&t| {
-            let pulse = Pulse { tstates: t as f64, start };
+            let pulse = Pulse { tstates: t as f64, start, quiet: false };
             start += t as f64;
             pulse
         })
@@ -41,7 +44,7 @@ pub fn from_runs(runs: &[u32], rate_hz: u32) -> Vec<Pulse> {
     let mut start = 0.0;
     runs.iter()
         .map(|&n| {
-            let pulse = Pulse { tstates: f64::from(n) * scale, start };
+            let pulse = Pulse { tstates: f64::from(n) * scale, start, quiet: false };
             start += f64::from(n);
             pulse
         })

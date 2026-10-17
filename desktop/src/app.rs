@@ -88,6 +88,8 @@ pub struct App {
     pub store: Store,
     pub player: Player,
     pub progress: Progress,
+    /// Recordings being decoded on their own threads (`recording.rs`).
+    pub recordings: crate::recording::Jobs,
     pub menu: Menu,
     pub rows: [RowCache; 2],
     pub editor: [EditorState; 2],
@@ -151,6 +153,7 @@ impl App {
             store,
             player: Player::default(),
             progress: Progress::default(),
+            recordings: crate::recording::Jobs::default(),
             menu,
             rows: Default::default(),
             editor: Default::default(),
@@ -730,6 +733,11 @@ impl App {
         if let Some(then) = self.pending.take() {
             crate::actions::run_then(self, then);
         }
+        // Recordings opened since the last frame start decoding, and decodes that
+        // have finished become tapes — here, before the rows are rebuilt.
+        if self.recordings.pump(&mut self.store, ctx) {
+            self.scroll_to_cursor(self.store.active);
+        }
         list::refresh(self);
         self.bench_step(ctx);
         self.sync_menu();
@@ -1086,7 +1094,7 @@ mod tests {
 
     fn recording_dialog(name: &str, bytes: Vec<u8>) -> Dialog {
         let summary = tapeti_decode::entry::describe(name, &bytes, &crate::tape::inflate).unwrap();
-        let mut d = Dialog::recording(0, name, bytes, summary, false);
+        let mut d = Dialog::recording(0, name, bytes, summary, false, None);
         if let Dialog::Recording(s) = &mut d {
             // A stereo-looking dialog: the channel row shows only for two channels.
             s.summary.channels = 2;

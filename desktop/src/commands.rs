@@ -17,6 +17,7 @@ use crate::app::App;
 use crate::dialogs::Dialog;
 use crate::files;
 use crate::menutable::{self, MenuState};
+use crate::recording::{DecodeRunState, RedecodeState};
 use crate::settings::Theme;
 use crate::state::{other, Side};
 
@@ -31,6 +32,10 @@ pub fn menu_state(app: &App, side: Side) -> MenuState {
         clipboard: !app.store.clipboard.is_empty(),
         playing: app.player.playing(),
         collapsible: t.cursor >= 0 && t.ranges().contains_key(&(t.cursor as usize)),
+        recording: crate::recording::can_redecode(&app.store, &app.recordings, side),
+        stretch: crate::recording::stretch_of(&app.store, side).is_some()
+            && app.recordings.landing_in(side).is_none(),
+        signal: crate::recording::signal_run(&app.store, side).is_some(),
     }
 }
 
@@ -169,6 +174,15 @@ pub fn run(app: &mut App, id: &str, side: Side) -> bool {
         "programs" => actions::open_program_picker(app, side),
         "tape-info" => app.store.dialog = Some(Dialog::tape_info(side)),
         "consistency" => app.store.dialog = Some(Dialog::consistency(side)),
+        "redecode" => {
+            app.store.dialog = Some(Dialog::Redecode(RedecodeState::new(&app.store, side)));
+        }
+        "redecode-stretch" => {
+            if let Some(state) = RedecodeState::for_stretch(&app.store, side) {
+                app.store.dialog = Some(Dialog::Redecode(state));
+            }
+        }
+        "decode-signal" => app.store.dialog = Some(Dialog::DecodeRun(DecodeRunState { side, loader: None })),
         "compare" => app.store.run_compare_tapes(),
         "clear-compare" => app.store.clear_compare(),
         "switch-pane" => app.store.active = other(side),
@@ -226,6 +240,9 @@ pub const CONTEXT_MENU: &[&str] = &[
     "",
     "play-cursor",
     "emu-cursor",
+    "",
+    "decode-signal",
+    "redecode-stretch",
 ];
 
 /// Keys the window handles itself. On macOS the platform menu owns every

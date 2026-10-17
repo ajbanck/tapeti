@@ -30,7 +30,7 @@ fn placed(lengths: impl IntoIterator<Item = f64>) -> Vec<Pulse> {
     lengths
         .into_iter()
         .map(|tstates| {
-            let p = Pulse { tstates, start };
+            let p = Pulse { tstates, start, quiet: false };
             start += tstates;
             p
         })

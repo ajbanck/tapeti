@@ -27,11 +27,13 @@ import {
   decodeContentAsLoaded,
   decodeDuration, decodePulses, decodeSamples, decodeTimeline, encodeBlocksAndOrder,
   decodeDescribed, decodeDisLines, decodeF64, decodeHeaderInfo, decodeIssues, decodeOptString,
-  decodeBasicEdit, encodeBasicEdit, decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
+  decodeBasicEdit, decodeRecordingSummary, encodeBasicEdit, decodePokesInfo, decodePrograms, decodeRanges, decodeSnapshotInfo, decodeStrings, decodeTap,
   decodeTape, decodeU32s, decodeU8, decodeVariables, decodeVersion, decodeWriteProblem, encodeBasicLines, encodeBitData,
   encodeBlocks, encodeHeaderInfo, encodePokesInfo, encodeSnapshotRequest, WIRE_VERSION,
 } from './wire';
+import type { RecordingSummary } from './wire';
 
+export type { RecordingSummary } from './wire';
 export type {
   AsLoaded, BasicLine, BasicOptions, BasicToken, BitData, BlockCompareMode, CompareResult, ContentInfo, ContentKind,
   DisLine, DisOptions, HeaderInfo, Issue, ParsedTape, Poke, PokesInfo, Program, TapeCompareMode, Trainer,
@@ -102,6 +104,10 @@ interface CoreExports {
   core_encode_wav(ptr: number, len: number, sampleRate: number, bits: number): number;
   core_block_pulses(ptr: number, len: number): number;
   core_decode_csw_rle(ptr: number, len: number): number;
+  // The decode crate's, for recordings (decode/src/wasm.rs).
+  decode_csw_zrle(ptr: number, len: number): number;
+  decode_describe(ptr: number, len: number): number;
+  decode_recording(ptr: number, len: number, decode: number, channel: number, filter: number): number;
 }
 
 /** Everything but the bookkeeping exports takes a buffer and returns one. */
@@ -113,6 +119,8 @@ const NO_INPUT = new Uint8Array(0);
 const utf8 = new TextEncoder();
 
 let core: CoreExports | null = null;
+/** The compiled module, which a Worker instantiates for itself rather than compile it again. */
+let compiled: WebAssembly.Module | null = null;
 let loading: Promise<void> | null = null;
 let failure: Error | null = null;
 
@@ -128,8 +136,12 @@ function wasmBytes(): Uint8Array<ArrayBuffer> {
 export function initCore(): Promise<void> {
   if (core) return Promise.resolve();
   if (!loading) {
-    loading = WebAssembly.instantiate(wasmBytes()).then(
-      ({ instance }) => {
+    loading = WebAssembly.compile(wasmBytes()).then((m) => {
+      compiled = m;
+      // The decoder's progress import reports only in the decode worker, which supplies its own.
+      return WebAssembly.instantiate(m, { decode: { decode_progress: () => {} } });
+    }).then(
+      (instance) => {
         const exports = instance.exports as unknown as CoreExports;
         const version = exports.core_wire_version();
         if (version !== WIRE_VERSION) {
@@ -948,4 +960,28 @@ export function renderWav(blocks: Block[], opts: RenderOptions, bits: 8 | 16 = 1
 export function encodeWav(samples: Float32Array, sampleRate: number, bits: 8 | 16 = 16): Uint8Array {
   const raw = new Uint8Array(samples.buffer, samples.byteOffset, samples.length * 4);
   return decodeBytes(call('core_encode_wav', raw, sampleRate, bits));
+}
+
+// ---------------------------------------------------------------------------
+// Recordings (decode/src/wasm.rs): described here, decoded in a Worker (recordings.ts).
+
+/** The compiled module, for a Worker. Only after `initCore()` has resolved. */
+export function coreModule(): WebAssembly.Module {
+  requireCore();
+  return compiled!;
+}
+
+/**
+ * A recording as its entry points take it: the file, the Z-RLE data of a CSW file inflated
+ * here (the module has no zlib), and its name.
+ */
+export function recordingRequest(name: string, file: Uint8Array): Uint8Array {
+  const zrle = decodeBytes(call('decode_csw_zrle', encodeSnapshotRequest(file, null, name)));
+  const inflated = zrle.length ? inflate(zrle) : null;
+  return encodeSnapshotRequest(file, inflated, name);
+}
+
+/** What the import dialog shows of a recording. Throws when it is not one that can be read. */
+export function describeRecording(request: Uint8Array): RecordingSummary {
+  return decodeRecordingSummary(call('decode_describe', request));
 }

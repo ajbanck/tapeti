@@ -28,6 +28,7 @@ import {
 import { NumInput } from './fields';
 import { createBlock, CREATABLE_IDS, BLOCK_NAMES, Block, StandardBlock } from '../tzx/types';
 import { jumpToProgram } from '../state/actions';
+import { importRecording } from '../state/recordings';
 
 export function Modal({ title, onClose, children, footer, width, cls }: { title: string; onClose: () => void; children: ComponentChildren; footer?: ComponentChildren; width?: number; cls?: string }) {
   return (
@@ -86,6 +87,8 @@ export function Dialogs() {
       return <EmulatorDialog />;
     case 'snapshot':
       return <SnapshotImport d={d} />;
+    case 'recording':
+      return <RecordingImport d={d} />;
     case 'datafile':
       return <DataFileInsert d={d} />;
   }
@@ -377,6 +380,68 @@ function SnapshotImport({ d }: { d: Extract<Dialog, { kind: 'snapshot' }> }) {
         The snapshot becomes a BASIC loader followed by its memory as packed blocks{speed === 0 ? ' at ROM speed, which still need the custom loader' : ''}.
         The loader runs at BE00 and finishes in the bottom three pixel lines of the screen, so those and the bottom attribute row are lost.
         {speed === 3 && ' 6000 bps is for emulators and direct playback, not for recording to tape.'}
+      </p>
+    </Modal>
+  );
+}
+
+/** A recording was opened: decode it into blocks or keep it as raw signal, which channel, and
+ *  whether to filter it. The desktop app's "Import recording" dialog. */
+function RecordingImport({ d }: { d: Extract<Dialog, { kind: 'recording' }> }) {
+  const s = d.summary;
+  const audio = !s.keptCsw;
+  const [decode, setDecode] = useState(true);
+  // 3 is whichever decodes best; raw signal keeps one reading, and the best of it is the mix.
+  const [channel, setChannel] = useState(3);
+  const shownChannel = !decode && channel === 3 ? 0 : channel;
+  const [filter, setFilter] = useState(false);
+  const go = () => {
+    close();
+    importRecording(d.side, d.name, d.request, { decode, channel: shownChannel, filter: audio && filter }, d.insertAtCursor);
+  };
+  const rate = s.format === 'OUT' ? 'T-states at 3.5 MHz' : `${fmtNum(s.rateHz)} Hz`;
+  const highKhz = Math.min(4000, 0.45 * s.rateHz) / 1000;
+  const kept = s.keptCsw ? 'a CSW block' : s.blocks === 1 ? 'a Direct Recording block' : `${s.blocks} Direct Recording blocks`;
+  return (
+    <Modal title="Import recording" onClose={close} width={500} cls="recording" footer={<><button class="primary" onClick={go}>Import</button><button onClick={close}>Cancel</button></>}>
+      <div class="grid" style={{ gridTemplateColumns: 'auto 1fr' }}>
+        <label>Recording</label>
+        <div>{d.name}</div>
+        <label>Format</label>
+        <div>{s.format}, {rate}, {s.channels === 2 ? 'stereo' : 'mono'}</div>
+        <label>Length</label>
+        <div>{fmtTime(s.samples / s.rateHz)}</div>
+        <label>Open as</label>
+        <select value={decode ? 1 : 0} onChange={(e) => setDecode((e.target as HTMLSelectElement).value === '1')}>
+          <option value={1}>Blocks, decoded</option>
+          <option value={0}>Raw signal</option>
+        </select>
+        {audio && s.channels === 2 && <>
+          <label>Channel</label>
+          <select value={shownChannel} onChange={(e) => setChannel(Number((e.target as HTMLSelectElement).value))}>
+            {decode && <option value={3}>Whichever reads best</option>}
+            <option value={0}>Both, mixed</option>
+            <option value={1}>Left</option>
+            <option value={2}>Right</option>
+          </select>
+        </>}
+        {audio && <>
+          <label>Filter</label>
+          <label><input type="checkbox" checked={filter} onChange={(e) => setFilter((e.target as HTMLInputElement).checked)} /> Band-pass, 300 Hz to {highKhz.toFixed(1)} kHz</label>
+        </>}
+        {!decode && <>
+          <label>Kept as</label>
+          <div>{kept}, a TZX file of {fmtNum(s.tzxSize)} bytes</div>
+        </>}
+      </div>
+      {s.missingBytes > 0 && <p class="error">The file is {fmtNum(s.missingBytes)} bytes shorter than its header says; what it holds is kept.</p>}
+      {s.skipped.length > 0 && <p class="note">Passed over: {s.skipped.join(', ')}.</p>}
+      <p class="note">
+        {decode
+          ? "Standard blocks are read as the Spectrum's ROM reads them, in the background. A turbo or protected loader's blocks are kept as raw signal, which loads in an emulator as it is; hiss and noise between blocks become their pauses."
+          : audio
+            ? 'The recording is kept as it is, one bit per sample. It loads in an emulator whatever loader made it, but shows no headers or programs until it is decoded. Hiss can become stray pulses; the filter cleans it, and changes what is kept.'
+            : 'The pulses are kept exactly as they are. The tape loads in an emulator whatever loader made it, but shows no headers or programs until it is decoded.'}
       </p>
     </Modal>
   );

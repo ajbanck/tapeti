@@ -411,6 +411,39 @@ fn string(w: &mut Vec<u8>, s: &str) {
 
 // ---- answers for the description, content, consistency and program calls ----
 
+/// What a recording file holds, for the import dialog.
+///
+/// `str format`, `u32 rate`, `u16 channels`, `f64 samples`, `f64 missing bytes`, the skipped parts
+/// as strings, `u8 kept as CSW`, `u32 blocks`, `f64 TZX size`: the decode crate's `Summary`, field
+/// for field. The core does not know that type, so it is handed over as its fields.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_recording_summary(
+    format: &str,
+    rate_hz: u32,
+    channels: u16,
+    samples: u64,
+    missing_bytes: u64,
+    skipped: &[String],
+    kept_csw: bool,
+    blocks: u32,
+    tzx_size: u64,
+) -> Vec<u8> {
+    let mut w = header();
+    string(&mut w, format);
+    u32v(&mut w, rate_hz as usize);
+    u16v(&mut w, channels);
+    w.extend((samples as f64).to_le_bytes());
+    w.extend((missing_bytes as f64).to_le_bytes());
+    u32v(&mut w, skipped.len());
+    for s in skipped {
+        string(&mut w, s);
+    }
+    w.push(u8::from(kept_csw));
+    u32v(&mut w, blocks as usize);
+    w.extend((tzx_size as f64).to_le_bytes());
+    w
+}
+
 /// `[u32 count]` then that many strings.
 pub fn encode_strings(items: &[String]) -> Vec<u8> {
     let mut w = header();

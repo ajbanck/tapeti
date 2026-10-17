@@ -6,9 +6,20 @@ import {
   tapes, locked, clipboard, insertBlocks, unitIndices, moveUnit, undo, redo, markSaved, toggleCollapse, groupSelection,
   copyUnit, paste, deleteUnit, setCursor, selectUids, commit, collapseAll, dialog,
 } from '../src/state/store';
-import { groupRanges, serializeTzx, fileHashes } from '../src/tzx/core';
+import { groupRanges, serializeTzx, fileHashes, renderWav, coreModule, recordingRequest } from '../src/tzx/core';
+import { decodeTape } from '../src/tzx/wire';
+import { MAX_RECORDING_BYTES } from '../src/state/recordings';
+import type { Dialog } from '../src/state/store';
+import type { DecodeAnswer, DecodeJob } from '../src/tzx/decode-job';
 import { newTape, loadBytes } from '../src/state/files';
-import { createBlock, Block } from '../src/tzx/types';
+import { createBlock, Block, StandardBlock } from '../src/tzx/types';
+
+/** A short ROM data block: flag, bytes, checksum. */
+function recordingBlock(): StandardBlock {
+  const data = [0xff, 1, 2, 3, 0x55, 0xaa];
+  data.push(data.reduce((x, d) => x ^ d, 0));
+  return { ...(createBlock(0x10) as StandardBlock), pause: 1000, data: new Uint8Array(data) };
+}
 
 const ids = () => tapes[0].value.blocks.map((b) => b.id);
 const uidAt = (i: number) => tapes[0].value.blocks[i].uid;
@@ -156,15 +167,61 @@ describe('store: undo and dirty tracking', () => {
     expect(tapes[0].value.fileHashes).toBe(null);
   });
 
-  it('says a recording opens in the desktop app rather than reading it as a TAP', () => {
+  it('asks how to take a recording in, and refuses one it cannot read', () => {
     loadBytes(0, 'side-a.WAV', new Uint8Array([82, 73, 70, 70]));
     expect(tapes[0].value.blocks).toEqual([]);
-    expect(dialog.value).toEqual({
-      kind: 'message',
-      title: 'Cannot load file',
-      lines: ['side-a.WAV is a tape recording. The desktop app opens recordings; the browser does not yet.'],
-    });
+    expect(dialog.value?.kind).toBe('message');
     dialog.value = null;
+
+    const wav = renderWav([recordingBlock()], { sampleRate: 22050, mode: 'mic', amplitude: 0.5 });
+    loadBytes(1, 'side-b.wav', wav);
+    const d = dialog.value as Dialog | null;
+    expect(d?.kind).toBe('recording');
+    if (d?.kind === 'recording') {
+      expect(d.summary).toMatchObject({ format: 'WAV', rateHz: 22050, channels: 1, keptCsw: false, blocks: 1 });
+      expect(d.summary.samples).toBe((wav.length - 44) / 2);
+    }
+    dialog.value = null;
+
+    loadBytes(0, 'huge.wav', new Uint8Array(MAX_RECORDING_BYTES + 1));
+    expect(dialog.value).toMatchObject({ kind: 'message', title: 'Cannot load file' });
+    dialog.value = null;
+  });
+
+  it('decodes a recording in the worker, off the module the page compiled', async () => {
+    const block = recordingBlock();
+    const wav = renderWav([block], { sampleRate: 44100, mode: 'mic', amplitude: 0.5 });
+    const answers: DecodeAnswer[] = [];
+    const scope = globalThis as unknown as { self: unknown };
+    const before = scope.self;
+    const fake = { onmessage: null as ((e: { data: DecodeJob }) => Promise<void>) | null, postMessage: (m: DecodeAnswer) => answers.push(m) };
+    scope.self = fake;
+    try {
+      await import('../src/tzx/decode.worker');
+      const job = { module: coreModule(), request: recordingRequest('t.wav', wav), channel: 0, filter: 0 };
+      await fake.onmessage!({ data: { ...job, decode: 1 } });
+      await fake.onmessage!({ data: { ...job, decode: 0 } });
+    } finally {
+      scope.self = before;
+    }
+    // The decode reports how far it has come as it goes, ending on its one block read, all done;
+    // the tape comes last.
+    const reports = answers.flatMap((a) => ('progress' in a ? [a.progress] : []));
+    expect(reports[0].blocks).toBe(0);
+    expect(reports[0].done).toBeGreaterThan(0);
+    expect(reports.every((p, i) => i === 0 || (p.done >= reports[i - 1].done && p.blocks >= reports[i - 1].blocks))).toBe(true);
+    expect(reports[reports.length - 1]).toEqual({ blocks: 1, done: 1 });
+    const tapes = answers.filter((a) => !('progress' in a));
+    const tape = (a: DecodeAnswer) => {
+      if ('error' in a) throw new Error(a.error);
+      if ('progress' in a) throw new Error('a count, not a tape');
+      return decodeTape(a.payload);
+    };
+    const decoded = tape(tapes[0]);
+    expect(decoded.blocks.map((b) => b.id)).toEqual([0x10]);
+    expect((decoded.blocks[0] as StandardBlock).data).toEqual(block.data);
+    expect(decoded.warnings).toEqual(['I\t-\tlead-in: 0.5 s of silence before the first block, left out']);
+    expect(tape(tapes[1]).blocks.map((b) => b.id)).toEqual([0x15]);
   });
 
   it('a tape with nothing left on it becomes a new tape, and undo brings it back', () => {

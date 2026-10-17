@@ -132,12 +132,37 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
         if app.progress.playing {
             progress(app, ui);
+        } else if decoding(app, ui) {
+            // `decoding` already drew the rest of the row as a side effect.
         } else {
             ui.add_space(4.0);
             let status = app.store.status().to_string();
             ui.label(RichText::new(status).size(12.0).color(tok.muted));
         }
     });
+}
+
+/// A recording being decoded: its name, how far it has come, and the way to stop
+/// it. Returns whether there was one to show.
+fn decoding(app: &mut App, ui: &mut Ui) -> bool {
+    let tok = app.tokens;
+    let Some(job) = app.recordings.showing(app.store.active) else { return false };
+    let (side, found) = (job.side, job.blocks_so_far());
+    let blocks = match found {
+        0 => String::new(),
+        1 => ", 1 block so far".to_string(),
+        n => format!(", {n} blocks so far"),
+    };
+    ui.add_space(4.0);
+    ui.spinner();
+    let text = format!("Decoding {}: {}%{blocks}", job.name, job.thousandths_done() / 10);
+    ui.label(RichText::new(text).size(12.0).color(tok.muted));
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        if ui.small_button("Cancel").clicked() && app.recordings.cancel(side) {
+            app.store.set_status("Decoding cancelled");
+        }
+    });
+    true
 }
 
 fn progress(app: &mut App, ui: &mut Ui) {

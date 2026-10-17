@@ -177,6 +177,16 @@ fn enabled_rules_match_the_web_table() {
     let mut checked = 0;
     for (id, expression) in &expressions {
         let Some(item) = item(id) else { continue }; // the context menu's own items
+                                                     // The browser has no recording to decode again: its rule is never, and the rule
+                                                     // here is one of the three only this app has.
+        if expression.as_deref() == Some("desktopOnly") {
+            assert!(
+                matches!(item.need, Need::Recording | Need::Stretch | Need::Signal),
+                "command {id:?} is desktopOnly in commands.ts but not a recording command here"
+            );
+            checked += 1;
+            continue;
+        }
         let want = need_of(expression.as_deref()).unwrap_or_else(|| {
             panic!("command {id:?} has an enabled rule this test cannot read: {expression:?}")
         });

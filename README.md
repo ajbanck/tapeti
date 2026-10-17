@@ -16,7 +16,8 @@ Desktop builds for macOS, Linux and Windows are attached to each
 | Windows | `.msi`, or the portable `.exe` | 10 | One executable. The `.msi` only adds the shortcut and the file associations. |
 | Browser | — | Safari 14.1, Chrome 90, Firefox 90 | Also runs on web views that never received updates. |
 
-The `.tzx`/`.tap` file associations come with the bundle (macOS) or the installer (Windows).
+The `.tzx`/`.tap` file associations come with the bundle (macOS) or the installer (Windows). Both
+also list Tapeti under Open With for snapshots and tape recordings, without taking those over.
 
 The browser version is the same app without native file dialogs. Open lets you pick a file, and Save
 downloads a copy. To run it yourself, see [Building from source](#building-from-source).
@@ -36,6 +37,7 @@ Typical uses:
 - **Play it**: play the tape as audio, export a WAV to load on a real Spectrum, or open it in an
   emulator.
 - **Turn a snapshot into a tape** that loads on a real machine.
+- **Read a tape recording**: a WAV of a cassette becomes the blocks it holds.
 
 **Two tape windows**, Left and Right, each with a numbered block list, a per-block editor and Commit
 / Revert buttons. The menus (File, Edit, Block, Tape, Play, View) act on the active tape. The
@@ -57,15 +59,22 @@ loader uses the bottom three pixel lines of the screen, so those are lost. A 128
 loaded with `LOAD ""` from 128 BASIC. And anything that was in a paged-in ROM (Interface 1,
 Multiface) cannot be restored. The method and the loader come from [Taper](#credits).
 
-**Tape recordings** (desktop app): opening a `.wav`, `.voc`, `.iff` or `.csw` recording, or an
-emulator's `.out` trace, keeps its signal as it is in a tape. A WAV, VOC or IFF becomes Direct
-Recording blocks, one bit per sample. A CSW file goes into a CSW block unchanged, and an OUT trace
-into a CSW block of its exact timings. Nothing is decoded, so the tape loads in an emulator whatever
-loader made it, but it shows no headers or programs. A dialog asks which channel of a stereo
-recording to keep, and offers a band-pass filter that cleans hiss but changes what is kept. A
-recording is only as good as the tape it came from, and hiss can become stray pulses. Direct
-Recording takes about 330 KB a minute at 44.1 kHz, and a recording longer than about 50 minutes
-continues in a second block.
+**Tape recordings**: opening a `.wav`, `.voc`, `.iff` or `.csw` recording, or an emulator's `.out`
+trace, decodes it into blocks. Standard blocks are read the way the Spectrum's ROM reads them, so
+what loads on a real machine comes out as headers, programs and data, and a block with a bad
+checksum is marked in the list. What the ROM cannot read, a turbo or protected loader's blocks
+among it, is kept as raw signal, which loads in an emulator as it is. A dialog asks which channel of
+a stereo recording to read, and offers a band-pass filter for hiss and hum that helps some
+recordings and costs others blocks. In the desktop app the Tape menu tries again: Decode Recording
+Again with another channel or filter, Decode This Stretch Again on the selected blocks alone, and
+Decode Signal into Blocks on the raw signal in any tape's Direct Recording or CSW blocks. Each is an
+edit that can be undone.
+
+A recording can also be kept as it is, undecoded. A WAV, VOC or IFF then becomes Direct Recording
+blocks, one bit per sample: about 330 KB a minute at 44.1 kHz, continuing in a second block after
+about 50 minutes. A CSW file goes into a CSW block unchanged, and an OUT trace into a CSW block of
+its exact timings. A recording is only as good as the tape it came from. The browser takes
+recordings of up to 256 MB, about 50 minutes at 44.1 kHz; the desktop app opens longer ones.
 
 **Block operations**: insert any block type, an empty BASIC program, or a file. A tape or snapshot
 file is inserted as its blocks. Any other file (a `.scr`, a binary) becomes the Bytes header and
@@ -151,8 +160,8 @@ follow-the-system.
 Open and Save use native dialogs, and **Save (Ctrl+S) writes back to the file you opened**. It
 writes to a temporary file first, so a full disk cannot leave you with half a tape. With View → Keep
 a Backup When Saving, the previous version is kept next to it as `name.tzx.bak`. `.tzx` and `.tap`
-files are associated with the app, so they open with a double click. Tapes can also be dropped onto
-a tape pane or named on the command line: `tapeti left.tzx right.tzx` fills both panes. In the
+files are associated with the app, so they open with a double click; snapshots and recordings open
+with it from the Open With menu. Tapes and recordings can also be dropped onto a tape pane or named on the command line: `tapeti left.tzx right.tzx` fills both panes. In the
 browser, Save downloads a copy. Tapes hosted on the same site can be given in the URL:
 `?open=tapes/one.tzx&right=tapes/other.tzx`. A page that embeds the app can set its theme with
 `?theme=dark`, `light` or `auto` (or just `?dark` or `?light`). The app then leaves the theme to

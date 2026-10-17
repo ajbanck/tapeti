@@ -48,7 +48,7 @@ pub fn read<'a>(name: &str, bytes: &'a [u8], channel: Channel) -> Result<Recordi
     if is(b"RIFF", 0) && is(b"WAVE", 8) {
         wav::read(bytes, channel).map(Recording::Sound)
     } else if is(voc::SIGNATURE, 0) {
-        voc::read(bytes).map(Recording::Sound)
+        voc::read(bytes, channel).map(Recording::Sound)
     } else if is(b"FORM", 0) && is(b"8SVX", 8) {
         iff::read(bytes).map(Recording::Sound)
     } else if is(csw::SIGNATURE, 0) {

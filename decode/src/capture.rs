@@ -17,7 +17,7 @@ use tapeti_core::types::{Block, Body};
 pub const MAX_BLOCK_BYTES: usize = 0xFF_FFFF;
 
 /// The T-states between two bits for a recording at `rate_hz`, or `None` for a rate too low for
-/// the block's 16-bit field.
+/// the block's 16-bit field, or so high that a sample rounds to no T-state at all.
 pub fn spacing(rate_hz: u32) -> Option<u16> {
     let t = (f64::from(TSTATES_PER_SEC) / f64::from(rate_hz)).round();
     (1.0..=f64::from(u16::MAX)).contains(&t).then_some(t as u16)

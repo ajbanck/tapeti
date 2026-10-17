@@ -256,6 +256,15 @@ pub fn show(app: &mut App, ui: &mut Ui, side: Side, height: f32) {
         if seconds > 0.0 {
             ui.label(RichText::new(format!("Duration {}", fmt::duration(seconds))).size(12.0));
         }
+        // A block decoded from audio knows where in the recording it was. Only
+        // the start is written out: the footer has Commit and Revert to fit
+        // beside it in a narrow pane, and the hover has room for the rest.
+        let extent = app.store.tape(side).recording.as_ref().and_then(|r| r.extent(uid));
+        if let Some((from, to)) = extent {
+            let (from, to) = (fmt::time(f64::from(from) / 1000.0), fmt::time(f64::from(to) / 1000.0));
+            ui.label(RichText::new(format!("at {from}")).size(12.0).color(tok.muted))
+                .on_hover_text(format!("In the recording this block was decoded from: {from}–{to}"));
+        }
     });
 
     if revert {

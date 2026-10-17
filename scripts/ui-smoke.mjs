@@ -265,6 +265,52 @@ expect(viewItems.length > 0 && !viewItems.some((t) => t.startsWith('Theme')), 'n
 expect((await embed.$$eval('.menu .dropdown > *', (els) => els.filter((e, i) => e.classList.contains('sep') && els[i - 1]?.classList.contains('sep')).length)) === 0, 'and no doubled separator where they were');
 expect((await embed.evaluate(() => localStorage.getItem('tapeti.theme'))) === 'light', 'the remembered choice is left alone');
 
+
+// A recording dropped on a pane: the dialog, then the Worker's decode lands as the pane's tape.
+// The WAV is made here: one ROM data block on a signal centred on zero, as a tape is, ended by
+// the saver's closing level.
+const rec = await browser.newPage();
+await rec.setViewport({ width: 1280, height: 860 });
+rec.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+rec.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+await rec.goto(new globalThis.URL('/', URL).href, { waitUntil: 'networkidle0' });
+await rec.waitForSelector('.pane');
+await rec.evaluate(() => {
+  const rate = 44100, t = rate / 3500000, out = [];
+  const data = [0xff, 1, 2, 3, 4, 5];
+  data.push(data.reduce((x, d) => x ^ d, 0));
+  let high = false;
+  const half = (ts) => { const n = Math.round(ts * t); for (let i = 0; i < n; i++) out.push(high ? 0.5 : -0.5); high = !high; };
+  for (let i = 0; i < rate / 2; i++) out.push(0);
+  for (let i = 0; i < 3223; i++) half(2168);
+  half(667); half(735);
+  for (const b of data) for (let k = 7; k >= 0; k--) { const ts = (b >> k) & 1 ? 1710 : 855; half(ts); half(ts); }
+  // The saver's closing level: the edge that ends the last bit.
+  half(945);
+  for (let i = 0; i < rate; i++) out.push(0);
+  const wav = new DataView(new ArrayBuffer(44 + out.length * 2));
+  const tag = (o, s) => [...s].forEach((c, i) => wav.setUint8(o + i, c.charCodeAt(0)));
+  tag(0, 'RIFF'); wav.setUint32(4, 36 + out.length * 2, true); tag(8, 'WAVEfmt ');
+  wav.setUint32(16, 16, true); wav.setUint16(20, 1, true); wav.setUint16(22, 1, true);
+  wav.setUint32(24, rate, true); wav.setUint32(28, rate * 2, true); wav.setUint16(32, 2, true); wav.setUint16(34, 16, true);
+  tag(36, 'data'); wav.setUint32(40, out.length * 2, true);
+  out.forEach((v, i) => wav.setInt16(44 + i * 2, Math.round(v * 32767), true));
+  const dt = new DataTransfer();
+  dt.items.add(new File([wav.buffer], 'side-a.wav'));
+  document.querySelector('.pane:last-child .blocklist').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+});
+await rec.waitForSelector('.modal.recording', { timeout: 5000 });
+expect((await rec.$eval('.modal.recording', (e) => e.textContent)).includes('Blocks, decoded'), 'a dropped recording asks how to take it in');
+await rec.screenshot({ path: `${OUT}/20-recording-dialog.png` });
+await rec.click('.modal.recording button.primary');
+await rec.waitForFunction(() => document.querySelectorAll('.pane:last-child .blocklist .row').length > 0 || document.querySelector('.modal'), { timeout: 10000 });
+const recMessage = await rec.evaluate(() => document.querySelector('.modal')?.textContent);
+expect(!recMessage, recMessage ? `no message instead: ${recMessage}` : 'with no message in between');
+const recRows = await rec.$$eval('.pane:last-child .blocklist .row', (r) => r.map((e) => e.textContent));
+expect(recRows.length === 1 && recRows[0].includes('Standard'), 'the worker decoded it into its one standard block');
+expect((await rec.$eval('.statusbar', (e) => e.textContent)).includes('Decoded side-a.wav: 1 block'), 'and the status bar says so');
+await rec.screenshot({ path: `${OUT}/21-recording-decoded.png` });
+
 await browser.close();
 if (errors.length) {
   console.error('\nErrors:\n' + errors.join('\n'));

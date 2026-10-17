@@ -112,6 +112,9 @@ pub struct RawBlock {
     pub tone: usize,
     /// The pulse after the last whole byte.
     pub end: usize,
+    /// Where the block's bits stop: past `end` where it runs on beyond the length it was asked
+    /// for, at `end` otherwise.
+    pub bits_end: usize,
     /// Half a pilot pair, the mean of those the leader loop checked.
     pub pilot_half: f64,
     /// Whether the bits ran out before `expected` bytes were read.
@@ -149,7 +152,13 @@ pub fn next_block(
                 let (bytes, end, short) = read_bytes(pulses, data, expected);
                 if !bytes.is_empty() {
                     let tone = tone_start(pulses, from, first_checked);
-                    return Some(RawBlock { data: bytes, tone, end, pilot_half, short });
+                    // Only a length can stop the ROM short of the bits; the bytes run out where
+                    // they do otherwise.
+                    let bits_end = match expected {
+                        Some(_) if !short => data + 2 * bits(pulses, data, (end - data) / 2),
+                        _ => end,
+                    };
+                    return Some(RawBlock { data: bytes, tone, end, bits_end, pilot_half, short });
                 }
                 start = data;
             }
@@ -219,6 +228,19 @@ fn read_bytes(pulses: &[Pulse], from: usize, expected: Option<usize>) -> (Vec<u8
     let short = expected.is_some_and(|n| bytes.len() < n);
     let end = from + 16 * bytes.len();
     (bytes, end, short)
+}
+
+/// How many pairs from the pair at `from` the ROM reads as bits before one times out, counting on
+/// from bit `read`, which the caller has read already.
+fn bits(pulses: &[Pulse], from: usize, read: usize) -> usize {
+    let mut bit = read;
+    while let Some(pair) = pulses.get(from + 2 * bit).zip(pulses.get(from + 2 * bit + 1)) {
+        if pair.0.tstates + pair.1.tstates > bit_timeout(bit) {
+            break;
+        }
+        bit += 1;
+    }
+    bit
 }
 
 /// Where the tone holding the pair at `first_checked` begins: back over every pulse before it that

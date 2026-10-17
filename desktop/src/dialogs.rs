@@ -9,6 +9,7 @@
 
 use egui::{Align, Layout, RichText, Ui};
 
+use crate::state::{ChannelChoice, DecodeChoice};
 use tapeti_core::audio::{playback_order, FlowOptions, RenderOptions, TSTATES_PER_SEC};
 use tapeti_core::consistency::{check_consistency, Severity};
 use tapeti_core::describe::{
@@ -91,8 +92,13 @@ pub struct RecordingState {
     pub bytes: Vec<u8>,
     pub summary: Summary,
     pub insert_at_cursor: bool,
-    pub channel: Channel,
+    pub channel: ChannelChoice,
     pub filter: bool,
+    /// The file, which a decode reads on a thread of its own; without one the recording can only
+    /// be kept as raw signal.
+    pub path: Option<std::path::PathBuf>,
+    /// Decode it into blocks, rather than keep it as raw signal.
+    pub decode: bool,
 }
 
 pub struct DataFileState {
@@ -127,6 +133,10 @@ pub enum Dialog {
     Snapshot(Box<SnapshotState>),
     Recording(Box<RecordingState>),
     DataFile(DataFileState),
+    /// Decode the tape's recording again (`recording.rs`).
+    Redecode(crate::recording::RedecodeState),
+    /// Decode the signal of the selected blocks into the blocks it holds.
+    DecodeRun(crate::recording::DecodeRunState),
 }
 
 impl Dialog {
@@ -160,6 +170,7 @@ impl Dialog {
         bytes: Vec<u8>,
         summary: Summary,
         insert_at_cursor: bool,
+        path: Option<std::path::PathBuf>,
     ) -> Dialog {
         Dialog::Recording(Box::new(RecordingState {
             side,
@@ -167,8 +178,10 @@ impl Dialog {
             bytes,
             summary,
             insert_at_cursor,
-            channel: Channel::Mix,
+            channel: ChannelChoice::Best,
             filter: false,
+            decode: path.is_some(),
+            path,
         }))
     }
     pub fn message(title: &str, lines: Vec<String>) -> Dialog {
@@ -237,6 +250,8 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         Dialog::Snapshot(_) => ("Import snapshot".into(), 520.0),
         Dialog::Recording(_) => ("Import recording".into(), 480.0),
         Dialog::DataFile(_) => ("Insert file as data".into(), 440.0),
+        Dialog::Redecode(_) => ("Decode recording again".into(), 440.0),
+        Dialog::DecodeRun(_) => ("Decode signal into blocks".into(), 440.0),
     };
 
     let response = egui::Modal::new(egui::Id::new("tapeti-dialog"))
@@ -262,6 +277,20 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
                 Dialog::Snapshot(s) => snapshot_body(ui, app, s, &tok),
                 Dialog::Recording(s) => recording_body(ui, app, s, &tok),
                 Dialog::DataFile(s) => data_file_body(ui, app, s, &tok),
+                Dialog::Redecode(s) => {
+                    if crate::recording::redecode_body(ui, &mut app.store, s, &tok) {
+                        Outcome::Close
+                    } else {
+                        Outcome::Keep
+                    }
+                }
+                Dialog::DecodeRun(s) => {
+                    if crate::recording::decode_run_body(ui, &mut app.store, s, &tok) {
+                        Outcome::Close
+                    } else {
+                        Outcome::Keep
+                    }
+                }
             };
             // The close button is drawn after the body, at the right edge the body left: a body
             // wider than `width` (tape info's SHA-1) widens the dialog, so drawing it with the
@@ -507,15 +536,60 @@ fn tape_info_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outco
     if errors > 0 {
         ui.colored_label(tok.danger, format!("{errors} consistency error(s) — see Check consistency."));
     }
+    if let Some(recording) = &t.recording {
+        if recording.is_of_the_tape() {
+            recording_section(ui, recording, tok);
+        }
+        // Inserted recordings that still have a block on the tape.
+        let inserted: Vec<&str> = recording
+            .inserted
+            .iter()
+            .filter(|r| t.blocks.iter().any(|b| r.extents.contains_key(&b.uid)))
+            .map(|r| r.name.as_str())
+            .collect();
+        if !inserted.is_empty() {
+            ui.add_space(6.0);
+            w::note(ui, tok, format!("Blocks inserted from {}", inserted.join(", ")));
+        }
+    }
     w::note(ui, tok, "Durations are computed from block timings and pauses at 3.5 MHz.");
     footer(ui, |ui| if ui.button("OK").clicked() { Outcome::Close } else { Outcome::Keep })
+}
+
+/// A tape decoded from audio: what the decoder measured, then its account of
+/// the decode, both in its own words.
+fn recording_section(ui: &mut Ui, recording: &crate::state::Recording, tok: &Tokens) {
+    ui.add_space(8.0);
+    ui.label(RichText::new(format!("Decoded from {}", recording.name)).strong());
+    egui::ScrollArea::vertical().id_salt("recording").max_height(200.0).show(ui, |ui| {
+        for (axis, lines) in &recording.measured {
+            ui.horizontal_top(|ui| {
+                ui.add_sized(
+                    [80.0, 18.0],
+                    egui::Label::new(RichText::new(axis).color(tok.muted)).halign(Align::LEFT),
+                );
+                ui.vertical(|ui| {
+                    for (n, line) in lines.iter().enumerate() {
+                        let text = RichText::new(line).size(12.0);
+                        ui.add(egui::Label::new(if n == 0 { text } else { text.color(tok.muted) }).wrap());
+                    }
+                });
+            });
+        }
+        if !recording.report.is_empty() {
+            ui.add_space(6.0);
+        }
+        for line in &recording.report {
+            ui.add(egui::Label::new(RichText::new(line).size(12.0)).wrap());
+        }
+    });
 }
 
 fn consistency_body(ui: &mut Ui, app: &mut App, side: Side, tok: &Tokens) -> Outcome {
     let hex = app.store.hex;
     let zero = app.store.settings.zero_based;
     let base = fmt::block_no(0, zero) as i32;
-    let issues = check_consistency(&app.store.tape(side).blocks, base);
+    let issues = app.store.tape(side).issues(base);
     let mut goto = None;
     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
         if issues.is_empty() {
@@ -783,8 +857,8 @@ fn snapshot_body(ui: &mut Ui, app: &mut App, s: &mut SnapshotState, tok: &Tokens
     outcome
 }
 
-/// A recording was opened: ask which channel and whether to filter it, and say what keeping it
-/// as raw signal makes.
+/// A recording was opened: ask whether to decode it or keep it as raw signal, which channel and
+/// whether to filter it, and say what keeping it makes.
 fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Tokens) -> Outcome {
     let hex = app.store.hex;
     let sum = &s.summary;
@@ -809,14 +883,29 @@ fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Toke
         ui.label(fmt::duration(sum.seconds()));
         ui.end_row();
 
+        ui.label("Open as");
+        let options = [(true, "Blocks, decoded".to_string()), (false, "Raw signal".to_string())];
+        w::combo(ui, "recording-decode", &mut s.decode, &options, 160.0, s.path.is_some());
+        ui.end_row();
+
         if audio && sum.channels == 2 {
             ui.label("Channel");
-            let options = [
-                (Channel::Mix, "Both, mixed".to_string()),
-                (Channel::Left, "Left".to_string()),
-                (Channel::Right, "Right".to_string()),
+            let mut options = vec![
+                (ChannelChoice::Mix, "Both, mixed".to_string()),
+                (ChannelChoice::Left, "Left".to_string()),
+                (ChannelChoice::Right, "Right".to_string()),
             ];
-            w::combo(ui, "recording-channel", &mut s.channel, &options, 160.0, true);
+            if s.decode {
+                options.insert(0, (ChannelChoice::Best, "Whichever reads best".to_string()));
+                w::combo(ui, "recording-channel", &mut s.channel, &options, 160.0, true);
+            } else {
+                // Raw signal keeps one reading: the best one is the mix, until another is picked.
+                let mut shown = raw_channel(s.channel);
+                w::combo(ui, "recording-channel", &mut shown, &options, 160.0, true);
+                if shown != raw_channel(s.channel) {
+                    s.channel = shown;
+                }
+            }
             ui.end_row();
         }
 
@@ -832,14 +921,16 @@ fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Toke
             ui.end_row();
         }
 
-        ui.label("Kept as");
-        let blocks = match (sum.kept, sum.blocks) {
-            (Kept::Csw, _) => "a CSW block".to_string(),
-            (Kept::DirectRecording, 1) => "a Direct Recording block".to_string(),
-            (Kept::DirectRecording, n) => format!("{n} Direct Recording blocks"),
-        };
-        ui.label(format!("{blocks}, a TZX file of {} bytes", fmt::num(sum.tzx_size as i64, hex)));
-        ui.end_row();
+        if !s.decode {
+            ui.label("Kept as");
+            let blocks = match (sum.kept, sum.blocks) {
+                (Kept::Csw, _) => "a CSW block".to_string(),
+                (Kept::DirectRecording, 1) => "a Direct Recording block".to_string(),
+                (Kept::DirectRecording, n) => format!("{n} Direct Recording blocks"),
+            };
+            ui.label(format!("{blocks}, a TZX file of {} bytes", fmt::num(sum.tzx_size as i64, hex)));
+            ui.end_row();
+        }
     });
     if sum.missing_bytes > 0 {
         let short = format!(
@@ -851,7 +942,11 @@ fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Toke
     if !sum.skipped.is_empty() {
         w::note(ui, tok, format!("Passed over: {}.", sum.skipped.join(", ")));
     }
-    let note = if audio {
+    let note = if s.decode {
+        "Standard blocks are read as the Spectrum's ROM reads them, in the background. A turbo or \
+         protected loader's blocks are kept as raw signal, which loads in an emulator as it is; \
+         hiss and noise between blocks become their pauses."
+    } else if audio {
         "The recording is kept as it is, one bit per sample. It loads in an emulator whatever \
          loader made it, but shows no headers or programs until it is decoded. Hiss can become \
          stray pulses; the filter cleans it, and changes what is kept."
@@ -870,6 +965,13 @@ fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Toke
         }
         Outcome::Keep
     });
+    if go && s.decode {
+        if let Some(path) = &s.path {
+            let choice = DecodeChoice { loader: None, channel: s.channel, filter: audio && s.filter };
+            files::decode_recording(&mut app.store, s.side, path, choice, s.insert_at_cursor);
+            return Outcome::Close;
+        }
+    }
     if go {
         let filter = if audio && s.filter { band } else { Filter::None };
         files::import_recording(
@@ -877,13 +979,25 @@ fn recording_body(ui: &mut Ui, app: &mut App, s: &mut RecordingState, tok: &Toke
             s.side,
             &s.name,
             &s.bytes,
-            s.channel,
+            match raw_channel(s.channel) {
+                ChannelChoice::Left => Channel::Left,
+                ChannelChoice::Right => Channel::Right,
+                _ => Channel::Mix,
+            },
             filter,
             s.insert_at_cursor,
         );
         return Outcome::Close;
     }
     outcome
+}
+
+/// The channel raw signal is kept from: one reading, so the best is the mix.
+fn raw_channel(choice: ChannelChoice) -> ChannelChoice {
+    match choice {
+        ChannelChoice::Best => ChannelChoice::Mix,
+        choice => choice,
+    }
 }
 
 fn programs_body(ui: &mut Ui, app: &mut App, s: &mut ProgramsState, tok: &Tokens) -> Outcome {

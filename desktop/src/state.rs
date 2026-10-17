@@ -18,6 +18,7 @@ use std::time::Instant;
 
 use tapeti_core::audio::{playback_order, FlowOptions};
 use tapeti_core::compare::{compare_tapes, find_matches, BlockCompareMode, CompareResult, TapeCompareMode};
+use tapeti_core::consistency::{check_consistency, Issue, Severity};
 use tapeti_core::hash::FileHashes;
 use tapeti_core::programs::group_ranges;
 use tapeti_core::types::{Block, Body, Uid};
@@ -46,6 +47,95 @@ pub enum Mark {
     Diff,
     Match,
     Ignored,
+}
+
+/// How much a note from the decoder asks of the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteClass {
+    /// Look at this: signal that was not decoded, a read that gave up.
+    Problem,
+    /// What happened, with nothing to act on.
+    Info,
+}
+
+/// One thing the decoder had to say, in its own words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordingNote {
+    pub class: NoteClass,
+    pub text: String,
+    /// The block it is about — by uid, so it follows the block through edits and
+    /// disappears with it. `None` is about the recording as a whole.
+    pub block: Option<Uid>,
+}
+
+/// What a tape that was decoded from audio knows about where it came from.
+/// Plain data: `recording.rs` fills it from the decoder's result, and nothing here
+/// names the decoder, so the store is the same with and without it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recording {
+    pub name: String,
+    /// The file, for decoding it again; and how it was decoded this time.
+    pub path: PathBuf,
+    pub choice: DecodeChoice,
+    pub notes: Vec<RecordingNote>,
+    /// The decoder's whole account, as its own front-ends word it.
+    pub report: Vec<String>,
+    /// What it measured: an axis ("signal", "scan", "channel"…) and its sentences.
+    pub measured: Vec<(String, Vec<String>)>,
+    /// Where each block lies in the recording: from and to, in milliseconds.
+    pub extents: HashMap<Uid, (u32, u32)>,
+    /// The grid the decoder counts the recording on, in positions a second: what
+    /// turns a stretch of it, in milliseconds here, back into a window it can be
+    /// asked for. `None` where the decoder named none.
+    pub rate_hz: Option<u32>,
+    /// Other recordings that blocks of this tape came from, decoded and inserted
+    /// at the cursor. Each keeps its own file, grid, notes and extents: a
+    /// position in one recording means nothing in another, and the fields above
+    /// hold only the tape's own recording. A tape that came from a file and had
+    /// a recording inserted has only these and an empty `path`: a stretch of an
+    /// inserted block can be decoded again, but there is no recording of the
+    /// whole tape to decode again.
+    pub inserted: Vec<Recording>,
+}
+
+impl Recording {
+    /// Take in what a second recording, inserted into this tape, knows about its
+    /// blocks. The measurements stay those of the recording the tape came from.
+    pub fn absorb(&mut self, other: Recording) {
+        self.notes.extend(other.notes.into_iter().filter(|n| n.block.is_some()));
+        self.extents.extend(other.extents);
+    }
+
+    /// The tape's own recording, then the inserted ones.
+    pub fn sources(&self) -> impl Iterator<Item = &Recording> {
+        std::iter::once(self).chain(self.inserted.iter())
+    }
+
+    /// The recording `uid`'s block came from, which is the one its position is in.
+    pub fn source_of(&self, uid: Uid) -> Option<&Recording> {
+        self.sources().find(|r| r.extents.contains_key(&uid))
+    }
+
+    /// Where `uid`'s block lies in the recording it came from.
+    pub fn extent(&self, uid: Uid) -> Option<(u32, u32)> {
+        self.source_of(uid).map(|r| r.extents[&uid])
+    }
+
+    /// Whether there is a recording of the whole tape, to decode again.
+    pub fn is_of_the_tape(&self) -> bool {
+        !self.path.as_os_str().is_empty()
+    }
+
+    /// Take in what a decode of (part of) the recording at `path` found: into the
+    /// source that is that file, or as a newly inserted one.
+    pub fn absorb_from(&mut self, path: &std::path::Path, other: Recording) {
+        let own = self.is_of_the_tape() && self.path == path;
+        match self.inserted.iter_mut().find(|r| r.path == path) {
+            _ if own => self.absorb(other),
+            Some(source) => source.absorb(other),
+            None => self.inserted.push(other),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -82,11 +172,37 @@ pub struct TapeState {
     pub file_hashes: Option<FileHashes>,
     /// Compare/find-match colours, by uid. Empty when there is nothing to show.
     pub compare: HashMap<Uid, Mark>,
+    /// Set when the tape was decoded from a recording; kept until another tape
+    /// is loaded. Not part of undo: it is keyed by uid, so it needs no history.
+    pub recording: Option<Recording>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
 }
 
 impl TapeState {
+    /// Everything there is to say about the tape's consistency: the core's check
+    /// of the blocks, then what the decoder reported, for the blocks that are
+    /// still here. `base` is the number of the first block, as the core wants it.
+    /// The list's marks and the consistency dialog both read this.
+    pub fn issues(&self, base: i32) -> Vec<Issue> {
+        let mut issues = check_consistency(&self.blocks, base);
+        for note in self.recording.iter().flat_map(Recording::sources).flat_map(|r| &r.notes) {
+            let severity = match note.class {
+                NoteClass::Problem => Severity::Warning,
+                NoteClass::Info => continue,
+            };
+            let block = match note.block {
+                None => -1,
+                Some(uid) => match self.blocks.iter().position(|b| b.uid == uid) {
+                    Some(i) => i as i32,
+                    None => continue,
+                },
+            };
+            issues.push(Issue { block, severity, message: format!("Recording: {}", note.text) });
+        }
+        issues
+    }
+
     pub fn empty(name: &str) -> TapeState {
         let gen = next_gen();
         TapeState {
@@ -101,6 +217,7 @@ impl TapeState {
             loaded_version: None,
             file_hashes: None,
             compare: HashMap::new(),
+            recording: None,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -216,9 +333,19 @@ impl TapeState {
             loaded_version: version,
             file_hashes: None,
             compare: HashMap::new(),
+            recording: None,
             undo: Vec::new(),
             redo: Vec::new(),
         };
+    }
+
+    /// As [`load`](Self::load), for blocks that exist nowhere as a tape file yet
+    /// — a decoded recording: the tape starts out unsaved, so closing it asks
+    /// first. Generations start at 1, so 0 is never the current one.
+    pub fn load_unsaved(&mut self, name: String, blocks: Vec<Block>, recording: Option<Recording>) {
+        self.load(name, None, blocks, None);
+        self.saved_gen = 0;
+        self.recording = recording;
     }
 
     /// Start index -> end index of every group and loop.
@@ -315,6 +442,60 @@ pub struct Store {
     status_at: Option<Instant>,
     /// Bumped whenever something outside the blocks changes what a row shows.
     pub view_gen: u64,
+    /// Tape recordings asked for and not yet handed to a decoder: `files.rs` puts
+    /// them here from wherever a file is opened, and `App::frame` takes them at
+    /// the top of a frame (`recording.rs`). Plain data, so the store stays free of
+    /// threads; always empty in a build without the `recordings` feature.
+    pub recordings: Vec<RecordingRequest>,
+}
+
+/// How a recording is to be decoded: what the dialogs offer. The default is the
+/// decoder's own loader, whichever channel decodes best, no filter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DecodeChoice {
+    /// A loader by the decoder's name for it; `None` is its default.
+    pub loader: Option<&'static str>,
+    pub channel: ChannelChoice,
+    /// Band-pass the signal first: for a recording with hum or hiss on it.
+    pub filter: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChannelChoice {
+    /// Each of the three in turn, keeping the decode that delivers most; the mix when kept as
+    /// raw signal.
+    #[default]
+    Best,
+    Mix,
+    Left,
+    Right,
+}
+
+/// What a finished decode does to the pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Landing {
+    /// Become the pane's tape, as opening a file does.
+    Tape,
+    /// Go in at the cursor.
+    Cursor,
+    /// Replace the blocks of the tape that is there — decoding its own recording
+    /// again. An edit like any other: it can be undone.
+    Replace,
+    /// Replace the run of blocks from `first` to `last` with a decode of only
+    /// their stretch of the recording, `from_ms..to_ms`. The blocks are named by
+    /// uid because the decode takes time, and the tape may be edited meanwhile.
+    Stretch { first: Uid, last: Uid, from_ms: u32, to_ms: u32 },
+}
+
+/// A recording to decode into `side`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordingRequest {
+    pub side: Side,
+    pub path: PathBuf,
+    pub into: Landing,
+    pub choice: DecodeChoice,
+    /// The user has already agreed to what the decode will cost in memory.
+    pub confirmed: bool,
 }
 
 impl Store {
@@ -335,6 +516,7 @@ impl Store {
             status: String::new(),
             status_at: None,
             view_gen: 0,
+            recordings: Vec::new(),
         }
     }
 
@@ -503,6 +685,43 @@ impl Store {
     }
 
     // ---- block operations --------------------------------------------------
+
+    /// Swap every block for `blocks`, as one undoable edit: the tape decoded
+    /// again. What was known about the old blocks is kept beside the new — it is
+    /// keyed by uid, costs nothing while they are gone, and is there when undo
+    /// brings them back. A locked tape refuses, and keeps what it had.
+    pub fn replace_decoded(&mut self, side: Side, blocks: Vec<Block>, mut recording: Recording) -> bool {
+        let cursor = if blocks.is_empty() { -1 } else { 0 };
+        let done = self.commit(side, move |bl| {
+            *bl = blocks;
+            Edit { cursor: Some(cursor), selected: Some(HashSet::new()) }
+        });
+        if done {
+            if let Some(old) = self.tapes[side].recording.take() {
+                // Blocks that were inserted from other recordings are replaced too,
+                // and undo brings them back as well.
+                recording.inserted = old.inserted;
+                recording.notes.extend(old.notes);
+                for (uid, extent) in old.extents {
+                    recording.extents.entry(uid).or_insert(extent);
+                }
+            }
+            self.tapes[side].recording = Some(recording);
+        }
+        done
+    }
+
+    /// Put `blocks` where `run` was, as one undoable edit, and leave them selected
+    /// with the cursor on the first: a stretch of signal decoded into what it holds.
+    /// A locked tape refuses.
+    pub fn splice_decoded(&mut self, side: Side, run: std::ops::Range<usize>, blocks: Vec<Block>) -> bool {
+        let uids: HashSet<Uid> = blocks.iter().map(|b| b.uid).collect();
+        let cursor = run.start as i32;
+        self.commit(side, move |bl| {
+            bl.splice(run, blocks);
+            Edit { cursor: Some(cursor), selected: Some(uids) }
+        })
+    }
 
     pub fn insert_blocks(&mut self, side: Side, at: usize, blocks: Vec<Block>) {
         let uids: HashSet<Uid> = blocks.iter().map(|b| b.uid).collect();
