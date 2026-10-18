@@ -9,6 +9,9 @@
 // Each test file uses its own share of these.
 #![allow(dead_code)]
 
+pub mod degrade;
+pub mod rom;
+
 use std::ops::RangeInclusive;
 use tapeti_core::types::{Block, Body};
 use tapeti_decode::pulses::{from_tstates, Pulse};

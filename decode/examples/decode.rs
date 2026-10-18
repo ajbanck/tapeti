@@ -5,7 +5,8 @@
 //!
 //! `cargo run --release -p tapeti-decode --example decode -- INPUT [OUTPUT.tzx] [--left|--right|--mix]
 //! [--filter] [--raw]`. With no channel a stereo recording is read from whichever channel reads
-//! best. The findings and the time taken go to stderr. A compressed (Z-RLE) CSW file needs zlib,
+//! best. The findings, where each block lies in the recording (`extent N: start signal-end end`,
+//! in samples) and the time taken go to stderr. A compressed (Z-RLE) CSW file needs zlib,
 //! which this crate does not have, so it is refused.
 
 use std::sync::atomic::AtomicBool;
@@ -69,6 +70,9 @@ fn run() -> Result<(), String> {
                 Some(block) => eprintln!("block {block}: {}", f.text()),
                 None => eprintln!("{}", f.text()),
             }
+        }
+        for (k, e) in d.extents.iter().enumerate() {
+            eprintln!("extent {k}: {:.0} {:.0} {:.0}", e.start, e.signal_end, e.end);
         }
         d.blocks
     };
