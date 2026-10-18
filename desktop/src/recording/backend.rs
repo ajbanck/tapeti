@@ -155,6 +155,7 @@ fn from_decoded(path: &Path, d: Decoded, audio: bool) -> Decode {
                 | Found::Midline
                 | Found::FromChannel { .. }
                 | Found::BothChannels { .. }
+                | Found::FadeBand { .. }
                 | Found::StrayZero { .. }
                 | Found::MergedSync { .. } => NoteClass::Info,
             },

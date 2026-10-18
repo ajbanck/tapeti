@@ -4,15 +4,13 @@
 //! The edge detector: where a recording's signal changes sides, and so the pulses it holds.
 //!
 //! The samples lose their DC offset and go through the user's filter, then a comparator with a
-//! band decides each crossing and the zero line times it, between samples. The band follows the
-//! signal: it is a share of the loudest sample within 10 ms (`ENV_HALF_WINDOW_MS`), never
-//! below a floor that keeps it off the hiss in a pause. A weak lobe between two strong ones of
-//! the other sign counts; one with a strong neighbour on one side only is noise.
-//!
-//! The samples are walked three times and never held as floats: once for the statistics the
-//! floor and the noise line are cut from, taken over the whole recording, once for the edges,
-//! with the last second of samples kept to time them and to find the half-waves the band
-//! swallowed, and once to mark the pulses that never rise over the noise line.
+//! band decides each crossing, timed at the zero line between samples. The band follows the
+//! loudest sample within 10 ms (`ENV_HALF_WINDOW_MS`), never below a floor that keeps it off the
+//! hiss in a pause; a weak lobe between two strong ones of the other sign counts, one with a
+//! strong neighbour on one side only is noise. A block a dropout ended is cut again on a band
+//! that follows the level down ([`Band::Fade`]). The samples are walked three times, never held
+//! as floats: once for statistics over the whole recording, once for the edges and the
+//! half-waves the band swallowed, and once to mark pulses that never rise over the noise line.
 
 use super::filter::{Filter, FilterError};
 use crate::pulses::Pulse;
@@ -144,6 +142,46 @@ const NOISE_MULT: f32 = 1.0;
 /// f / sqrt(f² + 10²).
 const DC_CORNER_HZ: f64 = 10.0;
 
+/// The block whose peak the fade band's median takes ([`Band::Fade`]).
+///
+/// From below, the median is the lobes' level only while more than half the blocks hold a
+/// lobe's peak, about block / half-wave of them: over half the longest half-wave the ROM's
+/// saver writes, the pilot's 2,168 T, 0.31 ms; under it the median sinks toward the lobes'
+/// flanks and the band with it, until a pilot with noise a fifth of its level chatters (from
+/// 0.15 ms). From above, the median follows a dropout only while more than half its window's
+/// blocks lie inside it: a 12.4 ms dropout is not followed at 2 ms. 0.5 ms is chosen between.
+const FADE_BLOCK_MS: f64 = 0.5;
+
+/// The fade band's floor as a share of the ordinary one ([`FLOOR_FRAC`]).
+///
+/// The floor must come down with the envelope, or the band does not follow a dropout at all.
+/// From above, it must stay under a dropout's lobes, a share under 1.2 (0.06 of the level over
+/// 0.05); at 1.5 such a block is not read again. From below, the median lets go of a block at
+/// once, so the floor meets the DC blocker's residue behind its last half-wave, 0.0124 of the
+/// scale behind a ROM pilot: a share under 0.25 cuts that residue into an edge, bits out of
+/// silence that can answer a header asking a byte too many with a 0x00 no checksum catches.
+/// Half is chosen between, and it is not tied
+/// to the recording's noise mark, since a dropout is local.
+const FADE_FLOOR_SPAN: f32 = 0.5;
+
+/// What the band the comparator arms at follows.
+///
+/// The band is a share of the loudest sample within `ENV_HALF_WINDOW_MS` either side; a
+/// dropout narrower than that window cannot pull the maximum down, so no edge is cut there and
+/// the block ends at the dropout instead. The fade band's median of `FADE_BLOCK_MS` block peaks
+/// over the same window follows the dropout down, agreeing with the ordinary band on steady
+/// signal. It is never a whole decode: a block a header asks for that the ordinary band cannot
+/// read whole is read again on it, kept only at the length asked for with a good checksum
+/// ([`crate::entry`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Band {
+    /// The loudest sample in the window.
+    #[default]
+    Max,
+    /// The median of the window's block peaks, with a floor `FADE_FLOOR_SPAN` of the ordinary.
+    Fade,
+}
+
 /// The line the comparator measures the signal against.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Axis {
@@ -172,7 +210,7 @@ pub fn detect_on<I: Iterator<Item = f32>>(
     axis: Axis,
 ) -> Result<Vec<Edge>, FilterError> {
     let stats = measure(&samples, rate_hz, filter)?;
-    edges_on(&samples, rate_hz, filter, &stats, axis)
+    edges_on(&samples, rate_hz, filter, &stats, axis, Band::Max)
 }
 
 /// The pulses of a recording at `rate_hz` on the zero line, each marked quiet where it never
@@ -205,7 +243,7 @@ pub fn detect_pulses_each<I: Iterator<Item = f32>, T>(
     let stats = measure(&samples, rate_hz, filter)?;
     let mut out = Vec::with_capacity(axes.len());
     for &axis in axes {
-        let edges = edges_on(&samples, rate_hz, filter, &stats, axis)?;
+        let edges = edges_on(&samples, rate_hz, filter, &stats, axis, Band::Max)?;
         let mut pulses = pulses(&edges, rate_hz, stats.samples);
         drop(edges);
         // Measured on the zero line for either: where a pulse is quiet the midline is the
@@ -224,6 +262,24 @@ pub fn detect_pulses_each<I: Iterator<Item = f32>, T>(
     Ok(out)
 }
 
+/// The pulses of a recording at `rate_hz` on `axis`, cut at `band`, each marked quiet as
+/// [`detect_pulses`] marks them. `samples` is called three times.
+pub fn detect_pulses_band<I: Iterator<Item = f32>>(
+    samples: impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+    axis: Axis,
+    band: Band,
+) -> Result<Vec<Pulse>, FilterError> {
+    let stats = measure(&samples, rate_hz, filter)?;
+    let edges = edges_on(&samples, rate_hz, filter, &stats, axis, band)?;
+    let mut pulses = pulses(&edges, rate_hz, stats.samples);
+    if let Some(line) = stats.noise {
+        mark_quiet(&mut pulses, condition(samples(), rate_hz, filter)?, rate_hz, line);
+    }
+    Ok(pulses)
+}
+
 /// What the detector measures over the whole recording before it looks for edges.
 struct Stats {
     /// The envelope's half window.
@@ -231,6 +287,8 @@ struct Stats {
     /// The signal scale, `None` where the recording is silent and holds no edge.
     peak: Option<f32>,
     floors: FloorProfile,
+    /// The floors of the fade band ([`Band::Fade`]).
+    fade_floors: FloorProfile,
     /// The recording's noise line, `None` where it has none.
     noise: Option<f32>,
     /// How many samples it holds.
@@ -250,7 +308,7 @@ fn measure<I: Iterator<Item = f32>>(
     let mut moved = Moved::default();
     let mut env = Vec::new();
     let conditioned = condition(samples().inspect(|&v| moved.see(v, stride)), rate_hz, filter)?;
-    walk(conditioned, half_win, 0, |i, e, _| {
+    walk(conditioned, half_win, None, 0, |i, e, _| {
         if i.is_multiple_of(stride) {
             env.push(e);
         }
@@ -262,35 +320,54 @@ fn measure<I: Iterator<Item = f32>>(
     let peak = at_pctile(&sorted, PEAK_PCTILE);
     if peak <= 0.0 {
         let floors = FloorProfile { blk: 1, v: vec![0.0] };
-        return Ok(Stats { half_win, peak: None, floors, noise: None, samples: count });
+        let fade_floors = FloorProfile { blk: 1, v: vec![0.0] };
+        return Ok(Stats { half_win, peak: None, floors, fade_floors, noise: None, samples: count });
     }
     let mark = quiet_mark(&sorted, &env, &moved, per_sec, peak);
-    let floors = FloorProfile::local(&env, per_sec, stride, peak, mark);
+    let floors = FloorProfile::local(&env, per_sec, stride, peak, mark, Band::Max);
+    let fade_floors = FloorProfile::local(&env, per_sec, stride, peak, mark, Band::Fade);
     let noise = noise_line(&env, &moved, per_sec, peak);
-    Ok(Stats { half_win, peak: Some(peak), floors, noise, samples: count })
+    Ok(Stats { half_win, peak: Some(peak), floors, fade_floors, noise, samples: count })
 }
 
-/// The edges of the recording on `axis`.
+/// The edges of the recording on `axis`, at `band`.
 fn edges_on<I: Iterator<Item = f32>>(
     samples: &impl Fn() -> I,
     rate_hz: u32,
     filter: Filter,
     stats: &Stats,
     axis: Axis,
+    band: Band,
 ) -> Result<Vec<Edge>, FilterError> {
     let Some(peak) = stats.peak else { return Ok(Vec::new()) };
     let conditioned = condition(samples(), rate_hz, filter)?;
+    let floors = match band {
+        Band::Max => &stats.floors,
+        Band::Fade => &stats.fade_floors,
+    };
     Ok(match axis {
-        Axis::Zero => find_edges(conditioned, rate_hz, filter, stats),
+        Axis::Zero => find_edges(conditioned, rate_hz, filter, stats, band),
         Axis::Midline => {
-            find_edges(Midline::new(conditioned, rate_hz, peak, &stats.floors), rate_hz, filter, stats)
+            find_edges(Midline::new(conditioned, rate_hz, peak, floors), rate_hz, filter, stats, band)
         }
     })
 }
 
 /// The edges in `xs`, the conditioned samples measured against the axis they are given on.
-fn find_edges(xs: impl Iterator<Item = f32>, rate_hz: u32, filter: Filter, stats: &Stats) -> Vec<Edge> {
-    let (half_win, floors) = (stats.half_win, &stats.floors);
+fn find_edges(
+    xs: impl Iterator<Item = f32>,
+    rate_hz: u32,
+    filter: Filter,
+    stats: &Stats,
+    band: Band,
+) -> Vec<Edge> {
+    let half_win = stats.half_win;
+    let (floors, fade_blk) = match band {
+        Band::Max => (&stats.floors, None),
+        Band::Fade => {
+            (&stats.fade_floors, Some(((FADE_BLOCK_MS / 1000.0 * f64::from(rate_hz)) as usize).max(1)))
+        }
+    };
     let mut d = Detector {
         edges: Vec::new(),
         state: State::Idle,
@@ -302,13 +379,13 @@ fn find_edges(xs: impl Iterator<Item = f32>, rate_hz: u32, filter: Filter, stats
     };
     // A crossing is timed from the samples behind it, never more than a second back: any
     // half-wave is far shorter.
-    let keep = rate_hz as usize + half_win + 2;
+    let keep = rate_hz as usize + half_win + fade_blk.unwrap_or(0) + 2;
     // A filter removes the low tones a short half-wave rides on, so behind one the shape
     // `Notches` looks for is the filter's own ringing, and splitting it would cut real
     // half-waves in two.
     let mut notches = (filter == Filter::None).then(|| Notches::new(rate_hz));
     let mut envs = Ring { v: VecDeque::with_capacity(keep), first: 0, cap: keep };
-    walk(xs, half_win, keep, |i, e, x| {
+    walk(xs, half_win, fade_blk, keep, |i, e, x| {
         envs.push(e);
         if i > 0 {
             d.step(x, i, e, floors.at(i));
@@ -819,39 +896,152 @@ impl Ring {
     }
 }
 
-/// Calls `f` for every index in order with the envelope there, the loudest `|x|` within
-/// `half_win` either side, and the last `keep` samples read, which reach `half_win` past it.
+/// Calls `f` for every index in order with the envelope there and the last `keep` samples read,
+/// which reach past it as far as the envelope looks.
+///
+/// The envelope is the loudest `|x|` within `half_win` either side, or with `fade_blk` the fade
+/// band's ([`Band::Fade`]): the median of the peaks of the `fade_blk`-sample blocks within as
+/// many blocks either side as `half_win` holds, the same for every index of a block.
 fn walk(
     mut xs: impl Iterator<Item = f32>,
     half_win: usize,
+    fade_blk: Option<usize>,
     keep: usize,
     mut f: impl FnMut(usize, f32, &Ring),
 ) {
     let mut ring = Ring { v: VecDeque::with_capacity(keep), first: 0, cap: keep };
     // Indices with their `|x|`, falling from front to back: the front is the window's loudest.
     let mut loud: VecDeque<(usize, f32)> = VecDeque::new();
+    let mut fade = fade_blk.map(|blk| FadeScan::new(blk, half_win));
+    let ahead = half_win + fade_blk.unwrap_or(0);
     let (mut read, mut done) = (0usize, false);
     for i in 0.. {
-        while !done && read <= i + half_win {
+        while !done && read <= i + ahead {
             match xs.next() {
                 Some(x) => {
                     ring.push(x);
-                    while loud.back().is_some_and(|&(_, a)| a <= x.abs()) {
-                        loud.pop_back();
+                    match fade.as_mut() {
+                        Some(fade) => fade.see(x),
+                        None => {
+                            while loud.back().is_some_and(|&(_, a)| a <= x.abs()) {
+                                loud.pop_back();
+                            }
+                            loud.push_back((read, x.abs()));
+                        }
                     }
-                    loud.push_back((read, x.abs()));
                     read += 1;
                 }
-                None => done = true,
+                None => {
+                    done = true;
+                    if let Some(fade) = fade.as_mut() {
+                        fade.close();
+                    }
+                }
             }
         }
         if i >= read {
             break;
         }
-        while loud.front().is_some_and(|&(j, _)| j + half_win < i) {
-            loud.pop_front();
+        let env = match fade.as_mut() {
+            Some(fade) => fade.at(i),
+            None => {
+                while loud.front().is_some_and(|&(j, _)| j + half_win < i) {
+                    loud.pop_front();
+                }
+                loud.front().map_or(0.0, |&(_, a)| a)
+            }
+        };
+        f(i, env, &ring);
+    }
+}
+
+/// The fade band's envelope, walked: block peaks as the samples are read, and the median of
+/// those within `reach` blocks either side of the block being judged, kept sorted as the window
+/// moves on by a block.
+struct FadeScan {
+    blk: usize,
+    reach: usize,
+    /// The peaks of the blocks read whole, from block `first`.
+    peaks: VecDeque<f32>,
+    first: usize,
+    /// The peak of the block being read so far, and how many of its samples are read.
+    open: f32,
+    open_n: usize,
+    /// The peaks of blocks `lo` up to, not including, `hi`, sorted.
+    window: Vec<f32>,
+    lo: usize,
+    hi: usize,
+    /// The block judged last and its median.
+    k: Option<usize>,
+    median: f32,
+}
+
+impl FadeScan {
+    fn new(blk: usize, half_win: usize) -> Self {
+        FadeScan {
+            blk,
+            reach: (half_win / blk).max(1),
+            peaks: VecDeque::new(),
+            first: 0,
+            open: 0.0,
+            open_n: 0,
+            window: Vec::new(),
+            lo: 0,
+            hi: 0,
+            k: None,
+            median: 0.0,
         }
-        f(i, loud.front().map_or(0.0, |&(_, a)| a), &ring);
+    }
+
+    fn see(&mut self, x: f32) {
+        self.open = self.open.max(x.abs());
+        self.open_n += 1;
+        if self.open_n == self.blk {
+            self.peaks.push_back(self.open);
+            (self.open, self.open_n) = (0.0, 0);
+        }
+    }
+
+    /// The samples have run out: a block read in part is a block.
+    fn close(&mut self) {
+        if self.open_n > 0 {
+            self.peaks.push_back(self.open);
+            (self.open, self.open_n) = (0.0, 0);
+        }
+    }
+
+    fn peak(&self, block: usize) -> f32 {
+        self.peaks[block - self.first]
+    }
+
+    /// The envelope at sample `i`, which the samples read reach `reach + 1` blocks past, or
+    /// past which they have run out.
+    fn at(&mut self, i: usize) -> f32 {
+        let k = i / self.blk;
+        if self.k == Some(k) {
+            return self.median;
+        }
+        let (lo, hi) =
+            (k.saturating_sub(self.reach), (k + self.reach + 1).min(self.first + self.peaks.len()));
+        while self.hi < hi {
+            let v = self.peak(self.hi);
+            let at = self.window.partition_point(|a| a.total_cmp(&v).is_lt());
+            self.window.insert(at, v);
+            self.hi += 1;
+        }
+        while self.lo < lo {
+            let v = self.peak(self.lo);
+            let at = self.window.partition_point(|a| a.total_cmp(&v).is_lt());
+            self.window.remove(at);
+            self.lo += 1;
+        }
+        while self.first < self.lo {
+            self.peaks.pop_front();
+            self.first += 1;
+        }
+        self.k = Some(k);
+        self.median = self.window.get(self.window.len().saturating_sub(1) / 2).copied().unwrap_or(0.0);
+        self.median
     }
 }
 
@@ -1030,7 +1220,8 @@ struct FloorProfile {
 }
 
 impl FloorProfile {
-    fn local(env: &[f32], per_block: usize, stride: usize, peak: f32, mark: f32) -> Self {
+    /// The floors for `band`: the fade band's are [`FADE_FLOOR_SPAN`] of the ordinary share.
+    fn local(env: &[f32], per_block: usize, stride: usize, peak: f32, mark: f32, band: Band) -> Self {
         let nb = env.len().div_ceil(per_block).max(1);
         let mut buf = Vec::with_capacity(per_block);
         let block: Vec<f32> = (0..nb)
@@ -1066,11 +1257,14 @@ impl FloorProfile {
             }
         }
         let lowest = (NOISE_MULT * mark / FLOOR_FRAC).min(peak);
-        let bind = FLOOR_FRAC / REV_FRAC * peak;
-        let v = scale
-            .into_iter()
-            .map(|s| FLOOR_FRAC * if s < bind { s.clamp(lowest, peak) } else { peak })
-            .collect();
+        // The fade band's envelope follows a dropout down, so inside one its levels are shares
+        // of the dropout's level, and the floor decides in signal at any scale.
+        let (share, bind) = match band {
+            Band::Max => (FLOOR_FRAC, FLOOR_FRAC / REV_FRAC * peak),
+            Band::Fade => (FADE_FLOOR_SPAN * FLOOR_FRAC, f32::INFINITY),
+        };
+        let v =
+            scale.into_iter().map(|s| share * if s < bind { s.clamp(lowest, peak) } else { peak }).collect();
         FloorProfile { blk: per_block * stride, v }
     }
 

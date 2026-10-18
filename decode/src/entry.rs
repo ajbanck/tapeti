@@ -285,6 +285,9 @@ pub enum Finding {
     /// The sync pair had merged into a half-wave beside it, or lay past the ROM's window, and the
     /// block was read where its bits are ([`crate::framing::DECIDE`]).
     MergedSync { block: usize },
+    /// The block was read again on a band that follows the signal's level down through a
+    /// dropout, where the first read stopped ([`edges::Band::Fade`]).
+    FadeBand { block: usize },
 }
 
 impl Finding {
@@ -304,7 +307,8 @@ impl Finding {
             | Finding::PartialFinalByte { block, .. }
             | Finding::MergedSync { block }
             | Finding::FromChannel { block, .. }
-            | Finding::BothChannels { block } => Some(block),
+            | Finding::BothChannels { block }
+            | Finding::FadeBand { block } => Some(block),
             Finding::LeadIn { .. } | Finding::Channel { .. } | Finding::Midline => None,
         }
     }
@@ -350,6 +354,9 @@ impl Finding {
             ),
             Finding::StrayZero { .. } => {
                 "A stray 0x00 byte behind the header, which a tape copier leaves, is left out.".into()
+            }
+            Finding::FadeBand { .. } => {
+                "The signal fades out for a moment; the block was read again following its level down.".into()
             }
             Finding::MergedSync { .. } => {
                 "The sync pulses are merged into the signal beside them or distorted; the bits are read where the block is.".into()
@@ -489,6 +496,7 @@ fn best_channel(
     if let (Channel::Mix, [_, Some(left), Some(right)]) = (ORDER[i], &decodes[..]) {
         crate::channels::outvote(&mut kept, left, right);
     }
+    crate::channels::faded_legs(&mut kept, &donors);
     crate::channels::combine(&mut kept, &donors);
     kept.findings.insert(0, Finding::Channel { kept: ORDER[i] });
     Ok(kept)
@@ -561,6 +569,8 @@ fn decode_channel(
 /// clean one both read the same, so both are decoded and judged by what they deliver. Where
 /// the zero line's decode holds nothing but whole blocks and plain pauses, the midline is not
 /// walked: the pick leaves a decode only for one that delivers more, and there is nothing more.
+/// On either line, a block a header asks for that does not read whole is read again on the fade
+/// band ([`read_faded`]).
 fn decode_sound(
     sound: &Sound,
     filter: Filter,
@@ -590,7 +600,7 @@ fn decode_sound(
             }
         })
     };
-    let decodes = edges::detect_pulses_each(samples, sound.rate_hz, filter, &AXES, |_, pulses| {
+    let decodes = edges::detect_pulses_each(samples, sound.rate_hz, filter, &AXES, |axis, pulses| {
         if cancel.load(Ordering::Relaxed) {
             return ControlFlow::Break(Err(DecodeError::Cancelled));
         }
@@ -600,8 +610,14 @@ fn decode_sound(
             most.set(most.get().max(p.blocks));
             (report.borrow_mut())(Progress { blocks: most.get(), ..p });
         };
-        let got = in_window(pulses)
-            .and_then(|p| decode_pulses_from(&p, sound.rate_hz, &mut each, cancel, (from, from + per_axis)));
+        let got = in_window(pulses).and_then(|p| {
+            let read = decode_pulses_from(&p, sound.rate_hz, &mut each, cancel, (from, from + per_axis))?;
+            let faded = || {
+                let band = edges::detect_pulses_band(samples, sound.rate_hz, filter, axis, edges::Band::Fade);
+                in_window(band.map_err(ImportError::Filter)?)
+            };
+            read_faded(read, &p, faded, sound.rate_hz, cancel)
+        });
         let whole = got.as_ref().is_ok_and(|d| {
             !d.findings.iter().any(|f| {
                 matches!(
@@ -629,6 +645,108 @@ fn decode_sound(
     }
     progress(Progress { pulses_read: 0, pulses: 0, blocks: most.get(), done: 1.0 });
     Ok(kept)
+}
+
+/// `read`, the decode of the `ordinary` pulses, with each block behind a proven header that does
+/// not answer it read again from the fade band's pulses ([`edges::Band::Fade`]), which `faded`
+/// cuts when one is owed.
+///
+/// A dropout narrower than the ordinary band's window leaves no edge across it, and the block
+/// ends there: the bytes are not in those pulses at all. Read again from the fade band at the
+/// length its header asks for, a block stands only as an answer, that long with its checksum
+/// good, and not as the ordinary read with 0x00 bytes behind it: a 0x00 keeps the checksum,
+/// and a band that arms lower can read a byte of nothing past a block's end. Each answer's
+/// stretch, from its pilot to where its bits stop, then takes the fade band's pulses in place
+/// of the ordinary ones, and the whole is decoded again, so that its pauses and the blocks
+/// around it are read as ever ([`Finding::FadeBand`]).
+fn read_faded(
+    read: Decoded,
+    ordinary: &[Pulse],
+    faded: impl FnOnce() -> Result<Vec<Pulse>, DecodeError>,
+    grid_hz: u32,
+    cancel: &AtomicBool,
+) -> Result<Decoded, DecodeError> {
+    let owed = unanswered(&read);
+    if owed.is_empty() {
+        return Ok(read);
+    }
+    let faded = faded()?;
+    let to_t = f64::from(TSTATES_PER_SEC) / f64::from(grid_hz);
+    let end_of = |p: &Pulse| p.start + p.tstates / to_t;
+    let start_at = |i: usize| faded.get(i).map_or_else(|| faded.last().map_or(0.0, end_of), |p| p.start);
+    // Each answer: its bytes and the stretch it takes.
+    let mut answers: Vec<(Vec<u8>, f64, f64)> = Vec::new();
+    for (leg, want) in owed {
+        let (Body::Standard { data: had, .. }, extent) = (&read.blocks[leg].body, read.extents[leg]) else {
+            continue;
+        };
+        let Some(at) = faded.iter().position(|p| p.start >= extent.start) else { continue };
+        let Some(b) = next_block(&faded, at, Some(want), cancel) else { continue };
+        let (from, to) = (start_at(b.tone), start_at(b.bits_end));
+        let zeros_behind =
+            b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
+        let answers_it = b.data.len() == want && b.data.iter().fold(0, |x, &d| x ^ d) == 0;
+        if answers_it && !zeros_behind && from < extent.end && answers.last().is_none_or(|a| a.2 <= from) {
+            answers.push((b.data, from, to));
+        }
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err(DecodeError::Cancelled);
+    }
+    if answers.is_empty() {
+        return Ok(read);
+    }
+    // The ordinary pulses up to each stretch, the fade band's inside it, the pulse that runs
+    // across either end cut there.
+    let mut merged = Vec::with_capacity(ordinary.len());
+    let mut rest = ordinary;
+    for (_, from, to) in &answers {
+        let before = rest.partition_point(|p| p.start < *from);
+        merged.extend_from_slice(&rest[..before]);
+        if let Some(last) = merged.last_mut().filter(|p| end_of(p) > *from) {
+            last.tstates = (from - last.start) * to_t;
+        }
+        merged.extend(faded.iter().filter(|p| p.start >= *from && p.start < *to));
+        rest = &rest[before..];
+        let after = rest.partition_point(|p| p.start < *to);
+        if let Some(across) = after.checked_sub(1).map(|k| rest[k]).filter(|p| end_of(p) > *to) {
+            merged.push(Pulse { tstates: (end_of(&across) - to) * to_t, start: *to, quiet: across.quiet });
+        }
+        rest = &rest[after..];
+    }
+    merged.extend_from_slice(rest);
+    let mut again = decode_pulses_from(&merged, grid_hz, &mut |_| {}, cancel, (0.0, 1.0))?;
+    for (data, from, to) in answers {
+        let found = (0..again.blocks.len()).find(|&i| {
+            matches!(&again.blocks[i].body, Body::Standard { data: d, .. } if *d == data)
+                && again.extents[i].start < to
+                && from < again.extents[i].end
+        });
+        // Read again from the same pulses, the answer is there; where it is not, nothing stands.
+        let Some(block) = found else { return Ok(read) };
+        again.findings.push(Finding::FadeBand { block });
+    }
+    Ok(again)
+}
+
+/// The blocks that follow a proven header without answering it, with the length it asks for:
+/// the next block of bytes behind the header, whatever lies between, not as long or its
+/// checksum bad.
+fn unanswered(d: &Decoded) -> Vec<(usize, usize)> {
+    let image = |b: &Block| match &b.body {
+        Body::Standard { data, .. } => Some(data.clone()),
+        _ => None,
+    };
+    let mut owed = Vec::new();
+    for (i, b) in d.blocks.iter().enumerate() {
+        let Some(want) = image(b).and_then(|h| header_asks(&h)) else { continue };
+        let Some(leg) = (i + 1..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some()) else { continue };
+        let data = image(&d.blocks[leg]).expect("found by its bytes");
+        if data.len() != want || data.iter().fold(0, |x, &v| x ^ v) != 0 {
+            owed.push((leg, want));
+        }
+    }
+    owed
 }
 
 /// The T-states a pause opens with: TZX plays one as 1 ms at the level the block left, then low.

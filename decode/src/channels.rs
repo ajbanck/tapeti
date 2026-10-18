@@ -217,6 +217,40 @@ pub fn outvote(base: &mut Decoded, left: &Decoded, right: &Decoded) {
     }
 }
 
+/// Puts into `base` a donor's ordinary read of each block `base` read on the fade band.
+///
+/// The donor's block is the same length at an overlapping extent, both checksums good, the
+/// bytes different, and no fade band read itself ([`Finding::FadeBand`]).
+///
+/// The fade band is a last resort: it reads only a block the ordinary band could not, and its
+/// reading stands on the length asked for and the checksum alone, which a read with two
+/// flipped bits in one column passes. A donor's ordinary read of the same place is the answer
+/// the fade band stood in for, so the last resort gives way to it; donors are asked in order,
+/// and the block keeps `base`'s place and pause ([`Finding::FromChannel`]).
+pub fn faded_legs(base: &mut Decoded, donors: &[(Channel, &Decoded)]) {
+    let faded = |d: &Decoded, i: usize| d.findings.contains(&Finding::FadeBand { block: i });
+    for i in 0..base.blocks.len() {
+        let Some(read) = image(&base.blocks[i]).filter(|d| xor_ok(d) && faded(base, i)) else { continue };
+        let ordinary = donors.iter().find_map(|&(channel, d)| {
+            (0..d.blocks.len()).find_map(|j| {
+                let other = image(&d.blocks[j])?;
+                (other.len() == read.len()
+                    && other != read
+                    && xor_ok(other)
+                    && !faded(d, j)
+                    && overlap(&d.extents[j], &base.extents[i]))
+                .then(|| (channel, other.to_vec()))
+            })
+        });
+        let Some((channel, bytes)) = ordinary else { continue };
+        if let Body::Standard { data, .. } = &mut base.blocks[i].body {
+            *data = bytes;
+        }
+        base.findings.retain(|f| *f != Finding::FadeBand { block: i });
+        base.findings.push(Finding::FromChannel { block: i, channel });
+    }
+}
+
 /// Whether two extents of one recording overlap.
 fn overlap(a: &Extent, b: &Extent) -> bool {
     a.start < b.end && b.start < a.end
