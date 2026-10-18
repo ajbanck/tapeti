@@ -153,7 +153,12 @@ pub unsafe extern "C" fn decode_recording(
                 .findings
                 .iter()
                 .map(|f| {
-                    let class = if matches!(f, Finding::BadChecksum { .. } | Finding::Short { .. }) {
+                    let class = if matches!(
+                        f,
+                        Finding::BadChecksum { .. }
+                            | Finding::Short { .. }
+                            | Finding::PartialFinalByte { .. }
+                    ) {
                         'P'
                     } else {
                         'I'

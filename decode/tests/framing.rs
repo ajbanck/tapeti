@@ -7,13 +7,15 @@
 
 mod common;
 
-use common::{clicks, jitter, lengths, pulses, speed, wobble};
+use common::{clicks, jitter, lengths, pulses, same_tape, speed, wobble};
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{block_duration, TSTATES_PER_SEC};
 use tapeti_core::types::{Block, Body};
 use tapeti_decode::entry::{decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding};
 use tapeti_decode::fallback::{sort, Part, TONE_RUN};
-use tapeti_decode::framing::{bit_timeout, leader_pair, pilot_pulse, ONE_ABOVE, PILOT_PULSE_MOST};
+use tapeti_decode::framing::{
+    bit_timeout, leader_pair, pilot_pulse, pilot_run_at, BOUNCE_MOST, ONE_ABOVE, PILOT_PULSE_MOST,
+};
 use tapeti_decode::pulses::{of_blocks, Pulse};
 use tapeti_decode::readers::Channel;
 use tapeti_decode::waveform::filter::Filter;
@@ -85,19 +87,66 @@ fn a_tape_off_speed_inside_the_windows_still_reads_in_full() {
     let clean = of_blocks(&blocks).unwrap();
     for factor in [0.82, 0.9, 1.1, 1.3, 1.4] {
         let got = decode(&speed(&clean, factor));
-        assert_eq!(datas(&got.blocks), datas(&blocks), "speed {factor}");
+        assert_eq!(same_tape(&got.blocks, &blocks, factor..=factor), Ok(()), "speed {factor}");
     }
+}
+
+/// Blocks saved with no pause run straight into the next block's pilot, which the bit loop reads
+/// as 1 bits. With no header, nothing but that pilot marks where the first block ends, at any
+/// speed the windows take; a block of all 1 bits is not cut short by its own data.
+#[test]
+fn a_block_with_no_pause_behind_it_ends_at_the_next_blocks_pilot() {
+    let blocks = vec![
+        standard(0, with_checksum(0xFF, &[0xFF; 60])),
+        standard(0, with_checksum(0x00, &[0x5A; 30])),
+        standard(1000, with_checksum(0xFF, &(0..=255).collect::<Vec<u8>>())),
+    ];
+    let clean = of_blocks(&blocks).unwrap();
+    for factor in [0.82, 0.88, 1.0, 1.15, 1.4] {
+        let got = decode(&speed(&clean, factor));
+        assert_eq!(same_tape(&got.blocks, &blocks, factor..=factor), Ok(()), "speed {factor}");
+        let broken = |f: &&Finding| matches!(f, Finding::BadChecksum { .. } | Finding::Short { .. });
+        assert!(!got.findings.iter().any(|f| broken(&f)), "speed {factor}: {:?}", got.findings);
+    }
+    // Behind a header the length is known as well, and the run ends the block at the same place.
+    let [header, data] = code_pair(b"nopause   ", 100, 3);
+    let mut header_first = vec![header, data];
+    if let Body::Standard { pause, .. } = &mut header_first[1].body {
+        *pause = 0;
+    }
+    header_first.push(standard(1000, with_checksum(0xFF, &[1, 2, 3])));
+    let got = decode(&of_blocks(&header_first).unwrap());
+    assert_eq!(same_tape(&got.blocks, &header_first, 1.0..=1.0), Ok(()));
+}
+
+/// The run's walls: `TONE_RUN` (32) pulses each within 10% of the block's pilot half. A 1 bit's
+/// half, 1,710 T, lies 21% under a 2,168 T pilot.
+#[test]
+fn a_pilot_run_is_32_pulses_within_a_tenth_of_the_pilot() {
+    let run = |t: f64, n: usize| pulses(&vec![t as u64; n]);
+    assert!(pilot_run_at(&run(2168.0, 32), 0, 2168.0));
+    assert!(!pilot_run_at(&run(2168.0, 31), 0, 2168.0), "31 are too few");
+    assert!(pilot_run_at(&run(1952.0, 32), 0, 2168.0));
+    assert!(!pilot_run_at(&run(1950.0, 32), 0, 2168.0), "under 0.9 of the pilot");
+    assert!(pilot_run_at(&run(2384.0, 32), 0, 2168.0));
+    assert!(!pilot_run_at(&run(2386.0, 32), 0, 2168.0), "over 1.1 of the pilot");
+    assert!(!pilot_run_at(&run(1710.0, 64), 0, 2168.0), "a run of 1 bits");
+    // Measured against the block's own pilot: on a tape playing 15% slow, so is the next pilot.
+    assert!(pilot_run_at(&run(2493.0, 32), 0, 2493.0));
+    assert!(!pilot_run_at(&run(1967.0, 32), 0, 2493.0));
 }
 
 #[test]
 fn wobble_and_jitter_inside_the_windows_still_read_in_full() {
     let blocks = tape();
     let clean = of_blocks(&blocks).unwrap();
-    let got = decode(&wobble(&clean, 0.15, 700_000.0));
-    assert_eq!(datas(&got.blocks), datas(&blocks));
+    // The ROM takes a swing of 15% too, but a run of 1 bits 14% slower than the block's own pilot
+    // is in the band of the next block's pilot ([`pilot_run_at`]), and the block ends there.
+    let got = decode(&wobble(&clean, 0.12, 700_000.0));
+    assert_eq!(same_tape(&got.blocks, &blocks, 0.88..=1.12), Ok(()));
     // A zero's pair can grow by 400 T and a one's shrink by as much before they meet the split.
     let got = decode(&jitter(&clean, 190.0, 7));
-    assert_eq!(datas(&got.blocks), datas(&blocks));
+    assert_eq!(same_tape(&got.blocks, &blocks, 1.0..=1.0), Ok(()));
 }
 
 #[test]
@@ -217,9 +266,10 @@ fn a_click_in_the_data_loses_that_block_and_no_other() {
     let blocks = tape();
     let mut p = of_blocks(&blocks).unwrap();
     // Into the second block's data: past the first block, whose pause joins the next pilot's
-    // first pulse, and the second's pilot and sync.
+    // first pulse, and the second's pilot and sync. The click is wider than a bounce, which
+    // would fold into the half-wave before it.
     let at = of_blocks(&blocks[..1]).unwrap().len() - 1 + 3223 + 2 + 101;
-    let cut = clicks(&p[at..at + 1], 1, 60.0, 3);
+    let cut = clicks(&p[at..at + 1], 1, 600.0, 3);
     p.splice(at..at + 1, cut);
     let got = decode(&p);
     let mut want = datas(&blocks);
@@ -253,6 +303,29 @@ fn the_block_after_a_header_has_the_headers_length() {
     assert_eq!(got.blocks[0], h);
     assert!(matches!(&got.blocks[1].body, Body::Standard { data, .. } if data.len() == 12));
     assert!(matches!(got.blocks[2].body, Body::Csw { .. }));
+
+    // Behind the length, a recording's decay: two pulses that pair into a 1 bit, short of a byte.
+    // They are the pause's, with the silence after them (its 1 ms opening and the rest).
+    let [h, d] = code_pair(b"decay     ", 10, 3);
+    let Body::Standard { data, .. } = &d.body else { unreachable!() };
+    let tail = Block::new(Body::PulseSeq { pulses: vec![873, 2778] });
+    let blocks = [h.clone(), standard(0, data.clone()), tail, Block::new(Body::Pause { pause: 1000 })];
+    let got = decode(&of_blocks(&blocks).unwrap());
+    assert_eq!(got.blocks, vec![h, standard(1001, data.clone())]);
+    assert_eq!(got.findings, vec![Finding::Collapsed { block: 1, pulses: 4 }]);
+
+    // A run-on that ends in 1 bits right before the next block's pilot: their halves are as long
+    // as the sync loop takes for pilot, and the pilot does not start among them.
+    let [h, d] = code_pair(b"runs on   ", 10, 3);
+    let Body::Standard { data, .. } = &d.body else { unreachable!() };
+    let next = standard(1000, with_checksum(0xFF, &[1, 2, 3]));
+    for tail in [vec![0x0F], vec![0x00, 0x3F], vec![0xFF]] {
+        let long = standard(0, [data.clone(), tail.clone()].concat());
+        let got = decode(&of_blocks(&[h.clone(), long, next.clone()]).unwrap());
+        assert_eq!(got.blocks[1], standard(0, data.clone()), "{tail:x?}");
+        assert_eq!(&got.blocks[3], &next, "{tail:x?}");
+        assert!(matches!(got.blocks[2].body, Body::Csw { pause: 0, .. }), "{tail:x?}: {:?}", got.blocks[2]);
+    }
 
     // Asked for 300 and holding 20: short.
     let [h, _] = code_pair(b"shorter   ", 300, 3);
@@ -330,10 +403,12 @@ fn the_leader_needs_its_pairs_and_the_sync_its_window() {
     assert!(read(&pilot_then_byte(257, 667, 735)));
     assert!(!read(&pilot_then_byte(256, 667, 735)));
     // Straight out of the leader the first sync pulse may be 1,054 T, after more pilot 1,048 T.
-    // A longer one is more pilot, and the second sync pulse is then taken for the first.
+    // A longer one is more pilot to the ROM, which then takes the second for the first; the
+    // pair still reads by its sum, unless it lies past the window, as at the saver's own split.
     assert!(read(&pilot_then_byte(257, 1054, 735)));
     assert!(read(&pilot_then_byte(400, 1048, 735)));
-    assert!(!read(&pilot_then_byte(400, 1049, 735)));
+    assert!(read(&pilot_then_byte(400, 1049, 735)));
+    assert!(!read(&pilot_then_byte(400, 1049, 1156)));
     // The second only has to come before the counter runs out: 3,573 T behind a one-read sync,
     // 3,042 T behind a ten-read one.
     assert!(read(&pilot_then_byte(400, 400, 3573)));
@@ -415,7 +490,7 @@ fn progress_counts_the_edge_detector_and_every_channel() {
     let seen = run(&encode_wav(&mono, 44100, 16));
     assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1), "never goes back: {seen:?}");
     assert!(seen[0].0 == 0 && seen[0].1 > 0.0, "the edge detector reports first: {seen:?}");
-    assert_eq!(*seen.last().unwrap(), (6, 1.0));
+    assert!(seen.last().is_some_and(|&(blocks, done)| blocks >= 6 && done == 1.0), "{seen:?}");
 
     let stereo: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
     let mut wav = encode_wav(&stereo, 44100, 16);
@@ -424,9 +499,10 @@ fn progress_counts_the_edge_detector_and_every_channel() {
     wav[32] = 4;
     let seen = run(&wav);
     assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1 && w[0].0 <= w[1].0), "never goes back: {seen:?}");
+    // The count is the most any decode has read so far, which a decode not kept can pass.
     let third = seen.iter().position(|s| s.1 > 2.0 / 3.0).expect("the third decode reports");
-    assert_eq!(seen[third - 1], (6, 2.0 / 3.0), "each decode is a third, ending on its blocks");
-    assert_eq!(*seen.last().unwrap(), (6, 1.0));
+    assert!(seen[third - 1].0 >= 6 && seen[third - 1].1 == 2.0 / 3.0, "each decode is a third: {seen:?}");
+    assert!(seen.last().is_some_and(|&(blocks, done)| blocks >= 6 && done == 1.0), "{seen:?}");
 }
 
 #[test]
@@ -451,4 +527,321 @@ fn a_wav_decodes_through_the_file_entry_point() {
     .unwrap();
     assert_eq!(got.rate_hz, 44100);
     assert_eq!(datas(&got.blocks), datas(&blocks));
+}
+
+/// Whether a pulse of the clean render is a data half-wave: the bits are the only pulses of
+/// 855 or 1,710 T.
+fn is_data(t: f64) -> bool {
+    t == 855.0 || t == 1710.0
+}
+
+/// `pulses` with a burst of `burst` (T-states) put into every `every`-th transition between two
+/// data half-waves, taken from the halves either side so that every pair keeps its length; and
+/// how many went in.
+fn bounced(pulses: &[Pulse], every: usize, burst: &[f64]) -> (Vec<Pulse>, usize) {
+    let half = burst.len() / 2;
+    let (before, after): (f64, f64) = (burst[..half].iter().sum(), burst[half..].iter().sum());
+    let mut lengths: Vec<u64> = Vec::new();
+    let (mut seen, mut put) = (0, 0);
+    let mut carry = 0.0;
+    for w in pulses.windows(2) {
+        let (x, y) = (w[0].tstates, w[1].tstates);
+        let mut x = x - carry;
+        carry = 0.0;
+        if is_data(w[0].tstates) && is_data(y) {
+            seen += 1;
+            if seen % every == 0 {
+                x -= before;
+                lengths.push(x as u64);
+                lengths.extend(burst.iter().map(|&t| t as u64));
+                carry = after;
+                put += 1;
+                continue;
+            }
+        }
+        lengths.push(x as u64);
+    }
+    lengths.push((pulses[pulses.len() - 1].tstates - carry) as u64);
+    (common::pulses(&lengths), put)
+}
+
+#[test]
+fn bounces_inside_the_bits_fold_into_the_half_before_them() {
+    // The shapes of a one-bit recording's chatter at 79 T a sample: one and one, one and two,
+    // two and one, one and four, three and three; all under the bound.
+    let blocks = tape();
+    let clean = of_blocks(&blocks).unwrap();
+    for (k, burst) in
+        [[79.0, 79.0], [79.0, 158.0], [158.0, 79.0], [79.0, 316.0], [237.0, 237.0]].iter().enumerate()
+    {
+        let (p, put) = bounced(&clean, 7 + k, burst);
+        assert!(put > 100, "{put} bounces");
+        let got = decode(&p);
+        assert_eq!(same_tape(&got.blocks, &blocks, 1.0..=1.0), Ok(()), "{burst:?}: {:?}", got.findings);
+    }
+    // In every transition, back to back: each fold leaves the next bounce behind a half-wave.
+    let (p, _) = bounced(&clean, 1, &[79.0, 79.0]);
+    assert_eq!(same_tape(&decode(&p).blocks, &blocks, 1.0..=1.0), Ok(()));
+}
+
+#[test]
+fn two_pulses_past_the_bound_are_data() {
+    // Four and four samples, 632 T: not a bounce, read as the pulses say, which breaks the block.
+    let blocks = tape();
+    let (p, _) = bounced(&of_blocks(&blocks).unwrap(), 50, &[316.0, 316.0]);
+    let got = decode(&p);
+    assert!(!datas(&got.blocks).contains(&datas(&blocks)[0]));
+}
+
+#[test]
+fn a_burst_of_bounces_folds_whole_while_it_stays_under_the_bound() {
+    // Two pairs in one transition, 154 77 77 77 T: pair by pair, the pulse behind the first is
+    // the second's, no half-wave, and the burst would read as a bit of its own.
+    let blocks = tape();
+    let clean = of_blocks(&blocks).unwrap();
+    let (p, _) = bounced(&clean, 9, &[154.0, 77.0, 77.0, 77.0]);
+    assert_eq!(same_tape(&decode(&p).blocks, &blocks, 1.0..=1.0), Ok(()));
+    // Three, two, two and one samples: 632 T, past the bound, and read as the pulses say.
+    let (p, _) = bounced(&clean, 50, &[237.0, 158.0, 158.0, 79.0]);
+    assert!(!datas(&decode(&p).blocks).contains(&datas(&blocks)[0]));
+}
+
+#[test]
+fn the_bound_lies_under_a_zero_pair_at_the_fastest_speed_the_rom_loads() {
+    // Behind a half, the two genuine halves after it last a 0 bit's pair at least; at the
+    // fastest speed the ROM loads, 0.831 of the saver's timing, that is 1,421 T.
+    const { assert!(BOUNCE_MOST < 2.0 * 855.0 * 0.831) };
+    let blocks = tape();
+    let (p, _) = bounced(&of_blocks(&blocks).unwrap(), 7, &[158.0, 158.0]);
+    assert_eq!(same_tape(&decode(&speed(&p, 0.831)).blocks, &blocks, 0.831..=0.831), Ok(()));
+}
+
+#[test]
+fn a_tape_off_speed_is_read_at_the_speed_its_leader_measures() {
+    // From 1.48 slow a 0 bit's pair passes the ROM's split, and nearer 1.4 a little jitter or
+    // wow takes it there; read at the leader's speed, the split moves with the tape. Past 1.55
+    // the leader's own window, which measures the speed, no longer takes the pilot.
+    let blocks = tape();
+    let clean = of_blocks(&blocks).unwrap();
+    for factor in [1.48, 1.5, 1.53] {
+        let got = decode(&speed(&clean, factor));
+        assert_eq!(same_tape(&got.blocks, &blocks, factor..=factor), Ok(()), "speed {factor}");
+    }
+    let got = decode(&jitter(&speed(&clean, 1.4), 150.0, 3));
+    assert_eq!(same_tape(&got.blocks, &blocks, 1.4..=1.4), Ok(()));
+    let got = decode(&wobble(&speed(&clean, 1.3), 0.14, 300_000.0));
+    assert_eq!(same_tape(&got.blocks, &blocks, 1.3 * 0.86..=1.3 * 1.14), Ok(()));
+    assert!(datas(&decode(&speed(&clean, 1.56)).blocks).is_empty());
+}
+
+#[test]
+fn a_stray_zero_behind_a_header_is_left_out() {
+    // A copier saved the header with its checksum, and the saver added its own: a 0x00.
+    let [header, data] = code_pair(b"copied    ", 50, 9);
+    let Body::Standard { data: h, .. } = &header.body else { unreachable!() };
+    let mut copied = h.clone();
+    copied.push(0x00);
+    let tape = vec![standard(1000, copied), data.clone()];
+    let got = decode(&of_blocks(&tape).unwrap());
+    assert_eq!(got.blocks, vec![header.clone(), data.clone()]);
+    assert_eq!(got.findings, vec![Finding::StrayZero { block: 0 }]);
+
+    // Only behind a header whose checksum holds; anything else stays the block's.
+    let mut broken = h.clone();
+    broken[5] ^= 1;
+    for kept in [[broken, vec![0x00]].concat(), [with_checksum(0xFF, &[0x00; 17]), vec![0x00]].concat()] {
+        let got = decode(&of_blocks(&[standard(1000, kept.clone())]).unwrap());
+        assert_eq!(datas(&got.blocks), vec![kept.clone()], "{kept:?}");
+        assert!(!got.findings.contains(&Finding::StrayZero { block: 0 }));
+    }
+    // And only a single 0x00: behind a header the ROM stops at its 19 bytes, and what follows
+    // them in the same block is raw signal.
+    for (tail, stray) in [(vec![0x01], false), (vec![0x00, 0x00], true)] {
+        let got = decode(&of_blocks(&[standard(1000, [h.clone(), tail.clone()].concat())]).unwrap());
+        assert_eq!(datas(&got.blocks), vec![h.clone()], "{tail:?}");
+        assert!(got.findings.contains(&Finding::RawSignal { block: 1 }), "{tail:?}: {:?}", got.findings);
+        assert_eq!(got.findings.contains(&Finding::StrayZero { block: 0 }), stray, "{tail:?}");
+    }
+}
+
+#[test]
+fn a_worn_tape_reads_no_merged_sync_where_there_is_none() {
+    let blocks = tape();
+    let clean = of_blocks(&blocks).unwrap();
+    for (p, played) in [
+        (speed(&clean, 0.85), 0.85..=0.85),
+        (speed(&clean, 1.3), 1.3..=1.3),
+        (wobble(&clean, 0.12, 700_000.0), 0.88..=1.12),
+        (jitter(&clean, 190.0, 7), 1.0..=1.0),
+        (jitter(&speed(&clean, 1.4), 150.0, 3), 1.4..=1.4),
+    ] {
+        let got = decode(&p);
+        assert_eq!(same_tape(&got.blocks, &blocks, played), Ok(()));
+        assert!(!got.findings.iter().any(|f| matches!(f, Finding::MergedSync { .. })), "{:?}", got.findings);
+    }
+}
+
+#[test]
+fn a_recording_that_moves_one_kind_of_edge_still_reads() {
+    // Every edge of one kind 500 T late: each pulse alternately longer and shorter by as much.
+    // Pairs keep their sums; the sync pair's first pulse alone would pass the ROM's window.
+    let blocks = tape();
+    let clean = of_blocks(&blocks).unwrap();
+    for d in [-500.0, 300.0, 500.0] {
+        let lengths: Vec<u64> = clean
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.tstates + if i % 2 == 0 { d } else { -d }).round() as u64)
+            .collect();
+        let got = decode(&pulses(&lengths));
+        assert_eq!(same_tape(&got.blocks, &blocks, 1.0..=1.0), Ok(()), "skew {d}: {:?}", got.findings);
+    }
+}
+
+#[test]
+fn a_header_behind_a_header_is_read_whole() {
+    // The ROM asks for a header by its flag: loading the data a header declared, it fails at
+    // the next header's first byte and reads none of it. So a header behind a header is not cut
+    // to the length the first declared.
+    let [h, d] = code_pair(b"twice     ", 10, 3);
+    for blocks in [vec![h.clone(), h.clone()], vec![h.clone(), h.clone(), h.clone(), d.clone()]] {
+        let got = decode(&of_blocks(&blocks).unwrap());
+        assert_eq!(got.blocks, blocks);
+        assert!(got.findings.is_empty(), "{:?}", got.findings);
+    }
+}
+
+#[test]
+fn a_block_whose_flag_reads_zero_is_a_header_only_where_its_19_bytes_prove_one() {
+    // A data block whose first byte is 0x00 runs past 19 bytes; so does one whose 19 are a flag
+    // and 18 copies of one value, which fold clean whatever they hold. Nineteen zeros declare no
+    // length either, so the block behind them is read to its own end.
+    let long = standard(1000, with_checksum(0x00, &(0..40).collect::<Vec<u8>>()));
+    let zeros = standard(1000, vec![0x00; 19]);
+    let behind = standard(1000, with_checksum(0xFF, &[0x55; 30]));
+    for blocks in [vec![long], vec![zeros, behind]] {
+        assert_eq!(decode(&of_blocks(&blocks).unwrap()).blocks, blocks);
+    }
+}
+
+/// The pulses of `blocks` with the last half-wave of block `n`'s data run into what follows it,
+/// `join` pulses in all: the edge that closes it is missing, as on a recording whose last
+/// half-wave settles into silence, or a player's pause level that never crosses zero.
+fn without_the_final_edge(blocks: &[Block], n: usize, join: usize) -> Vec<Pulse> {
+    let mut p = of_blocks(blocks).unwrap();
+    let levels: Vec<usize> = (0..p.len()).filter(|&i| p[i].tstates == 3500.0).collect();
+    let last = levels[n] - 1;
+    let joined: f64 = p[last..last + join].iter().map(|q| q.tstates).sum();
+    p[last].tstates = joined;
+    p.drain(last + 1..last + join);
+    p
+}
+
+#[test]
+fn the_last_bit_of_a_block_of_known_length_is_read_from_its_first_half_when_the_second_proves_nothing() {
+    // Data blocks whose last bit is a 0 and a 1, each with its last half-wave run into the
+    // silence behind it: the header says where the block ends, and the half before decides the
+    // bit. Without that the pair times out and the block is a byte short.
+    let mut last_bits = Vec::new();
+    for len in [10, 11] {
+        let [h, d] = code_pair(b"settles   ", len, 3);
+        let Body::Standard { data, .. } = &d.body else { unreachable!() };
+        let blocks = [h, d.clone()];
+        let got = decode(&without_the_final_edge(&blocks, 1, 3));
+        assert_eq!(datas(&got.blocks), datas(&blocks), "last bit {}", data[data.len() - 1] & 1);
+        assert!(got.findings.is_empty(), "{:?}", got.findings);
+        last_bits.push(data[data.len() - 1] & 1);
+    }
+    assert_eq!(last_bits, [0, 1]);
+}
+
+#[test]
+fn a_one_ms_pause_level_standing_in_a_headers_last_half_is_not_paired() {
+    // A header with a 1 ms pause, its last half-wave and the pause's level one pulse: as a
+    // second half that pulse would make the bit a 1. The pilot behind it is not the header's.
+    let mut last_bits = Vec::new();
+    for name in [b"one ms    ", b"one ms 3  "] {
+        let [h, d] = code_pair(name, 10, 3);
+        let Body::Standard { data, .. } = &h.body else { unreachable!() };
+        let h1 = standard(1, data.clone());
+        let blocks = [h1, d];
+        let got = decode(&without_the_final_edge(&blocks, 0, 2));
+        assert_eq!(datas(&got.blocks), datas(&blocks), "last bit {}", data[18] & 1);
+        last_bits.push(data[18] & 1);
+    }
+    assert_eq!(last_bits, [1, 0]);
+}
+
+#[test]
+fn a_last_half_wave_run_into_the_gap_is_read_from_its_first_half() {
+    // A block with no header in front, its last half-wave run into the silence behind it, or into
+    // a 1 ms pause level that never crossed zero with the next pilot behind it: the second half
+    // is no data, and the first tells the bit, a 0 or a 1.
+    let mut bad = with_checksum(0xFF, &[1, 2, 3, 4, 5]);
+    bad[3] ^= 0x10;
+    for last in [0xB6, 0xB7] {
+        let mut data = bad.clone();
+        *data.last_mut().unwrap() = last;
+        let silence = [standard(1000, data.clone())];
+        let got = decode(&without_the_final_edge(&silence, 0, 3));
+        assert_eq!(datas(&got.blocks), datas(&silence), "into silence, last byte {last:02x}");
+        assert!(
+            !got.findings.iter().any(|f| matches!(f, Finding::PartialFinalByte { .. })),
+            "{:?}",
+            got.findings
+        );
+        let pilot = [standard(1, data.clone()), standard(1000, with_checksum(0xFF, &[9; 20]))];
+        let got = decode(&without_the_final_edge(&pilot, 0, 2));
+        assert_eq!(datas(&got.blocks), datas(&pilot), "into a pause level, last byte {last:02x}");
+    }
+}
+
+#[test]
+fn bits_past_the_last_whole_byte_are_kept_only_behind_a_block_that_does_not_prove_its_end() {
+    // A dropout five bits into a damaged block's last byte, with the tape going on behind it:
+    // the five are kept as a last byte filled with 0s, said on the block.
+    let mut bad = with_checksum(0xFF, &[1, 2, 3, 4, 5]);
+    bad[3] ^= 0x10;
+    let mut p = of_blocks(&[standard(1000, bad.clone())]).unwrap();
+    let level = p.iter().position(|q| q.tstates == 3500.0).unwrap();
+    p[level - 6].tstates = 6000.0;
+    let got = decode(&p);
+    let mut want = bad.clone();
+    *want.last_mut().unwrap() &= 0xF8;
+    assert_eq!(datas(&got.blocks)[0], want);
+    assert!(
+        got.findings.contains(&Finding::PartialFinalByte { block: 0, used_bits: 5 }),
+        "{:?}",
+        got.findings
+    );
+
+    // Behind a block whose checksum holds, bits past it are the seam, and go.
+    let good = with_checksum(0xFF, &[1, 2, 3, 4, 5]);
+    let mut p = of_blocks(&[standard(1000, good.clone())]).unwrap();
+    let level = p.iter().position(|q| q.tstates == 3500.0).unwrap();
+    for _ in 0..2 {
+        p.insert(level, Pulse { tstates: 855.0, ..p[level] });
+    }
+    let got = decode(&p);
+    assert_eq!(datas(&got.blocks), vec![good]);
+    assert!(
+        !got.findings.iter().any(|f| matches!(f, Finding::PartialFinalByte { .. })),
+        "{:?}",
+        got.findings
+    );
+}
+
+#[test]
+fn a_pilot_one_pulse_into_a_byte_ends_the_block_in_front() {
+    // A block with no pause, and a pulse left between it and the next block's pilot, as a
+    // pause level cut in two leaves: read on, that pulse and the pilot behind it would make one
+    // more byte of 1 bits.
+    let a = standard(0, with_checksum(0xFF, &[1, 2, 3]));
+    let b = standard(1000, with_checksum(0xFF, &[4, 5, 6]));
+    let at = of_blocks(std::slice::from_ref(&a)).unwrap().len();
+    let mut p = of_blocks(&[a.clone(), b.clone()]).unwrap();
+    assert!(pilot_run_at(&p, at, 2168.0), "the next pilot starts at {at}");
+    p.insert(at, Pulse { tstates: 1300.0, ..p[at] });
+    let got = decode(&p);
+    assert_eq!(datas(&got.blocks), datas(&[a, b]), "{:?}", got.findings);
 }

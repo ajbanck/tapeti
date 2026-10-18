@@ -11,13 +11,14 @@
 use crate::capture::{
     csw_block, csw_of_tstates, direct_recording, spacing, tzx_size, MAX_BLOCK_BYTES, MAX_CSW_RATE,
 };
-use crate::fallback::{raw_signal, sort, Part};
-use crate::framing::{next_block, PILOT_PULSE_MOST};
+use crate::fallback::{block_shaped, raw_signal, sort, Part};
+use crate::framing::{next_block, proven_header, PILOT_PULSE_MOST};
 use crate::pulses::{from_runs, from_tstates, Pulse};
 use crate::readers::{read, Channel, Csw, ReadError, Recording, Sound};
 use crate::waveform::edges;
 use crate::waveform::filter::{Filter, FilterError};
 use std::fmt;
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tapeti_core::audio::TSTATES_PER_SEC;
 use tapeti_core::types::{Block, Body};
@@ -245,6 +246,9 @@ fn mean(samples: impl Iterator<Item = f32>) -> f64 {
 pub struct Extent {
     pub start: f64,
     pub end: f64,
+    /// Where the block's own signal ends and its pause begins: `end` for a block with no pause,
+    /// `start` for a pause block.
+    pub signal_end: f64,
 }
 
 /// Something a decode found, about the block at the index it names.
@@ -264,17 +268,44 @@ pub enum Finding {
     LeadIn { ms: u64 },
     /// Of a stereo recording's mix and its two channels, the decode of `kept` delivers most.
     Channel { kept: Channel },
+    /// The block's last byte holds only `used_bits` bits read from the tape, from its top bit;
+    /// the rest are 0s, since a standard block cannot say how many bits its last byte holds.
+    PartialFinalByte { block: usize, used_bits: u8 },
+    /// A 0x00 byte read behind the header, a tape copier's, was left out ([`crate::framing::RawBlock::stray_zero`]).
+    StrayZero { block: usize },
+    /// Of the decodes on the zero line and on the signal's own midline, the midline's delivers
+    /// most ([`edges::Axis`]).
+    Midline,
+    /// The block was read from `channel`, where the channel kept read it in error or not at
+    /// all ([`crate::channels::combine`]).
+    FromChannel { block: usize, channel: Channel },
+    /// The block was read as the left and the right channel both read it, where the mix kept
+    /// read other bytes whose checksum held too ([`crate::channels::outvote`]).
+    BothChannels { block: usize },
+    /// The sync pair had merged into a half-wave beside it, or lay past the ROM's window, and the
+    /// block was read where its bits are ([`crate::framing::DECIDE`]).
+    MergedSync { block: usize },
 }
 
 impl Finding {
     /// The block it is about; `None` for the recording as a whole.
     pub fn block(&self) -> Option<usize> {
-        match *self {
+        self.clone().block_mut().copied()
+    }
+
+    /// The block it is about, to move it along when blocks go in or out before it.
+    pub(crate) fn block_mut(&mut self) -> Option<&mut usize> {
+        match self {
             Finding::BadChecksum { block }
             | Finding::Short { block, .. }
             | Finding::RawSignal { block }
-            | Finding::Collapsed { block, .. } => Some(block),
-            Finding::LeadIn { .. } | Finding::Channel { .. } => None,
+            | Finding::Collapsed { block, .. }
+            | Finding::StrayZero { block }
+            | Finding::PartialFinalByte { block, .. }
+            | Finding::MergedSync { block }
+            | Finding::FromChannel { block, .. }
+            | Finding::BothChannels { block } => Some(block),
+            Finding::LeadIn { .. } | Finding::Channel { .. } | Finding::Midline => None,
         }
     }
 
@@ -299,6 +330,30 @@ impl Finding {
                 "Read from the {} channel: of the mix and each channel alone, it reads the most.",
                 if kept == Channel::Left { "left" } else { "right" }
             ),
+            Finding::FromChannel { channel, .. } => format!(
+                "Read from the {} channel: the channel kept did not read it whole.",
+                match channel {
+                    Channel::Left => "left",
+                    Channel::Right => "right",
+                    Channel::Mix => "mixed",
+                }
+            ),
+            Finding::BothChannels { .. } => {
+                "Read as the left and right channels both read it: the mix read other bytes, whose checksum held by chance.".into()
+            }
+            Finding::Midline => {
+                "Read about the signal's own centre line, which wanders off zero: it reads more.".into()
+            }
+            Finding::PartialFinalByte { used_bits, .. } => format!(
+                "The last byte holds only {used_bits} bit{} read from the tape; the rest are 0.",
+                if used_bits == 1 { "" } else { "s" }
+            ),
+            Finding::StrayZero { .. } => {
+                "A stray 0x00 byte behind the header, which a tape copier leaves, is left out.".into()
+            }
+            Finding::MergedSync { .. } => {
+                "The sync pulses are merged into the signal beside them or distorted; the bits are read where the block is.".into()
+            }
         }
     }
 }
@@ -323,7 +378,8 @@ pub struct Decoded {
 pub struct Progress {
     pub pulses_read: usize,
     pub pulses: usize,
-    /// Blocks read so far; for [`Channels::Best`], the most any channel's decode has read yet.
+    /// Blocks read so far: the most any of the decodes has read yet, of the channels of a stereo
+    /// recording read for [`Channels::Best`], and of the zero line and the midline.
     pub blocks: usize,
     /// The share of the whole decode done, from 0 to 1. Finding the edges in sampled audio takes
     /// most of the time, before any block is read, and is counted in it.
@@ -420,20 +476,46 @@ fn best_channel(
             let done = (i as f32 + p.done) / ORDER.len() as f32;
             progress(Progress { blocks: most, done, ..p });
         });
-        match got {
-            Err(DecodeError::Cancelled) => return Err(DecodeError::Cancelled),
-            got => decodes.push(got),
+        if matches!(got, Err(DecodeError::Cancelled)) {
+            return got;
         }
+        decodes.push(got);
+    }
+    let (i, decodes) = best_index(decodes)?;
+    let mut decodes: Vec<Option<Decoded>> = decodes.into_iter().map(Result::ok).collect();
+    let mut kept = decodes[i].take().expect("the decode picked is one that read");
+    let donors: Vec<(Channel, &Decoded)> =
+        ORDER.iter().zip(&decodes).filter_map(|(&c, d)| d.as_ref().map(|d| (c, d))).collect();
+    if let (Channel::Mix, [_, Some(left), Some(right)]) = (ORDER[i], &decodes[..]) {
+        crate::channels::outvote(&mut kept, left, right);
+    }
+    crate::channels::combine(&mut kept, &donors);
+    kept.findings.insert(0, Finding::Channel { kept: ORDER[i] });
+    Ok(kept)
+}
+
+/// Which of `decodes` delivers most ([`crate::channels::pick`]), the earliest on a tie, and that
+/// decode. One that failed delivers nothing; when all failed, the first one's error stands.
+fn best_of(decodes: Vec<Result<Decoded, DecodeError>>) -> Result<(usize, Decoded), DecodeError> {
+    let (i, mut decodes) = best_index(decodes)?;
+    Ok((i, decodes.swap_remove(i)?))
+}
+
+/// Which of `decodes` [`best_of`] picks, with them all.
+#[allow(clippy::type_complexity)]
+fn best_index(
+    mut decodes: Vec<Result<Decoded, DecodeError>>,
+) -> Result<(usize, Vec<Result<Decoded, DecodeError>>), DecodeError> {
+    if decodes.iter().any(|d| matches!(d, Err(DecodeError::Cancelled))) {
+        return Err(DecodeError::Cancelled);
     }
     if decodes.iter().all(Result::is_err) {
-        return decodes.swap_remove(0);
+        return Err(decodes.swap_remove(0).expect_err("every decode failed"));
     }
     let views: Vec<&[Block]> =
         decodes.iter().map(|d| d.as_ref().map_or(&[][..], |d| &d.blocks[..])).collect();
     let i = crate::channels::pick(&views);
-    let mut kept = decodes.swap_remove(i)?;
-    kept.findings.insert(0, Finding::Channel { kept: ORDER[i] });
-    Ok(kept)
+    Ok((i, decodes))
 }
 
 /// Decodes `channel` of a recording file, as [`decode_file`] says.
@@ -448,44 +530,105 @@ fn decode_channel(
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<Decoded, DecodeError> {
-    let (pulses, rate_hz, sound_read) = match read(name, bytes, channel).map_err(ImportError::from)? {
-        Recording::Sound(sound) => {
-            // The samples run out when the flag is set, so a cancel ends the edge detector's
-            // passes over a long recording too, not just the reading of blocks after them. They
-            // are counted as they go, against the three passes the detector makes at most.
-            let read = std::cell::Cell::new(0usize);
-            let all = (3 * sound.len()).max(1);
-            let report = std::cell::RefCell::new(&mut *progress);
-            let samples = || {
-                sound.samples().take_while(|_| !cancel.load(Ordering::Relaxed)).inspect(|_| {
-                    read.set(read.get() + 1);
-                    if read.get().is_multiple_of(REPORT_EVERY) {
-                        let done = EDGES_SHARE * (read.get().min(all) as f32 / all as f32);
-                        (report.borrow_mut())(Progress { pulses_read: 0, pulses: 0, blocks: 0, done });
-                    }
-                })
-            };
-            let pulses = edges::detect_pulses(samples, sound.rate_hz, filter).map_err(ImportError::Filter)?;
-            if cancel.load(Ordering::Relaxed) {
-                return Err(DecodeError::Cancelled);
-            }
-            (pulses, sound.rate_hz, true)
+    let in_window = |pulses: Vec<Pulse>| -> Result<Vec<Pulse>, DecodeError> {
+        let pulses: Vec<Pulse> = match &window {
+            Some(window) => pulses.into_iter().filter(|p| window.contains(&p.start)).collect(),
+            None => pulses,
+        };
+        if pulses.is_empty() {
+            return Err(no_sound().into());
         }
+        Ok(pulses)
+    };
+    let (pulses, rate_hz) = match read(name, bytes, channel).map_err(ImportError::from)? {
+        Recording::Sound(sound) => return decode_sound(&sound, filter, in_window, progress, cancel),
         Recording::Csw(c) => {
             csw_rate(&c)?;
-            (from_runs(&csw_runs(&c, inflate)?, c.rate_hz), c.rate_hz, false)
+            (from_runs(&csw_runs(&c, inflate)?, c.rate_hz), c.rate_hz)
         }
-        Recording::Out(lengths) => (from_tstates(&lengths), TSTATES_PER_SEC, false),
+        Recording::Out(lengths) => (from_tstates(&lengths), TSTATES_PER_SEC),
     };
-    let pulses = match window {
-        Some(window) => pulses.into_iter().filter(|p| window.contains(&p.start)).collect(),
-        None => pulses,
+    decode_pulses_from(&in_window(pulses)?, rate_hz, progress, cancel, (0.0, 1.0))
+}
+
+/// Decodes sampled audio, its edges found on the zero line and on the signal's own midline
+/// ([`edges::Axis`]), keeping the decode that delivers most, the zero line's on a tie, as the
+/// channels are chosen ([`crate::channels`]). `in_window` keeps the pulses asked for.
+///
+/// A worn tape's centre can wander further than its shrunken short half-waves swing, so that
+/// they never cross zero and two bits merge into one; about the midline every lobe is its own
+/// excursion. No statistic says beforehand which line a recording reads best on, and on a
+/// clean one both read the same, so both are decoded and judged by what they deliver. Where
+/// the zero line's decode holds nothing but whole blocks and plain pauses, the midline is not
+/// walked: the pick leaves a decode only for one that delivers more, and there is nothing more.
+fn decode_sound(
+    sound: &Sound,
+    filter: Filter,
+    in_window: impl Fn(Vec<Pulse>) -> Result<Vec<Pulse>, DecodeError>,
+    progress: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<Decoded, DecodeError> {
+    use std::cell::{Cell, RefCell};
+    const AXES: [edges::Axis; 2] = [edges::Axis::Zero, edges::Axis::Midline];
+    // The samples run out when the flag is set, so a cancel ends the edge detector's passes over
+    // a long recording too, not just the reading of blocks after them. They are counted as they
+    // go, against the passes the detector makes at most: the statistics once, then the edges and
+    // the quiet pulses on each line.
+    let read = Cell::new(0usize);
+    let all = ((1 + 2 * AXES.len()) * sound.len()).max(1);
+    let edges_done = || EDGES_SHARE * (read.get().min(all) as f32 / all as f32);
+    // Reading the blocks of each line takes its share of what is left.
+    let per_axis = (1.0 - EDGES_SHARE) / AXES.len() as f32;
+    let (blocks_done, most) = (Cell::new(0.0f32), Cell::new(0usize));
+    let report = RefCell::new(&mut *progress);
+    let samples = || {
+        sound.samples().take_while(|_| !cancel.load(Ordering::Relaxed)).inspect(|_| {
+            read.set(read.get() + 1);
+            if read.get().is_multiple_of(REPORT_EVERY) {
+                let done = edges_done() + blocks_done.get();
+                (report.borrow_mut())(Progress { pulses_read: 0, pulses: 0, blocks: most.get(), done });
+            }
+        })
     };
-    if pulses.is_empty() {
-        return Err(no_sound().into());
+    let decodes = edges::detect_pulses_each(samples, sound.rate_hz, filter, &AXES, |_, pulses| {
+        if cancel.load(Ordering::Relaxed) {
+            return ControlFlow::Break(Err(DecodeError::Cancelled));
+        }
+        let from = edges_done() + blocks_done.get();
+        blocks_done.set(blocks_done.get() + per_axis);
+        let mut each = |p: Progress| {
+            most.set(most.get().max(p.blocks));
+            (report.borrow_mut())(Progress { blocks: most.get(), ..p });
+        };
+        let got = in_window(pulses)
+            .and_then(|p| decode_pulses_from(&p, sound.rate_hz, &mut each, cancel, (from, from + per_axis)));
+        let whole = got.as_ref().is_ok_and(|d| {
+            !d.findings.iter().any(|f| {
+                matches!(
+                    f,
+                    Finding::BadChecksum { .. }
+                        | Finding::Short { .. }
+                        | Finding::RawSignal { .. }
+                        | Finding::Collapsed { .. }
+                )
+            })
+        });
+        if whole {
+            ControlFlow::Break(got)
+        } else {
+            ControlFlow::Continue(got)
+        }
+    })
+    .map_err(ImportError::Filter)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(DecodeError::Cancelled);
     }
-    let from = if sound_read { EDGES_SHARE } else { 0.0 };
-    decode_pulses_from(&pulses, rate_hz, progress, cancel, from)
+    let (i, mut kept) = best_of(decodes)?;
+    if AXES[i] == edges::Axis::Midline {
+        kept.findings.insert(0, Finding::Midline);
+    }
+    progress(Progress { pulses_read: 0, pulses: 0, blocks: most.get(), done: 1.0 });
+    Ok(kept)
 }
 
 /// The T-states a pause opens with: TZX plays one as 1 ms at the level the block left, then low.
@@ -493,6 +636,10 @@ const PAUSE_OPENING: f64 = 3500.0;
 
 /// The T-states of a millisecond.
 const MS: f64 = TSTATES_PER_SEC as f64 / 1000.0;
+
+/// The fewest pulses a byte of a block's run-on takes: its eight pairs. A folded bounce only adds
+/// pulses.
+const BYTE_PULSES: usize = 16;
 
 /// Decodes pulses whose `start` counts samples at `grid_hz`.
 ///
@@ -507,17 +654,18 @@ pub fn decode_pulses(
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<Decoded, DecodeError> {
-    decode_pulses_from(pulses, grid_hz, progress, cancel, 0.0)
+    decode_pulses_from(pulses, grid_hz, progress, cancel, (0.0, 1.0))
 }
 
-/// [`decode_pulses`], with [`Progress::done`] counted on from `from`.
+/// [`decode_pulses`], with [`Progress::done`] counted from the first to the second of `span`.
 fn decode_pulses_from(
     pulses: &[Pulse],
     grid_hz: u32,
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
-    from: f32,
+    span: (f32, f32),
 ) -> Result<Decoded, DecodeError> {
+    let (from, to) = span;
     let mut out = Decoded {
         blocks: Vec::new(),
         extents: Vec::new(),
@@ -536,7 +684,9 @@ fn decode_pulses_from(
     // Where the bits of the last block read stop, past its end when it ran on.
     let mut bits_end = 0;
     loop {
-        let found = next_block(pulses, pos, expected, cancel);
+        // From where the bits stop: a run-on's 1 bits are as long as pilot, and the next block's
+        // pilot must not start among them.
+        let found = next_block(pulses, bits_end.max(pos), expected, cancel);
         if cancel.load(Ordering::Relaxed) {
             return Err(DecodeError::Cancelled);
         }
@@ -563,26 +713,36 @@ fn decode_pulses_from(
         };
 
         let index = out.blocks.len();
-        if b.data.iter().fold(0, |x, &d| x ^ d) != 0 {
+        let data = b.data;
+        if b.used_bits < 8 {
+            out.findings.push(Finding::PartialFinalByte { block: index, used_bits: b.used_bits });
+        }
+        if b.stray_zero {
+            out.findings.push(Finding::StrayZero { block: index });
+        }
+        if data.iter().fold(0, |x, &d| x ^ d) != 0 {
             out.findings.push(Finding::BadChecksum { block: index });
+        }
+        if b.merged_sync {
+            out.findings.push(Finding::MergedSync { block: index });
         }
         if b.short {
             let expected = expected.unwrap_or(0);
-            out.findings.push(Finding::Short { block: index, expected, read: b.data.len() });
+            out.findings.push(Finding::Short { block: index, expected, read: data.len() });
         }
-        expected = header_asks(&b.data);
-        out.blocks.push(Block::new(Body::Standard { pause: 0, data: b.data }));
-        out.extents.push(Extent { start: at(b.tone), end: at(b.end) });
+        expected = header_asks(&data);
+        out.blocks.push(Block::new(Body::Standard { pause: 0, data }));
+        out.extents.push(Extent { start: at(b.tone), end: at(b.end), signal_end: at(b.end) });
         pos = b.end;
         bits_end = b.bits_end;
-        let done = from + (1.0 - from) * (pos as f32 / pulses.len() as f32);
+        let done = from + (to - from) * (pos as f32 / pulses.len() as f32);
         progress(Progress { pulses_read: pos, pulses: pulses.len(), blocks: out.blocks.len(), done });
     }
     progress(Progress {
         pulses_read: pulses.len(),
         pulses: pulses.len(),
         blocks: out.blocks.len(),
-        done: 1.0,
+        done: to,
     });
     Ok(out)
 }
@@ -631,10 +791,18 @@ fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, end: f64, grid_hz: 
                 }
             }
             Part::Signal(r) => {
+                // Raw signal holds what some loader can read: a burst shaped like a block, or a
+                // block's run-on past its header's length, whole bytes of it. A gap too short
+                // for a millisecond goes in only beside one of those.
+                debug_assert!(
+                    (r.start < keep && keep >= BYTE_PULSES) || block_shaped(&stretch[r.clone()]),
+                    "raw signal of {} pulses holds no block, {keep} kept",
+                    r.len()
+                );
                 if let Some(block) = raw_signal(&stretch[r.clone()], grid_hz) {
                     out.findings.push(Finding::RawSignal { block: out.blocks.len() });
                     out.blocks.push(block);
-                    out.extents.push(Extent { start: at(r.start), end: at(r.end) });
+                    out.extents.push(Extent { start: at(r.start), end: at(r.end), signal_end: at(r.end) });
                 }
             }
         }
@@ -673,7 +841,7 @@ fn add_pause(out: &mut Decoded, t: f64, start: f64, end: f64) -> Option<usize> {
         let part = ms.min(u64::from(u16::MAX));
         first.get_or_insert(out.blocks.len());
         out.blocks.push(Block::new(Body::Pause { pause: part as u16 }));
-        out.extents.push(Extent { start, end });
+        out.extents.push(Extent { start, end, signal_end: start });
         ms -= part;
     }
     first
@@ -681,6 +849,5 @@ fn add_pause(out: &mut Decoded, t: f64, start: f64, end: f64) -> Option<usize> {
 
 /// The length, flag and checksum included, that a ROM header in `data` asks the next block for.
 fn header_asks(data: &[u8]) -> Option<usize> {
-    let ok = data.len() == 19 && data[0] == 0 && data[1] <= 3 && data.iter().fold(0, |x, &d| x ^ d) == 0;
-    ok.then(|| usize::from(u16::from_le_bytes([data[12], data[13]])) + 2)
+    proven_header(data).then(|| usize::from(u16::from_le_bytes([data[12], data[13]])) + 2)
 }

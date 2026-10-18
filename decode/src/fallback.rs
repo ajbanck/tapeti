@@ -86,7 +86,7 @@ pub fn sort(stretch: &[Pulse], keep: usize) -> Vec<Part> {
 
 /// Whether `burst` holds a tone of [`TONE_RUN`] pulses followed, anywhere after it, by as many
 /// in a row under [`PAYLOAD_SHARE`] of its mean.
-fn block_shaped(burst: &[Pulse]) -> bool {
+pub(crate) fn block_shaped(burst: &[Pulse]) -> bool {
     let w = TONE_RUN;
     if burst.len() < 2 * w {
         return false;

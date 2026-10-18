@@ -11,12 +11,13 @@
 //!
 //! The samples are walked three times and never held as floats: once for the statistics the
 //! floor and the noise line are cut from, taken over the whole recording, once for the edges,
-//! with the last second of samples kept to time them, and once to mark the pulses that never
-//! rise over the noise line.
+//! with the last second of samples kept to time them and to find the half-waves the band
+//! swallowed, and once to mark the pulses that never rise over the noise line.
 
 use super::filter::{Filter, FilterError};
 use crate::pulses::Pulse;
 use std::collections::VecDeque;
+use std::ops::ControlFlow;
 use tapeti_core::audio::TSTATES_PER_SEC;
 
 /// Where the signal crossed the zero line.
@@ -143,17 +144,39 @@ const NOISE_MULT: f32 = 1.0;
 /// f / sqrt(f² + 10²).
 const DC_CORNER_HZ: f64 = 10.0;
 
-/// The edges of a recording at `rate_hz`. `samples` gives the samples from the start each time
-/// it is called; it is called twice.
+/// The line the comparator measures the signal against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Axis {
+    /// Zero, after the DC blocker.
+    #[default]
+    Zero,
+    /// The signal's own local midline (`Midline`), which follows a centre that wanders.
+    Midline,
+}
+
+/// The edges of a recording at `rate_hz` on the zero line. `samples` gives the samples from the
+/// start each time it is called; it is called twice.
 pub fn detect<I: Iterator<Item = f32>>(
     samples: impl Fn() -> I,
     rate_hz: u32,
     filter: Filter,
 ) -> Result<Vec<Edge>, FilterError> {
-    Ok(find(&samples, rate_hz, filter)?.edges)
+    detect_on(samples, rate_hz, filter, Axis::Zero)
 }
 
-/// The pulses of a recording at `rate_hz`, each marked quiet where it never rises over the noise.
+/// The edges of a recording at `rate_hz` measured against `axis`.
+pub fn detect_on<I: Iterator<Item = f32>>(
+    samples: impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+    axis: Axis,
+) -> Result<Vec<Edge>, FilterError> {
+    let stats = measure(&samples, rate_hz, filter)?;
+    edges_on(&samples, rate_hz, filter, &stats, axis)
+}
+
+/// The pulses of a recording at `rate_hz` on the zero line, each marked quiet where it never
+/// rises over the noise.
 ///
 /// They are cut from the edges as [`pulses`] cuts them, and the noise is the recording's noise
 /// line (`noise_line`). `samples` is called three times.
@@ -162,28 +185,63 @@ pub fn detect_pulses<I: Iterator<Item = f32>>(
     rate_hz: u32,
     filter: Filter,
 ) -> Result<Vec<Pulse>, FilterError> {
-    let found = find(&samples, rate_hz, filter)?;
-    let mut pulses = pulses(&found.edges, rate_hz, found.samples);
-    if let Some(line) = found.noise {
-        mark_quiet(&mut pulses, condition(samples(), rate_hz, filter)?, rate_hz, line);
-    }
-    Ok(pulses)
+    let mut out = detect_pulses_each(samples, rate_hz, filter, &[Axis::Zero], |_, p| ControlFlow::Break(p))?;
+    Ok(out.pop().expect("one axis asked for"))
 }
 
-/// What one run of the detector finds.
-struct Found {
-    edges: Vec<Edge>,
+/// What `each` makes of the pulses of a recording at `rate_hz` on each of `axes` in turn, until
+/// it says to stop.
+///
+/// The pulses are cut as [`detect_pulses`] cuts them. The recording's statistics are measured
+/// once, and one axis's pulses are let go before the next axis is walked. `samples` is called
+/// once, and twice more for each axis walked.
+pub fn detect_pulses_each<I: Iterator<Item = f32>, T>(
+    samples: impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+    axes: &[Axis],
+    mut each: impl FnMut(Axis, Vec<Pulse>) -> ControlFlow<T, T>,
+) -> Result<Vec<T>, FilterError> {
+    let stats = measure(&samples, rate_hz, filter)?;
+    let mut out = Vec::with_capacity(axes.len());
+    for &axis in axes {
+        let edges = edges_on(&samples, rate_hz, filter, &stats, axis)?;
+        let mut pulses = pulses(&edges, rate_hz, stats.samples);
+        drop(edges);
+        // Measured on the zero line for either: where a pulse is quiet the midline is the
+        // noise's own midpoint, about zero.
+        if let Some(line) = stats.noise {
+            mark_quiet(&mut pulses, condition(samples(), rate_hz, filter)?, rate_hz, line);
+        }
+        match each(axis, pulses) {
+            ControlFlow::Continue(t) => out.push(t),
+            ControlFlow::Break(t) => {
+                out.push(t);
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What the detector measures over the whole recording before it looks for edges.
+struct Stats {
+    /// The envelope's half window.
+    half_win: usize,
+    /// The signal scale, `None` where the recording is silent and holds no edge.
+    peak: Option<f32>,
+    floors: FloorProfile,
     /// The recording's noise line, `None` where it has none.
     noise: Option<f32>,
     /// How many samples it holds.
     samples: usize,
 }
 
-fn find<I: Iterator<Item = f32>>(
+fn measure<I: Iterator<Item = f32>>(
     samples: &impl Fn() -> I,
     rate_hz: u32,
     filter: Filter,
-) -> Result<Found, FilterError> {
+) -> Result<Stats, FilterError> {
     let half_win = ((ENV_HALF_WINDOW_MS / 1000.0 * f64::from(rate_hz)) as usize).max(1);
     // The envelope's statistics read it every ~2 ms.
     let stride = (rate_hz as usize / 500).max(1);
@@ -203,13 +261,36 @@ fn find<I: Iterator<Item = f32>>(
     sorted.sort_unstable_by(f32::total_cmp);
     let peak = at_pctile(&sorted, PEAK_PCTILE);
     if peak <= 0.0 {
-        return Ok(Found { edges: Vec::new(), noise: None, samples: count });
+        let floors = FloorProfile { blk: 1, v: vec![0.0] };
+        return Ok(Stats { half_win, peak: None, floors, noise: None, samples: count });
     }
     let mark = quiet_mark(&sorted, &env, &moved, per_sec, peak);
     let floors = FloorProfile::local(&env, per_sec, stride, peak, mark);
     let noise = noise_line(&env, &moved, per_sec, peak);
-    drop((env, sorted));
+    Ok(Stats { half_win, peak: Some(peak), floors, noise, samples: count })
+}
 
+/// The edges of the recording on `axis`.
+fn edges_on<I: Iterator<Item = f32>>(
+    samples: &impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+    stats: &Stats,
+    axis: Axis,
+) -> Result<Vec<Edge>, FilterError> {
+    let Some(peak) = stats.peak else { return Ok(Vec::new()) };
+    let conditioned = condition(samples(), rate_hz, filter)?;
+    Ok(match axis {
+        Axis::Zero => find_edges(conditioned, rate_hz, filter, stats),
+        Axis::Midline => {
+            find_edges(Midline::new(conditioned, rate_hz, peak, &stats.floors), rate_hz, filter, stats)
+        }
+    })
+}
+
+/// The edges in `xs`, the conditioned samples measured against the axis they are given on.
+fn find_edges(xs: impl Iterator<Item = f32>, rate_hz: u32, filter: Filter, stats: &Stats) -> Vec<Edge> {
+    let (half_win, floors) = (stats.half_win, &stats.floors);
     let mut d = Detector {
         edges: Vec::new(),
         state: State::Idle,
@@ -222,12 +303,435 @@ fn find<I: Iterator<Item = f32>>(
     // A crossing is timed from the samples behind it, never more than a second back: any
     // half-wave is far shorter.
     let keep = rate_hz as usize + half_win + 2;
-    walk(condition(samples(), rate_hz, filter)?, half_win, keep, |i, e, x| {
+    // A filter removes the low tones a short half-wave rides on, so behind one the shape
+    // `Notches` looks for is the filter's own ringing, and splitting it would cut real
+    // half-waves in two.
+    let mut notches = (filter == Filter::None).then(|| Notches::new(rate_hz));
+    let mut envs = Ring { v: VecDeque::with_capacity(keep), first: 0, cap: keep };
+    walk(xs, half_win, keep, |i, e, x| {
+        envs.push(e);
         if i > 0 {
             d.step(x, i, e, floors.at(i));
+            if let Some(n) = notches.as_mut() {
+                n.catch_up(&d.edges, x, &envs, floors);
+            }
         }
     });
-    Ok(Found { edges: d.edges, noise, samples: count })
+    match notches {
+        Some(n) => n.into_edges(d.edges),
+        None => d.edges,
+    }
+}
+
+/// How far either side the midline looks for the signal's highest and lowest, in ms.
+///
+/// From below, the window must hold the longest half-wave the ROM's saver writes, the pilot's
+/// 2,168 T (0.62 ms): a window inside one lobe sees one side only, its midline follows the lobe
+/// itself, and the lobe's noise crosses it past the band (a pilot with noise a fifth of its
+/// level chatters at 0.30 ms). From above, the midline must follow the wander: a triangle wander
+/// at half the pilot's level loses the lifted lobes from 0.55 ms. 0.4 ms is chosen between. A
+/// tape the ROM loads slower than the window spans, its pilot over 1.29 times the saver's, is
+/// left to the zero line.
+const MIDLINE_HALF_WINDOW_MS: f64 = 0.4;
+
+/// A window that one flat level fills has no midline when the level spans less than this share
+/// of it, and the level is at least [`PLATEAU_LEVEL`] of the signal scale.
+///
+/// A flat stretch longer than the window, such as the 1 ms level a player opens a pause with,
+/// has its own level for a midpoint: taking it away would leave the DC blocker's droop, which
+/// the band cuts into pulses shaped like bits. From below, that droop across the window, 4.85%
+/// (the blocker's 15.9 ms against the window's 0.79 ms): at 4.5% a pause's level is cut in
+/// pieces. Anything with a lobe in it spans the order of its level. 0.2 is chosen.
+const PLATEAU_SPAN: f32 = 0.2;
+
+/// The share of the signal scale a flat level must stand at to have no midline. From below, a
+/// dropout's residue is flat too, near zero, and there the midline is what carries the read
+/// across it. From above, what the DC blocker leaves of a level at the far end of the longest
+/// the clause holds ([`PLATEAU_MOST_T`]), 0.92 of its start. 0.5 is chosen between.
+const PLATEAU_LEVEL: f32 = 0.5;
+
+/// The longest flat level, in T-states, kept on the zero line: a player's 1 ms opening level
+/// with a quarter to spare, 4,375 T. From below, that level on the coarsest grid a recording
+/// comes on, 437.5 T a sample at 8 kHz, spans one sample more where its edges fall between
+/// samples, 3,937.5 T. From above, the DC blocker drains a held level at the scale under
+/// [`PLATEAU_LEVEL`] after 11.0 ms (38,600 T), past which a longer level would be taken up and
+/// let go inside. A longer level is cut only a window in from each end.
+const PLATEAU_MOST_T: f64 = 3500.0 * 1.25;
+
+/// The conditioned samples measured against their own local midline: the midpoint of the
+/// highest and the lowest within [`MIDLINE_HALF_WINDOW_MS`] either side.
+///
+/// Zero is the signal's centre only where the tape put it there. A worn or copied tape loses
+/// its treble, shrinking the short half-waves (the sync pair and the bits) but not the pilot,
+/// while a slow wander can move the centre further than a shrunken lobe swings, so the lobe
+/// never crosses zero and two bits merge into one. A filter cannot follow the wander, which
+/// overlaps the signal's band (a high-pass at 300 Hz droops a pilot half-wave by 69%), so the
+/// midline is tracked instead; on a clean recording both sides lie in every window and it is
+/// about zero.
+///
+/// Two stretches keep the zero line instead: the samples behind silence, where a window's
+/// midpoint would otherwise read the silence as a lobe of the other sign (a block's own end is
+/// no such case, since its last lobe does end); and a flat level that fills the window
+/// ([`PLATEAU_SPAN`]), up to [`PLATEAU_MOST_T`] long, whose samples are held back until the
+/// level is known to be no longer.
+struct Midline<'f, I: Iterator<Item = f32>> {
+    input: I,
+    done: bool,
+    half_win: usize,
+    /// The samples from the one being judged up to the last read.
+    raw: VecDeque<f32>,
+    /// How many samples have been read.
+    read: usize,
+    /// The window's highest and lowest, falling and rising from front to back, by index.
+    high: VecDeque<(usize, f32)>,
+    low: VecDeque<(usize, f32)>,
+    /// The sample being judged.
+    i: usize,
+    floors: &'f FloorProfile,
+    /// The floor at `i`, and the first sample past the block of the floor it is.
+    floor: f32,
+    floor_until: usize,
+    peak: f32,
+    /// The silent samples in a row up to `i`, and how many samples ahead still keep the zero
+    /// line behind silence.
+    silent: usize,
+    idle: usize,
+    reach: usize,
+    /// A flat level in progress: each sample and its midpoint, held until the level is known.
+    level: Vec<(f32, f32)>,
+    level_most: usize,
+    /// Whether the level in progress is longer than [`PLATEAU_MOST_T`].
+    long: bool,
+    out: VecDeque<f32>,
+}
+
+impl<'f, I: Iterator<Item = f32>> Midline<'f, I> {
+    fn new(input: I, rate_hz: u32, peak: f32, floors: &'f FloorProfile) -> Self {
+        let half_win = ((MIDLINE_HALF_WINDOW_MS / 1000.0 * f64::from(rate_hz)) as usize).max(1);
+        let level_t = PLATEAU_MOST_T * f64::from(rate_hz) / f64::from(TSTATES_PER_SEC);
+        Midline {
+            input,
+            done: false,
+            half_win,
+            raw: VecDeque::new(),
+            read: 0,
+            high: VecDeque::new(),
+            low: VecDeque::new(),
+            i: 0,
+            floors,
+            floor: floors.at(0),
+            floor_until: floors.blk,
+            peak,
+            silent: 0,
+            idle: (IDLE_AFTER_MS / 1000.0 * f64::from(rate_hz)) as usize,
+            reach: 0,
+            level: Vec::new(),
+            level_most: (level_t as usize).saturating_sub(2 * half_win),
+            long: false,
+            out: VecDeque::new(),
+        }
+    }
+
+    /// Judges sample `i`, which the window has read past: what it becomes, unless it is held
+    /// back with a flat level, or the samples held back go out with it.
+    fn judge(&mut self) -> Option<f32> {
+        let i = self.i;
+        while self.high.front().is_some_and(|&(j, _)| j + self.half_win < i) {
+            self.high.pop_front();
+        }
+        while self.low.front().is_some_and(|&(j, _)| j + self.half_win < i) {
+            self.low.pop_front();
+        }
+        let (hi, lo) = (self.high.front().map_or(0.0, |h| h.1), self.low.front().map_or(0.0, |l| l.1));
+        let mid = 0.5 * (hi + lo);
+        let x = self.raw.pop_front().expect("the sample judged has been read");
+        if i >= self.floor_until {
+            self.floor = self.floors.at(i);
+            self.floor_until += self.floors.blk;
+        }
+        self.silent = if x.abs() <= self.floor { self.silent + 1 } else { 0 };
+        let onset = if self.silent > self.idle {
+            self.reach = self.half_win;
+            true
+        } else if self.reach > 0 {
+            self.reach -= 1;
+            x * (x - mid) < 0.0
+        } else {
+            false
+        };
+        let flat = mid.abs() >= PLATEAU_LEVEL * self.peak && hi - lo < PLATEAU_SPAN * mid.abs();
+        self.i += 1;
+        if onset || !flat {
+            self.long = false;
+            let y = if onset { x } else { x - mid };
+            if self.level.is_empty() {
+                return Some(y);
+            }
+            self.out.extend(self.level.drain(..).map(|(x, _)| x));
+            self.out.push_back(y);
+            None
+        } else if self.long {
+            Some(x - mid)
+        } else {
+            self.level.push((x, mid));
+            if self.level.len() > self.level_most {
+                self.out.extend(self.level.drain(..).map(|(x, m)| x - m));
+                self.long = true;
+            }
+            None
+        }
+    }
+}
+
+impl<I: Iterator<Item = f32>> Iterator for Midline<'_, I> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        loop {
+            if let Some(v) = self.out.pop_front() {
+                return Some(v);
+            }
+            while !self.done && self.read <= self.i + self.half_win {
+                match self.input.next() {
+                    Some(x) => {
+                        while self.high.back().is_some_and(|&(_, h)| h <= x) {
+                            self.high.pop_back();
+                        }
+                        while self.low.back().is_some_and(|&(_, l)| l >= x) {
+                            self.low.pop_back();
+                        }
+                        self.high.push_back((self.read, x));
+                        self.low.push_back((self.read, x));
+                        self.raw.push_back(x);
+                        self.read += 1;
+                    }
+                    None => self.done = true,
+                }
+            }
+            if self.i >= self.read {
+                // A level the samples end in keeps the zero line.
+                self.out.extend(self.level.drain(..).map(|(x, _)| x));
+                return self.out.pop_front();
+            }
+            if let Some(y) = self.judge() {
+                return Some(y);
+            }
+        }
+    }
+}
+
+/// One turn of the signal inside a pulse: where, how far it got (seen from the side the pulse
+/// opened on), and the envelope there.
+#[derive(Clone, Copy)]
+struct Pivot {
+    i: usize,
+    v: f32,
+    peak: bool,
+    env: f32,
+}
+
+/// The turns of one pulse's signal, found as it is walked: a turn counts once the signal has
+/// come back from it by more than the reversal level.
+struct Zigzag {
+    /// +1 where the pulse opened on a rising edge, -1 on a falling one.
+    side: f32,
+    pivots: Vec<Pivot>,
+    hi: Pivot,
+    lo: Pivot,
+    ext: Pivot,
+    dir: i8,
+}
+
+impl Zigzag {
+    /// From sample `a`; `pivots` is a buffer to reuse, emptied here.
+    fn new(a: usize, side: f32, v: f32, env: f32, mut pivots: Vec<Pivot>) -> Self {
+        pivots.clear();
+        let p = Pivot { i: a, v: v * side, peak: true, env };
+        Zigzag { side, pivots, hi: p, lo: Pivot { peak: false, ..p }, ext: p, dir: 0 }
+    }
+
+    fn step(&mut self, i: usize, v: f32, env: f32, rev: f32) {
+        let v = v * self.side;
+        let at = |peak| Pivot { i, v, peak, env };
+        match self.dir {
+            1 if v >= self.ext.v => self.ext = at(true),
+            1 if self.ext.v - v > rev => {
+                self.pivots.push(self.ext);
+                (self.dir, self.ext) = (-1, at(false));
+            }
+            -1 if v <= self.ext.v => self.ext = at(false),
+            -1 if v - self.ext.v > rev => {
+                self.pivots.push(self.ext);
+                (self.dir, self.ext) = (1, at(true));
+            }
+            0 => {
+                if v > self.hi.v {
+                    self.hi = at(true);
+                }
+                if v < self.lo.v {
+                    self.lo = at(false);
+                }
+                if v - self.lo.v > rev {
+                    self.pivots.push(self.lo);
+                    (self.dir, self.ext) = (1, at(true));
+                } else if self.hi.v - v > rev {
+                    self.pivots.push(self.hi);
+                    (self.dir, self.ext) = (-1, at(false));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(mut self) -> (Vec<Pivot>, f32) {
+        self.pivots.push(Pivot { peak: self.dir >= 0, ..self.ext });
+        (self.pivots, self.side)
+    }
+}
+
+/// Where the samples `x` gives first cross `level` after `from`, between two samples, searching
+/// to `to`; `to` where they do not.
+fn mid_cross(x: impl Fn(usize) -> f32, from: usize, to: usize, level: f32) -> f64 {
+    for i in from + 1..=to {
+        let (a, b) = (x(i - 1), x(i));
+        if (a - level) * (b - level) <= 0.0 && a != b {
+            return (i - 1) as f64 + f64::from((level - a) / (b - a));
+        }
+    }
+    to as f64
+}
+
+/// The half-waves the comparator swallowed, found as its edges come: a short half-wave riding
+/// on a long one that never reached the reversal level.
+///
+/// Such a half-wave crosses the zero line by a hair and stays inside the pulse it rides on: on
+/// a recording that has lost its treble, the sync pair on the tail of the pilot's last
+/// half-wave, and the block reads a bit late with a checksum that still passes. The shape
+/// decides instead: inside a pulse, a peak, a trough and a peak whose two swings each pass the
+/// reversal level are a half-wave, guarded against ripple:
+/// - the trough crosses the zero line, as a half-wave of the other sign does and a ripple does
+///   not (without this, a pilot's noise splits one pulse in a hundred);
+/// - it stays short of the reversal level, which the comparator has already ruled on;
+/// - the peak after it reaches the arm band, and so does the one before unless that is the
+///   pulse's own opening lobe, confirmed instead by the flank after the trough; such a lobe must
+///   also last as long as a half-wave;
+/// - the half-wave and the rest of the pulse behind it last at least [`MIN_HALF_TSTATES`].
+///
+/// Each edge is timed at the level half-way between the turns it separates: the swallowed
+/// lobe's own zero line is weakened and lifted, so it would time the edge far off, and behind a
+/// weak opening lobe that level is taken against the lower of the two peaks instead.
+///
+/// A pulse is looked at once the edge that closes it is found, while its samples and envelope
+/// are still kept; one longer than that is passed over as silence, not a riding half-wave.
+struct Notches {
+    /// The pulses behind the edges before this one have been looked at.
+    done: usize,
+    /// Each half-wave found, as its two edges, and the edge it follows.
+    found: Vec<(usize, [Edge; 2])>,
+    /// The turns of the pulse being looked at, a buffer kept from one to the next.
+    pivots: Vec<Pivot>,
+    min_half: f64,
+    /// The most samples a pulse looked at spans.
+    longest: usize,
+}
+
+impl Notches {
+    fn new(rate_hz: u32) -> Self {
+        Notches {
+            done: 0,
+            found: Vec::new(),
+            pivots: Vec::new(),
+            min_half: min_half_samples(rate_hz),
+            longest: rate_hz as usize,
+        }
+    }
+
+    /// Looks at each pulse between two of `edges` not looked at yet; `x` and `env` hold the
+    /// samples and the envelope up to its end.
+    fn catch_up(&mut self, edges: &[Edge], x: &Ring, env: &Ring, floors: &FloorProfile) {
+        while self.done + 1 < edges.len() {
+            let p = self.done;
+            self.done += 1;
+            let (a, b) = (edges[p].at.ceil() as usize, edges[p + 1].at.floor() as usize);
+            if b <= a + 3 || b - a > self.longest || a < x.first || a < env.first {
+                continue;
+            }
+            let side = if edges[p].rising { 1.0 } else { -1.0 };
+            let mut z = Zigzag::new(a, side, x.at(a), env.at(a), std::mem::take(&mut self.pivots));
+            for j in a + 1..=b {
+                let e = env.at(j);
+                z.step(j, x.at(j), e, (REV_FRAC * e).max(floors.at(j)));
+            }
+            let found = &mut self.found;
+            self.pivots =
+                swallowed(z, &edges[p..p + 2], x, floors, self.min_half, |pair| found.push((p, pair)));
+        }
+    }
+
+    /// `edges` with the half-waves found put back.
+    fn into_edges(self, edges: Vec<Edge>) -> Vec<Edge> {
+        if self.found.is_empty() {
+            return edges;
+        }
+        let mut out = Vec::with_capacity(edges.len() + 2 * self.found.len());
+        let mut found = self.found.into_iter().peekable();
+        for (k, edge) in edges.into_iter().enumerate() {
+            out.push(edge);
+            while let Some((_, pair)) = found.next_if(|&(after, _)| after == k) {
+                out.extend(pair);
+            }
+        }
+        out
+    }
+}
+
+/// Gives `found` each half-wave the turns of the pulse between the two `around` edges hold, as
+/// its two edges; the turns' buffer back.
+fn swallowed(
+    z: Zigzag,
+    around: &[Edge],
+    x: &Ring,
+    floors: &FloorProfile,
+    min_half: f64,
+    mut found: impl FnMut([Edge; 2]),
+) -> Vec<Pivot> {
+    let (e0, e1) = (around[0].at, around[1].at);
+    let (piv, side) = z.finish();
+    let y = |i: usize| x.at(i) * side;
+    let rev = |p: &Pivot| (REV_FRAC * p.env).max(floors.at(p.i));
+    let arm = |p: &Pivot| (BAND_FRAC * p.env).max(floors.at(p.i));
+    let mut last = e0;
+    for k in 1..piv.len().saturating_sub(1) {
+        let (before, trough, after) = (piv[k - 1], piv[k], piv[k + 1]);
+        if trough.peak || !before.peak || !after.peak {
+            continue;
+        }
+        if trough.v > 0.0 || trough.v <= -rev(&trough) {
+            continue;
+        }
+        let weak = before.v < arm(&before);
+        let opening = piv[..k - 1].iter().all(|p| !p.peak) && before.v >= rev(&before);
+        if (weak && !opening) || after.v < arm(&after) {
+            continue;
+        }
+        let c1 = mid_cross(y, before.i, trough.i, 0.5 * (before.v + trough.v));
+        let ceiling = if weak { before.v.min(after.v) } else { after.v };
+        let c2 = mid_cross(y, trough.i, after.i, 0.5 * (trough.v + ceiling));
+        if weak && c1 - e0 < min_half {
+            continue;
+        }
+        // Strictly inside the pulse and in order: a lobe flush against an edge is that edge.
+        if c1 <= last || c2 <= c1 || c2 >= e1 {
+            continue;
+        }
+        if c2 - c1 < min_half || e1 - c2 < min_half {
+            continue;
+        }
+        let rising = side < 0.0;
+        found([Edge { at: c1, rising }, Edge { at: c2, rising: !rising }]);
+        last = c2;
+    }
+    piv
 }
 
 /// The pulses between `edges`, with one from the start of the recording to the first edge and

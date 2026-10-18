@@ -13,8 +13,11 @@ use crate::types::{Block, Body, SymDef};
 
 pub const TSTATES_PER_SEC: u32 = 3_500_000;
 
-/// Silence before and after the rendered tape, in T-states.
-pub const LEAD_TSTATES: u64 = TSTATES_PER_SEC as u64 / 2;
+/// Silence before the rendered tape, in T-states.
+///
+/// Nothing follows the tape: it ends where its last pause does, so a decode of the render gives
+/// that pause back as long as it is.
+pub const LEAD_TSTATES: u64 = TSTATES_PER_SEC as u64 / 4;
 
 /// JavaScript's `Math.round`: halves go up, not away from zero.
 fn js_round(x: f64) -> f64 {
@@ -462,7 +465,7 @@ impl PulseSink for SampleSink {
 pub struct Timeline {
     /// T-state at which each entry of `order` starts playing (after the lead-in).
     pub starts: Vec<u64>,
-    /// Total T-states including lead-in and lead-out; equals the rendered length.
+    /// Total T-states including the lead-in; equals the rendered length.
     pub total: u64,
 }
 
@@ -474,7 +477,6 @@ pub fn playback_timeline(blocks: &[Block], order: &[u32]) -> Timeline {
         starts.push(sink.total);
         emit_block(&mut sink, &blocks[*i as usize]);
     }
-    sink.hold(LEAD_TSTATES);
     Timeline { starts, total: sink.total }
 }
 
@@ -491,7 +493,6 @@ pub fn render_tape(blocks: &[Block], opts: RenderOptions, order: &[u32]) -> Vec<
     for i in order {
         emit_block(&mut sink, &blocks[*i as usize]);
     }
-    sink.hold(LEAD_TSTATES);
     sink.finish()
 }
 

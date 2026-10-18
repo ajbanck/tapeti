@@ -353,8 +353,8 @@ exports[`audio > measures durations and timelines > CSW 1`] = `
     1606707,
   ],
   "samples": [
-    11672,
-    64344,
+    5672,
+    31269,
   ],
   "tape": {
     "order": [
@@ -364,9 +364,9 @@ exports[`audio > measures durations and timelines > CSW 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 5106707,
+    "total": 2481707,
   },
 }
 `;
@@ -386,8 +386,8 @@ exports[`audio > measures durations and timelines > Tapeti demo (variant).tzx 1`
     0,
   ],
   "samples": [
-    349781,
-    1928172,
+    343781,
+    1895097,
   ],
   "tape": {
     "order": [
@@ -406,18 +406,18 @@ exports[`audio > measures durations and timelines > Tapeti demo (variant).tzx 1`
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
-      23056886,
-      36695572,
-      36695572,
-      36695572,
-      36695572,
-      148108638,
-      148386718,
-      151279569,
+      875000,
+      875000,
+      22181886,
+      35820572,
+      35820572,
+      35820572,
+      35820572,
+      147233638,
+      147511718,
+      150404569,
     ],
-    "total": 153029569,
+    "total": 150404569,
   },
 }
 `;
@@ -446,8 +446,8 @@ exports[`audio > measures durations and timelines > Tapeti demo.tzx 1`] = `
     0,
   ],
   "samples": [
-    491997,
-    2712136,
+    485997,
+    2679061,
   ],
   "tape": {
     "order": [
@@ -479,31 +479,31 @@ exports[`audio > measures durations and timelines > Tapeti demo.tzx 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
-      23050046,
-      35891872,
-      57219278,
-      169944584,
-      169944584,
-      191268570,
-      191268570,
-      193599170,
-      193599170,
-      195929770,
-      195929770,
-      198260370,
-      198260370,
-      198261772,
-      202257672,
-      202257672,
-      202257672,
-      213498938,
-      213498938,
-      213498938,
-      213498938,
+      875000,
+      875000,
+      22175046,
+      35016872,
+      56344278,
+      169069584,
+      169069584,
+      190393570,
+      190393570,
+      192724170,
+      192724170,
+      195054770,
+      195054770,
+      197385370,
+      197385370,
+      197386772,
+      201382672,
+      201382672,
+      201382672,
+      212623938,
+      212623938,
+      212623938,
+      212623938,
     ],
-    "total": 215248938,
+    "total": 212623938,
   },
 }
 `;
@@ -517,8 +517,8 @@ exports[`audio > measures durations and timelines > call 1`] = `
     0,
   ],
   "samples": [
-    8017,
-    44198,
+    2017,
+    11123,
   ],
   "tape": {
     "order": [
@@ -534,15 +534,15 @@ exports[`audio > measures durations and timelines > call 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
-      1752168,
-      1752168,
-      1752168,
-      1755668,
-      1757836,
+      875000,
+      875000,
+      877168,
+      877168,
+      877168,
+      880668,
+      882836,
     ],
-    "total": 3507836,
+    "total": 882836,
   },
 }
 `;
@@ -553,8 +553,8 @@ exports[`audio > measures durations and timelines > direct recording 1`] = `
     18448,
   ],
   "samples": [
-    8042,
-    44332,
+    2042,
+    11257,
   ],
   "tape": {
     "order": [
@@ -564,9 +564,9 @@ exports[`audio > measures durations and timelines > direct recording 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 3518448,
+    "total": 893448,
   },
 }
 `;
@@ -575,8 +575,8 @@ exports[`audio > measures durations and timelines > empty 1`] = `
 {
   "blocks": [],
   "samples": [
-    8000,
-    44100,
+    2000,
+    11025,
   ],
   "tape": {
     "order": [],
@@ -584,7 +584,7 @@ exports[`audio > measures durations and timelines > empty 1`] = `
   },
   "timeline": {
     "starts": [],
-    "total": 3500000,
+    "total": 875000,
   },
 }
 `;
@@ -595,8 +595,8 @@ exports[`audio > measures durations and timelines > generalized 1`] = `
     134122,
   ],
   "samples": [
-    8306,
-    45789,
+    2306,
+    12714,
   ],
   "tape": {
     "order": [
@@ -606,9 +606,9 @@ exports[`audio > measures durations and timelines > generalized 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 3634122,
+    "total": 1009122,
   },
 }
 `;
@@ -621,8 +621,8 @@ exports[`audio > measures durations and timelines > jump 1`] = `
     3500,
   ],
   "samples": [
-    8008,
-    44144,
+    2008,
+    11069,
   ],
   "tape": {
     "order": [
@@ -633,10 +633,10 @@ exports[`audio > measures durations and timelines > jump 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
+      875000,
+      875000,
     ],
-    "total": 3503500,
+    "total": 878500,
   },
 }
 `;
@@ -650,8 +650,8 @@ exports[`audio > measures durations and timelines > loop 1`] = `
     3500,
   ],
   "samples": [
-    8037,
-    44308,
+    2037,
+    11233,
   ],
   "tape": {
     "order": [
@@ -668,16 +668,16 @@ exports[`audio > measures durations and timelines > loop 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
-      1754336,
-      1754336,
-      1758672,
-      1758672,
-      1763008,
-      1763008,
+      875000,
+      875000,
+      879336,
+      879336,
+      883672,
+      883672,
+      888008,
+      888008,
     ],
-    "total": 3516508,
+    "total": 891508,
   },
 }
 `;
@@ -688,8 +688,8 @@ exports[`audio > measures durations and timelines > pure data 1`] = `
     130760,
   ],
   "samples": [
-    8298,
-    45747,
+    2298,
+    12672,
   ],
   "tape": {
     "order": [
@@ -699,9 +699,9 @@ exports[`audio > measures durations and timelines > pure data 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 3630760,
+    "total": 1005760,
   },
 }
 `;
@@ -714,8 +714,8 @@ exports[`audio > measures durations and timelines > set level 1`] = `
     3500,
   ],
   "samples": [
-    8032,
-    44280,
+    2032,
+    11205,
   ],
   "tape": {
     "order": [
@@ -727,11 +727,11 @@ exports[`audio > measures durations and timelines > set level 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
-      1760840,
+      875000,
+      875000,
+      885840,
     ],
-    "total": 3514340,
+    "total": 889340,
   },
 }
 `;
@@ -742,8 +742,8 @@ exports[`audio > measures durations and timelines > standard 1`] = `
     17936296,
   ],
   "samples": [
-    48997,
-    270097,
+    42997,
+    237022,
   ],
   "tape": {
     "order": [
@@ -753,9 +753,9 @@ exports[`audio > measures durations and timelines > standard 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 21436296,
+    "total": 18811296,
   },
 }
 `;
@@ -766,8 +766,8 @@ exports[`audio > measures durations and timelines > standard, no pause 1`] = `
     7047006,
   ],
   "samples": [
-    24107,
-    132892,
+    18107,
+    99817,
   ],
   "tape": {
     "order": [
@@ -777,9 +777,9 @@ exports[`audio > measures durations and timelines > standard, no pause 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 10547006,
+    "total": 7922006,
   },
 }
 `;
@@ -791,8 +791,8 @@ exports[`audio > measures durations and timelines > stop in 48k 1`] = `
     2168,
   ],
   "samples": [
-    8004,
-    44127,
+    2004,
+    11052,
   ],
   "tape": {
     "order": [
@@ -803,10 +803,10 @@ exports[`audio > measures durations and timelines > stop in 48k 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1750000,
+      875000,
+      875000,
     ],
-    "total": 3502168,
+    "total": 877168,
   },
 }
 `;
@@ -818,8 +818,8 @@ exports[`audio > measures durations and timelines > stop the tape 1`] = `
     2168,
   ],
   "samples": [
-    8000,
-    44100,
+    2000,
+    11025,
   ],
   "tape": {
     "order": [
@@ -829,9 +829,9 @@ exports[`audio > measures durations and timelines > stop the tape 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 3500000,
+    "total": 875000,
   },
 }
 `;
@@ -843,8 +843,8 @@ exports[`audio > measures durations and timelines > tone and sequence 1`] = `
     600,
   ],
   "samples": [
-    8249,
-    45473,
+    2249,
+    12398,
   ],
   "tape": {
     "order": [
@@ -855,10 +855,10 @@ exports[`audio > measures durations and timelines > tone and sequence 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
-      1858400,
+      875000,
+      983400,
     ],
-    "total": 3609000,
+    "total": 984000,
   },
 }
 `;
@@ -869,8 +869,8 @@ exports[`audio > measures durations and timelines > turbo 1`] = `
     483832,
   ],
   "samples": [
-    9105,
-    50196,
+    3105,
+    17121,
   ],
   "tape": {
     "order": [
@@ -880,9 +880,9 @@ exports[`audio > measures durations and timelines > turbo 1`] = `
   },
   "timeline": {
     "starts": [
-      1750000,
+      875000,
     ],
-    "total": 3983832,
+    "total": 1358832,
   },
 }
 `;
@@ -1164,185 +1164,185 @@ exports[`audio > plays the blocks in order > turbo 1`] = `
 
 exports[`audio > renders samples > CSW 1`] = `
 {
-  "mic 44100": "64344 samples 049c9760a778253f0c7ed655bbc5d33b79fc40b7",
-  "mic 8000": "11672 samples 017651872ff75a7bffcc205129e214977be5e226",
-  "square 44100": "64344 samples 5ed7fd90d4c8f15b31dd6a0eb00df699c51245e1",
-  "square 8000": "11672 samples fec6111e8c0f2bc06b13dad83f5b46e88690e220",
-  "square 8000 at 0.25": "11672 samples 8da3d4bd0ef086a2a90b06c4842ce6b9e6e32020",
+  "mic 44100": "31269 samples acc57c01383be840ab4aba2de79d70b7ef1e6ae7",
+  "mic 8000": "5672 samples 6018dd7815cb6cca8b982d41bc693706f30f475a",
+  "square 44100": "31269 samples 9ce7d4f33004401ef32336b7610bffee533c9e81",
+  "square 8000": "5672 samples 7d23d5558adc7d7ab8991d9836f4d9bb52571c34",
+  "square 8000 at 0.25": "5672 samples 99a75de1eb85b2f2b5c4adb29b85a4e9b0c67edf",
 }
 `;
 
 exports[`audio > renders samples > Tapeti demo (variant).tzx 1`] = `
 {
-  "mic 44100": "1928172 samples 636f6ad4a3034740cda0586399910e87145e2fc8",
-  "mic 8000": "349781 samples bccdd5d3b8c3c39732193d244709f4b2cc07fca7",
-  "square 44100": "1928172 samples 046a08d821bd5d0b0fbf83cbae524db8d326adb1",
-  "square 8000": "349781 samples ba0781aeb8bae99d4f3b320eabffc7e034dce75d",
-  "square 8000 at 0.25": "349781 samples a1f0e46e1c6c574305730a08468a31c3328760ed",
+  "mic 44100": "1895097 samples 1177052d52615e19dd5d9c58e1508d774b8ee8e3",
+  "mic 8000": "343781 samples e78c69009ec52e7b44c047e13b167658eec2ca91",
+  "square 44100": "1895097 samples c6f60adea9357324b38f2e6b3d36c747d7304a68",
+  "square 8000": "343781 samples d02633f023dd1c7389a5b8541f3a15b53976d379",
+  "square 8000 at 0.25": "343781 samples ea5d9ee2cf3397134d3cc85539738cf8416d7315",
 }
 `;
 
 exports[`audio > renders samples > Tapeti demo.tzx 1`] = `
 {
-  "mic 44100": "2712136 samples e4ba7a0b1abc512f0cf65e54ef2e26c8ea6c7032",
-  "mic 8000": "491997 samples 5a8e2b5f2ae7a59f73e066367fd9f32cb5ffdb06",
-  "square 44100": "2712136 samples a22ef02be73e07787e02fdbb455aa5bf3125e411",
-  "square 8000": "491997 samples 31d3a741c433ec5dfbcd2c9af80651a08bfba4de",
-  "square 8000 at 0.25": "491997 samples cb560c23cf51387696121881188ff147d2552fdb",
+  "mic 44100": "2679061 samples dce3aed6624db36424121c370ac3aba166a6c2bc",
+  "mic 8000": "485997 samples bc93de6808430e8488e1ef4cbaa762a2000d31d4",
+  "square 44100": "2679061 samples b749f3ed47bc1ccbde0f1a0ebea0167151047034",
+  "square 8000": "485997 samples cd1536661b9fd4cd73d19bda42a0d60981de1ebe",
+  "square 8000 at 0.25": "485997 samples c334d0f65d38a37605fb80798752e5dadc39e343",
 }
 `;
 
 exports[`audio > renders samples > call 1`] = `
 {
-  "mic 44100": "44198 samples cd9b57f6a09e46f34751a1e2293b8ea877c2244a",
-  "mic 8000": "8017 samples 095a12a1b7a298834c2cb9fc0770c717fddcbd66",
-  "square 44100": "44198 samples 1b18c4ec0ce4b0ac66c6d09eee8824f322382e4b",
-  "square 8000": "8017 samples 126069497ff82008349ac286704320d25dd27477",
-  "square 8000 at 0.25": "8017 samples 3861b9fb803a2fde167b3af8407f469f76deef52",
+  "mic 44100": "11123 samples 0a3d85bc072431fddbb03836a385f181947e180f",
+  "mic 8000": "2017 samples ba8c3e8ccd84e4a7bf7fbc1aae91e0cc666ed4dd",
+  "square 44100": "11123 samples c202fd720ce6962d8331fcfc0b5c931f014a3cb7",
+  "square 8000": "2017 samples e7d9c2786e3d4072de2c89bc07fd5f19564a537d",
+  "square 8000 at 0.25": "2017 samples 433ec9ce353af05243f511873554bb70a4ecc4e8",
 }
 `;
 
 exports[`audio > renders samples > direct recording 1`] = `
 {
-  "mic 44100": "44332 samples fa92b23204ea2a2301dc830caa6eeaf7dbe8aad7",
-  "mic 8000": "8042 samples 7dc05d11c499b56a98feb80689ae17272d26f328",
-  "square 44100": "44332 samples d59c3c3e6d7c67f59f7216075a385773bb719daa",
-  "square 8000": "8042 samples 0de4c974d8eb81cb8fa06a41fdd7d753354157bf",
-  "square 8000 at 0.25": "8042 samples 4cbeb4449c889b66c92b63d1af71efc358692b08",
+  "mic 44100": "11257 samples c8447c44c9dde8c7c3756583c1037180e138b46b",
+  "mic 8000": "2042 samples a43cc35da1d2919d9d6498530e124c63e12bbe8c",
+  "square 44100": "11257 samples 1aad6237cb04e769e8fd9a9f42000c5ea89febb6",
+  "square 8000": "2042 samples 60fd0ecb35228e32f3d61b6e5aabf194b890982b",
+  "square 8000 at 0.25": "2042 samples 6d8a2ba1851def3d4fe9a629c1e3d387b0132cfb",
 }
 `;
 
 exports[`audio > renders samples > empty 1`] = `
 {
-  "mic 44100": "44100 samples d1a9c15a0c60e5ca3d8597b51d00892263ce620f",
-  "mic 8000": "8000 samples a9bc61956d9c6223bc26570592451d7db331c460",
-  "square 44100": "44100 samples dcd0883cde57609b5a9c44ce9f61e6e8f3e9e5b4",
-  "square 8000": "8000 samples 61ebbf03520cfbc1b5a7cdcef6b3ba2361228a62",
-  "square 8000 at 0.25": "8000 samples 6b943c899e4a3273a68a68c2e23f2e9f1cc73341",
+  "mic 44100": "11025 samples 858798d6c3d3d526b584a17ddc5f0450cbc1b22e",
+  "mic 8000": "2000 samples dfcc445b7dee4e635c8ef7a9a27534db67296a06",
+  "square 44100": "11025 samples 3fbddaa5ff4e9e1770401394043439d4ab6e477b",
+  "square 8000": "2000 samples 45e116602c565164306487772797544f8f5e92a5",
+  "square 8000 at 0.25": "2000 samples 65986a9fa3edd7e28b28840976b57ae0ccfdef03",
 }
 `;
 
 exports[`audio > renders samples > generalized 1`] = `
 {
-  "mic 44100": "45789 samples 51a56a14a6eb3e17d345832f3b8db03ea47f0857",
-  "mic 8000": "8306 samples a7143d6ac8e8efb099de81a6629a4ee1b53b4e22",
-  "square 44100": "45789 samples 1a2836fb3237199e9dbe5ecf6a532530ceb26764",
-  "square 8000": "8306 samples a6f5d580c218c5f0b6d919d568d5955ef2af0637",
-  "square 8000 at 0.25": "8306 samples 8606a2dc9a811ccd7a327fbc7930823b7ba5c375",
+  "mic 44100": "12714 samples 64391f9eece1ff4a54e33d04edf6f6492c87ebfd",
+  "mic 8000": "2306 samples 6d65047b5b38a7d08027838ce30f53f7bd328763",
+  "square 44100": "12714 samples a3613bd48dcfa393cb4ae8b7609a7f41a67cfd1e",
+  "square 8000": "2306 samples b1e68a95ec4ef7f7b3608cfb2f1cd36f82c1415b",
+  "square 8000 at 0.25": "2306 samples 95b2d7cfee52d12ca3586e68c01d4af2d58639e9",
 }
 `;
 
 exports[`audio > renders samples > jump 1`] = `
 {
-  "mic 44100": "44144 samples 38329f71784ab02f33671ed29d0955827a7c0681",
-  "mic 8000": "8008 samples c2b78e6214c0a10d037e76c2ab691b557bcd62d4",
-  "square 44100": "44144 samples 215d1e41438c138581a11392e97340bd1f828d78",
-  "square 8000": "8008 samples 6656718c2f2392a949ab1220134149d3db70c4cc",
-  "square 8000 at 0.25": "8008 samples 159fc82d7b83ab0363bd74673a0b4ef422796fcb",
+  "mic 44100": "11069 samples cf6fc90e511ab5857f449f5169368d9505149759",
+  "mic 8000": "2008 samples d88127878623fece53775898631b9d73d7464a06",
+  "square 44100": "11069 samples b173ea3d06da9a636b0525bab85ada5ae0d83ab4",
+  "square 8000": "2008 samples 47a325f00116ec39498f2b281f89d2e76833578e",
+  "square 8000 at 0.25": "2008 samples 6732a24431cc6964ac81dcccc6c947a8766150ba",
 }
 `;
 
 exports[`audio > renders samples > loop 1`] = `
 {
-  "mic 44100": "44308 samples 7ff24f2438bb0152388c26924cdb749fbbc16808",
-  "mic 8000": "8037 samples 3fab3f24c02ee3cf8aaf11c896ef1be4b4daa570",
-  "square 44100": "44308 samples 430be9a10ceb1c0f05f5e7a865c01fad3fc46507",
-  "square 8000": "8037 samples f444b2f0a57bf4b42494021c44dd8ea74562e82b",
-  "square 8000 at 0.25": "8037 samples 9823d0f3676eef28ac275083e531433b85ebfab5",
+  "mic 44100": "11233 samples cf4b02494a36bf26305f805d2e94d6efb179e7dd",
+  "mic 8000": "2037 samples c606c393dba3f6122e35c8f37ee9ddc4ddb529e2",
+  "square 44100": "11233 samples f634fdbca878bbcd502804824e88196573d945c5",
+  "square 8000": "2037 samples c4b7bc8956f3f0e6b3c8165e5e9034bbcc4003b5",
+  "square 8000 at 0.25": "2037 samples f29e8f760ac321b958945aa6f3136231f2374d40",
 }
 `;
 
 exports[`audio > renders samples > pure data 1`] = `
 {
-  "mic 44100": "45747 samples 62740a6465d94773c5719452847e4c077ca8328f",
-  "mic 8000": "8298 samples eb64f64b3c17f0ae6745a74db2007b4e98f35cd8",
-  "square 44100": "45747 samples 2c9e8cf5c0c4d3662ac1ee4edd86867b5569c536",
-  "square 8000": "8298 samples 8d34c791009003e70f7eddc68506291194261055",
-  "square 8000 at 0.25": "8298 samples 604bc0f4c7930e084c7c13f09c5d33d28cec4a7d",
+  "mic 44100": "12672 samples efdc77639f11a6d670286e0444a4c902b00873d5",
+  "mic 8000": "2298 samples f6a991a1fa28af180b517172bfe591d76e2a3963",
+  "square 44100": "12672 samples 3ba60b7a721269fff9700d0d0e9ddf978c583c80",
+  "square 8000": "2298 samples 6e9daf292aaebd30c0519bb9044cb5ae8427bb88",
+  "square 8000 at 0.25": "2298 samples bd43a425bdc2e0e309d9ccf6248806dc99d3b800",
 }
 `;
 
 exports[`audio > renders samples > set level 1`] = `
 {
-  "mic 44100": "44280 samples ef9bff26f4df0bcbaf0612586d2a5aa2db671f67",
-  "mic 8000": "8032 samples 6f43c7f111051733ed84bc3ad0bc676d2a8a6aa9",
-  "square 44100": "44280 samples 4afb6e0515bf1c1ee116e33740f593cf6a4c3bba",
-  "square 8000": "8032 samples ee4d8c2ae317d6ef13d3de56ea171654f292384f",
-  "square 8000 at 0.25": "8032 samples f263bc8fd0a31541c51a26632e18e80a825f81f9",
+  "mic 44100": "11205 samples 34d603b3aa90134e47d34fb6bbc009438044e81c",
+  "mic 8000": "2032 samples 4d430599cfa2a946a2358671179ac589ffd454ee",
+  "square 44100": "11205 samples d8db0b60e54eb79a359b21683b05fac5af23061f",
+  "square 8000": "2032 samples edc13d47e596e1eb56f6b884dd6cc2e32d5f3709",
+  "square 8000 at 0.25": "2032 samples c1843f1ad390fe9f4bcf3f4cc8c52cd9c9f6125e",
 }
 `;
 
 exports[`audio > renders samples > standard 1`] = `
 {
-  "mic 44100": "270097 samples 5e9608c1e1b7fd6b938750d3aa4cf8cf0226845f",
-  "mic 8000": "48997 samples 734587168c8f70cd4439ecbb1e2cc10fc4b5e680",
-  "square 44100": "270097 samples 62f0e20a5f4423c01b484f7be2fe6c8c8cf5e9aa",
-  "square 8000": "48997 samples 0b9437e2a1148c7d94926e4a5fd6c08c8207b190",
-  "square 8000 at 0.25": "48997 samples 389523d833cb71a9c741d72ec12559b1ace64a05",
+  "mic 44100": "237022 samples 544f4a4ede1737a47c58e88947583b100a4d5775",
+  "mic 8000": "42997 samples e512d52e98f0edee13555a1d2a6a7774db77cd76",
+  "square 44100": "237022 samples 5438f95407448f55bd867b74820c15e72e71d5e2",
+  "square 8000": "42997 samples 53fffd00f0a3e132b43eaac0b68f61800b76df71",
+  "square 8000 at 0.25": "42997 samples 5ca66cdc215f0fdc022cbb83ed4479f33972e6cc",
 }
 `;
 
 exports[`audio > renders samples > standard, no pause 1`] = `
 {
-  "mic 44100": "132892 samples 15176beba74928a65de895234569e5b43a389693",
-  "mic 8000": "24107 samples 839102f646faa09a391f64927c947aec134c38cb",
-  "square 44100": "132892 samples fa3be1749d9f486f9d1692704ef15f155703e3bc",
-  "square 8000": "24107 samples 019a4bf1556b797408a878cb438c5fa65602b7dc",
-  "square 8000 at 0.25": "24107 samples 990cef11a686bc983c39ab8d63bd560c024cdc48",
+  "mic 44100": "99817 samples 59af5642ca3e3db81e603dbb2c54839329eb510d",
+  "mic 8000": "18107 samples 4446b22534f704b8270e451b4ac7a651ff30e4b7",
+  "square 44100": "99817 samples 0badd99353eca36aa0b1e90fcacde13ff84d8148",
+  "square 8000": "18107 samples 253f0adf54a75e597d5d861c32ea6e29bedbd1d4",
+  "square 8000 at 0.25": "18107 samples ceb8891b128a64cde219ca78206fc22ef2941e76",
 }
 `;
 
 exports[`audio > renders samples > stop in 48k 1`] = `
 {
-  "mic 44100": "44127 samples 99c3e01dc68446bf2f8ce9d267929a1c7711c3f5",
-  "mic 8000": "8004 samples ffb984f41e53bda27d6864f04bd3499bc5272d8a",
-  "square 44100": "44127 samples 1ba5ce7e00c1a9e7ba1eb575bef34c9355ce9460",
-  "square 8000": "8004 samples 3cdad668bee10664bf499cec7971aacaa50e7ed8",
-  "square 8000 at 0.25": "8004 samples 45f9ef6fa7b304f0518d40e0eb2de933d658210b",
+  "mic 44100": "11052 samples 7d9cab3d22a4f509ce1dd037aa83f1ce969abbe1",
+  "mic 8000": "2004 samples 49026e80e819cb7061f7c3b6af17166fbec82f10",
+  "square 44100": "11052 samples a2341c04f352bae65e9180816ea8c14fd4075d46",
+  "square 8000": "2004 samples ed7c756d3414bb94ca13d3b67ec26734018c9384",
+  "square 8000 at 0.25": "2004 samples b82ec3a5d5c288141db89593b6f2246f8ca68ab3",
 }
 `;
 
 exports[`audio > renders samples > stop the tape 1`] = `
 {
-  "mic 44100": "44100 samples d1a9c15a0c60e5ca3d8597b51d00892263ce620f",
-  "mic 8000": "8000 samples a9bc61956d9c6223bc26570592451d7db331c460",
-  "square 44100": "44100 samples dcd0883cde57609b5a9c44ce9f61e6e8f3e9e5b4",
-  "square 8000": "8000 samples 61ebbf03520cfbc1b5a7cdcef6b3ba2361228a62",
-  "square 8000 at 0.25": "8000 samples 6b943c899e4a3273a68a68c2e23f2e9f1cc73341",
+  "mic 44100": "11025 samples 858798d6c3d3d526b584a17ddc5f0450cbc1b22e",
+  "mic 8000": "2000 samples dfcc445b7dee4e635c8ef7a9a27534db67296a06",
+  "square 44100": "11025 samples 3fbddaa5ff4e9e1770401394043439d4ab6e477b",
+  "square 8000": "2000 samples 45e116602c565164306487772797544f8f5e92a5",
+  "square 8000 at 0.25": "2000 samples 65986a9fa3edd7e28b28840976b57ae0ccfdef03",
 }
 `;
 
 exports[`audio > renders samples > tone and sequence 1`] = `
 {
-  "mic 44100": "45473 samples 793adedba2bcdb93b1ef07c098ab9f4ee1f627dd",
-  "mic 8000": "8249 samples 5b0408fb28e286c0bd5e8a150a43839e67305643",
-  "square 44100": "45473 samples 71f2aef83dee32a5deef960394f1a1762da858c7",
-  "square 8000": "8249 samples dd96645bf87dbabc14d23628ebd5099b122d4cfc",
-  "square 8000 at 0.25": "8249 samples 5a9e7143ba1595bfd622f1f3455fe2d2574629b4",
+  "mic 44100": "12398 samples ad85262ade79acb25aa8b12617c4310c9c7a5125",
+  "mic 8000": "2249 samples 19127e662bd5d65db82ce5915f66ac15de51dca9",
+  "square 44100": "12398 samples edad8b434f869674e1748d1396b36eb16a22515d",
+  "square 8000": "2249 samples 32a24264b5137450f1fffa7b36f8c8ce05993377",
+  "square 8000 at 0.25": "2249 samples 5e2bf93ed26ab07c33ecff0e27044e4b43afc4d3",
 }
 `;
 
 exports[`audio > renders samples > turbo 1`] = `
 {
-  "mic 44100": "50196 samples 279d9a197e7ac9115939d33c5d09e3efa291b364",
-  "mic 8000": "9105 samples 502d1ce2338aca478a4661151bd7839b25d05870",
-  "square 44100": "50196 samples d9b3a4cb70a4c6b1647a5e30c36a483b58b7ce6c",
-  "square 8000": "9105 samples 4e100f43ffc0be4e912cab10c4cc345f4709cfc7",
-  "square 8000 at 0.25": "9105 samples e1b7401847aa80111d39372e94a83a19d4a332a6",
+  "mic 44100": "17121 samples 417cfaa1195605c1235858ebcb24201ec96496ff",
+  "mic 8000": "3105 samples ecebe7eb5574a025a36bec0745306418cf6b2b0d",
+  "square 44100": "17121 samples fed31a4a528e4081b0af0c721b9b9c92edc0239c",
+  "square 8000": "3105 samples 64c6b05125ad75796085b6e970c2fb03d0c42722",
+  "square 8000 at 0.25": "3105 samples 66f9c0b7bcbcad3d06de981ef34f359d16d82567",
 }
 `;
 
 exports[`audio > writes WAV files > CSW 1`] = `
 {
-  "16 bit": "23388 bytes, header 52494646545b000057415645666d74201000000001000100401f0000803e00000200100064617461305b0000, b72e380ae970b62c55f5972130a7567adfcbca13",
-  "8 bit": "11716 bytes, header 52494646bc2d000057415645666d74201000000001000100401f0000401f00000100080064617461982d0000, d981ec3b05f007de16b5ed02ddb129a79fef5780",
+  "16 bit": "11388 bytes, header 52494646742c000057415645666d74201000000001000100401f0000803e00000200100064617461502c0000, 85409992c494e270577c1d8b95ca7a4aae238ad9",
+  "8 bit": "5716 bytes, header 524946464c16000057415645666d74201000000001000100401f0000401f0000010008006461746128160000, 5d052bca1943546db6bfaf68b5af1be4c44a5f62",
 }
 `;
 
 exports[`audio > writes WAV files > direct recording 1`] = `
 {
-  "16 bit": "16128 bytes, header 52494646f83e000057415645666d74201000000001000100401f0000803e00000200100064617461d43e0000, 1bfcbcd2d1ca05d846dc297598db72c80236c9e0",
-  "8 bit": "8086 bytes, header 524946468e1f000057415645666d74201000000001000100401f0000401f000001000800646174616a1f0000, 009082180c4601b5a9baaebde5d93f96c9fbd206",
+  "16 bit": "4128 bytes, header 524946461810000057415645666d74201000000001000100401f0000803e00000200100064617461f40f0000, 07e385fa349dd694b34f50b3684fc9ecf50ef9b8",
+  "8 bit": "2086 bytes, header 524946461e08000057415645666d74201000000001000100401f0000401f00000100080064617461fa070000, 269ce63890e1442ca8c5d4b5c14c5740ceea7fc3",
 }
 `;
 
@@ -1352,43 +1352,43 @@ exports[`audio > writes WAV files > edge values, 16 bit 1`] = `"5249464636000000
 
 exports[`audio > writes WAV files > empty 1`] = `
 {
-  "16 bit": "16044 bytes, header 52494646a43e000057415645666d74201000000001000100401f0000803e00000200100064617461803e0000, 656b32fcd1fafd8e51902e2b08de13e514bf57ab",
-  "8 bit": "8044 bytes, header 52494646641f000057415645666d74201000000001000100401f0000401f00000100080064617461401f0000, 5a9907e188f48dce895b28e628edd7b39c222e72",
+  "16 bit": "4044 bytes, header 52494646c40f000057415645666d74201000000001000100401f0000803e00000200100064617461a00f0000, d952e6734f70a343dc2a87c71628286a87101fa1",
+  "8 bit": "2044 bytes, header 52494646f407000057415645666d74201000000001000100401f0000401f00000100080064617461d0070000, 247cf8f15c61266439e9483c1ac997de073c3ee1",
 }
 `;
 
 exports[`audio > writes WAV files > pure data 1`] = `
 {
-  "16 bit": "16640 bytes, header 52494646f840000057415645666d74201000000001000100401f0000803e00000200100064617461d4400000, f0fcdb29a147acfdd463b084266c2529b9a5fa2a",
-  "8 bit": "8342 bytes, header 524946468e20000057415645666d74201000000001000100401f0000401f000001000800646174616a200000, a9ed61549cb790bff6e53fa216e390a334151145",
+  "16 bit": "4640 bytes, header 524946461812000057415645666d74201000000001000100401f0000803e00000200100064617461f4110000, 0d5a717043fe61f68694536ae42cc5173554bed7",
+  "8 bit": "2342 bytes, header 524946461e09000057415645666d74201000000001000100401f0000401f00000100080064617461fa080000, 61a162777f8e0336ba38c1268cf4f83e1388a9e1",
 }
 `;
 
 exports[`audio > writes WAV files > standard 1`] = `
 {
-  "16 bit": "98038 bytes, header 52494646ee7e010057415645666d74201000000001000100401f0000803e00000200100064617461ca7e0100, fe051daf4d8f6546630bd93b21c2894fc29c2a53",
-  "8 bit": "49041 bytes, header 5249464689bf000057415645666d74201000000001000100401f0000401f0000010008006461746165bf0000, 3c0acca9b3854179066d5ed6a1c61dac7aa4b07b",
+  "16 bit": "86038 bytes, header 524946460e50010057415645666d74201000000001000100401f0000803e00000200100064617461ea4f0100, 706ca76b7802062ac3fe3ec142ea59ddd0174f86",
+  "8 bit": "43041 bytes, header 5249464619a8000057415645666d74201000000001000100401f0000401f00000100080064617461f5a70000, eff991a2881b0d0f82bf54cfe663b7441d6457db",
 }
 `;
 
 exports[`audio > writes WAV files > standard, no pause 1`] = `
 {
-  "16 bit": "48258 bytes, header 524946467abc000057415645666d74201000000001000100401f0000803e0000020010006461746156bc0000, 5abe08cdc8ac2bf208320fb592e4684be357dc7a",
-  "8 bit": "24151 bytes, header 524946464f5e000057415645666d74201000000001000100401f0000401f000001000800646174612b5e0000, 4c4e170308e31105decd406d9e830456d841e837",
+  "16 bit": "36258 bytes, header 524946469a8d000057415645666d74201000000001000100401f0000803e00000200100064617461768d0000, 7c412cb70ed6c05fce807f76b55a9c376a1a7733",
+  "8 bit": "18151 bytes, header 52494646df46000057415645666d74201000000001000100401f0000401f00000100080064617461bb460000, a4764b2ca650e52f4f05b03c3ea0f73d83e89e09",
 }
 `;
 
 exports[`audio > writes WAV files > tone and sequence 1`] = `
 {
-  "16 bit": "16542 bytes, header 524946469640000057415645666d74201000000001000100401f0000803e0000020010006461746172400000, 79809e7d403db82f7777cabe5300359611c74393",
-  "8 bit": "8293 bytes, header 524946465d20000057415645666d74201000000001000100401f0000401f0000010008006461746139200000, adf745908a07d470432cde64e5d47bfa749b488e",
+  "16 bit": "4542 bytes, header 52494646b611000057415645666d74201000000001000100401f0000803e0000020010006461746192110000, a7f1f42bfa06a19bbb11a755d10e3766c0a285ff",
+  "8 bit": "2293 bytes, header 52494646ed08000057415645666d74201000000001000100401f0000401f00000100080064617461c9080000, 64f4920a706508fca1010288806a5f9356b7fce5",
 }
 `;
 
 exports[`audio > writes WAV files > turbo 1`] = `
 {
-  "16 bit": "18254 bytes, header 524946464647000057415645666d74201000000001000100401f0000803e0000020010006461746122470000, 5be9350f89a3c648fdaafa00dd1556f631613d27",
-  "8 bit": "9149 bytes, header 52494646b523000057415645666d74201000000001000100401f0000401f0000010008006461746191230000, 69d8ebd1e284f54378d5bf2c0b87aa3c3eb813de",
+  "16 bit": "6254 bytes, header 524946466618000057415645666d74201000000001000100401f0000803e0000020010006461746142180000, 193788f5e70d0d2501a49f797530a4256d6d1241",
+  "8 bit": "3149 bytes, header 52494646450c000057415645666d74201000000001000100401f0000401f00000100080064617461210c0000, 33e01f60fdc15d68faa8bac99827f7b5212625ed",
 }
 `;
 

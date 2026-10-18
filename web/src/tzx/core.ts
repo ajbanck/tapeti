@@ -831,8 +831,8 @@ export function checkSymbols(text: string): number[] {
 
 export const TSTATES_PER_SEC = 3500000;
 
-/** Silence before and after the rendered tape, in T-states. */
-export const LEAD_TSTATES = TSTATES_PER_SEC / 2;
+/** Silence before the rendered tape, in T-states; nothing follows its last pause. */
+export const LEAD_TSTATES = TSTATES_PER_SEC / 4;
 
 /** How a block renders as pulses: what a PZX export or a waveform view would want. */
 export interface Pulse {

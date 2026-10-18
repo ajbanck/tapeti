@@ -4,8 +4,13 @@
 //! Distortions for the decoder's tests: what a worn tape and a tired cassette deck do to a clean
 //! signal. Each takes pulses and gives new ones placed on a T-state grid. Randomness comes from
 //! a seeded generator and the wobble is a triangle wave, so a distorted tape is the same on
-//! every run and platform.
+//! every run and platform. And [`same_tape`], what a decode of one is held to.
 
+// Each test file uses its own share of these.
+#![allow(dead_code)]
+
+use std::ops::RangeInclusive;
+use tapeti_core::types::{Block, Body};
 use tapeti_decode::pulses::{from_tstates, Pulse};
 
 /// xorshift64*: small, seeded, the same everywhere.
@@ -84,4 +89,50 @@ pub fn lengths(pulses: &[Pulse]) -> Vec<u64> {
 /// Pulses of the given lengths, for building a signal by hand.
 pub fn pulses(lengths: &[u64]) -> Vec<Pulse> {
     from_tstates(lengths)
+}
+
+/// Whether `got` is the tape `want` as a decode gives it back: the same blocks in the same order
+/// with the same bytes, and each pause as long within 2 ms once `speed` has stretched it (one
+/// factor for a tape played off speed, a range for one that wobbles). A pause of 0 ms only where
+/// `want` has one: a block that runs on into something that is not the next block's pilot has
+/// lost its pause. The first difference, in words.
+pub fn same_tape(got: &[Block], want: &[Block], speed: RangeInclusive<f64>) -> Result<(), String> {
+    let pause = |b: &Block| match b.body {
+        Body::Standard { pause, .. } | Body::Csw { pause, .. } | Body::Pause { pause } => pause,
+        _ => 0,
+    };
+    let without_pause = |b: &Block| match &b.body {
+        Body::Standard { data, .. } => Body::Standard { pause: 0, data: data.clone() },
+        Body::Csw { sample_rate, compression, pulse_count, data, .. } => Body::Csw {
+            pause: 0,
+            sample_rate: *sample_rate,
+            compression: *compression,
+            pulse_count: *pulse_count,
+            data: data.clone(),
+        },
+        Body::Pause { .. } => Body::Pause { pause: 0 },
+        body => body.clone(),
+    };
+    let kinds =
+        |blocks: &[Block]| blocks.iter().map(|b| format!("{:02x}", b.id())).collect::<Vec<_>>().join(" ");
+    if got.len() != want.len() {
+        return Err(format!(
+            "{} blocks [{}] where the tape has {} [{}]",
+            got.len(),
+            kinds(got),
+            want.len(),
+            kinds(want)
+        ));
+    }
+    for (i, (g, w)) in got.iter().zip(want).enumerate() {
+        if without_pause(g) != without_pause(w) {
+            return Err(format!("block {i} is {:?}, not {:?}", g.body, w.body));
+        }
+        let (g, w) = (f64::from(pause(g)), f64::from(pause(w)));
+        let (lo, hi) = (w * speed.start() - 2.0, w * speed.end() + 2.0);
+        if (g == 0.0) != (w == 0.0) || g < lo || g > hi {
+            return Err(format!("block {i} has a pause of {g} ms, not {w} ms"));
+        }
+    }
+    Ok(())
 }

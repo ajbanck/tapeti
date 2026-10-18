@@ -220,7 +220,7 @@ describe('store: undo and dirty tracking', () => {
     const decoded = tape(tapes[0]);
     expect(decoded.blocks.map((b) => b.id)).toEqual([0x10]);
     expect((decoded.blocks[0] as StandardBlock).data).toEqual(block.data);
-    expect(decoded.warnings).toEqual(['I\t-\tlead-in: 0.5 s of silence before the first block, left out']);
+    expect(decoded.warnings).toEqual(['I\t-\tlead-in: 0.2 s of silence before the first block, left out']);
     expect(tape(tapes[1]).blocks.map((b) => b.id)).toEqual([0x15]);
   });
 

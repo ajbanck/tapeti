@@ -213,8 +213,8 @@ describe('sample rendering', () => {
   // collected in a plain array and filtered afterwards. `renderTape` must match
   // it sample for sample up to the end of the block. One block at a time, since
   // a block's pulses are emitted from a low level and a later block starts at
-  // whatever level the previous one left; and only up to the block's end,
-  // because the pulse list does not say which level the lead-out holds.
+  // whatever level the previous one left. The render ends where the block
+  // does, so the two are the same length to within a sample.
   function reference(block: Block, opts: { sampleRate: number; mode: 'square' | 'mic'; amplitude?: number }): Float32Array {
     const samples: number[] = [];
     let acc = 0;
@@ -274,10 +274,10 @@ describe('sample rendering', () => {
         for (const sampleRate of [8000, 44100]) {
           const got = renderTape([block], { sampleRate, mode });
           const want = reference(block, { sampleRate, mode });
-          // The block, then half a second of lead-out at one level.
-          expect(Math.abs(got.length - want.length - LEAD_TSTATES / (TSTATES_PER_SEC / sampleRate))).toBeLessThanOrEqual(1);
-          expect(got.subarray(0, want.length)).toEqual(want);
-          if (mode === 'square') expect(new Set(got.subarray(want.length)).size).toBe(1);
+          // The block and nothing after it: the render ends where the block does.
+          expect(Math.abs(got.length - want.length)).toBeLessThanOrEqual(1);
+          const n = Math.min(got.length, want.length);
+          expect(got.subarray(0, n)).toEqual(want.subarray(0, n));
         }
       }
     }
@@ -294,8 +294,8 @@ describe('sample rendering', () => {
     tone.pulseLen = 35000; // 10 ms per pulse
     const sq = renderTape([tone], { sampleRate: 8000, mode: 'square' });
     const mic = renderTape([tone], { sampleRate: 8000, mode: 'mic' });
-    // 0.5 s lead-in (4000 samples) and one low pulse (80 samples), then the level goes high.
-    const edge = 4080;
+    // 0.25 s lead-in (2000 samples) and one low pulse (80 samples), then the level goes high.
+    const edge = 2080;
     expect(sq[edge - 1]).toBeCloseTo(-0.8);
     expect(sq[edge]).toBeCloseTo(0.8);
     expect(sq[edge + 40]).toBeCloseTo(0.8);
@@ -313,7 +313,7 @@ describe('sample rendering', () => {
       expect(starts[k]).toBe(t);
       t += blockDuration(blocks[i]);
     });
-    expect(total).toBe(t + LEAD_TSTATES);
+    expect(total).toBe(t);
     const rendered = renderTape(blocks, { sampleRate: 8000, mode: 'square' });
     expect(Math.abs(rendered.length - total / (TSTATES_PER_SEC / 8000))).toBeLessThan(1);
     // Repeated blocks (loops) get one entry per pass.

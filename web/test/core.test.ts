@@ -882,6 +882,6 @@ describe('audio', () => {
     }
     expect(core.positionAt([], 5)).toBe(0);
     expect(core.TSTATES_PER_SEC).toBe(3500000);
-    expect(core.LEAD_TSTATES).toBe(1750000);
+    expect(core.LEAD_TSTATES).toBe(875000);
   });
 });

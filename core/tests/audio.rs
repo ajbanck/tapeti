@@ -121,7 +121,7 @@ fn decodes_csw_run_lengths() {
 
 #[test]
 fn renders_samples_and_wav() {
-    // Half a second of lead-in, a tone, half a second of lead-out.
+    // A quarter second of lead-in, then a tone, and nothing after it.
     let tone = b(Body::PureTone { pulse_len: 35000, count: 2 }); // 10 ms per pulse
     let blocks = [tone];
     let order = playback_order(&blocks, FlowOptions::default());
@@ -143,7 +143,7 @@ fn renders_samples_and_wav() {
     // The timeline says where each block starts, lead-in included.
     let timeline = playback_timeline(&blocks, &order);
     assert_eq!(timeline.starts, vec![LEAD_TSTATES]);
-    assert_eq!(timeline.total, LEAD_TSTATES * 2 + 70000);
+    assert_eq!(timeline.total, LEAD_TSTATES + 70000);
     let (seconds, _) = tape_duration(&blocks);
     assert!((seconds - 0.02).abs() < 1e-9);
 

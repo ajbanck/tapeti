@@ -15,9 +15,13 @@
 //! decodes names the incumbent, ties going to the mix, so a recording whose channels agree
 //! decodes exactly as its mix. The pick moves off the incumbent only to a decode that delivers
 //! every verified image the incumbent does and more verified bytes; a program's header adds a
-//! name, which is no loaded material.
+//! name, which is no loaded material. Where the mix is kept, a block the two channels read
+//! alike and the mix otherwise, every reading checking out, takes the channels' bytes
+//! ([`outvote`]).
 
-use std::collections::BTreeSet;
+use crate::entry::{Decoded, Extent, Finding};
+use crate::readers::Channel;
+use std::collections::{BTreeSet, HashMap};
 use tapeti_core::types::{Block, Body};
 
 /// A header's 19 bytes: flag `0x00`, type, name, length, two parameters, checksum.
@@ -31,6 +35,16 @@ fn image(b: &Block) -> Option<&[u8]> {
     match &b.body {
         Body::Standard { data, .. } => Some(data),
         _ => None,
+    }
+}
+
+/// Whether `b` is what a failed read leaves: a block of data whose checksum is bad, or a stretch
+/// kept as raw signal.
+fn failed_piece(b: &Block) -> bool {
+    match &b.body {
+        Body::Standard { data, .. } => !xor_ok(data),
+        Body::Csw { .. } => true,
+        _ => false,
     }
 }
 
@@ -107,10 +121,13 @@ fn images(blocks: &[Block]) -> BTreeSet<&[u8]> {
 
 /// The shape of a decode: blocks that check out and headers that are answered, then payload.
 ///
-/// The blocks are those of three bytes or more whose checksum is good, the headers those whose
-/// next block is as long as they declare. A one-bit slip through
-/// a whole block keeps its checksum good about half the time but spoils the length a header
-/// declares, so the pairs tell a slipped decode from a true one where the checksums cannot.
+/// The blocks are those of three bytes or more whose checksum is good and that are not one byte
+/// over and over, the headers those whose next block is as long as they declare. A one-bit slip
+/// through a whole block keeps its checksum good about half the time but spoils the length a
+/// header declares, so the pairs tell a slipped decode from a true one where the checksums
+/// cannot. A run of one byte checks out at every even length, and a channel that reads pilot
+/// tones and headers as runs of 0xFF cuts them into such blocks, as many as it loses; counted,
+/// they would name it the incumbent over a decode that reads every block whole.
 pub fn shape(blocks: &[Block]) -> (usize, usize) {
     let (mut count, mut bytes, mut pairs) = (0, 0, 0);
     let mut pending = None;
@@ -123,7 +140,7 @@ pub fn shape(blocks: &[Block]) -> (usize, usize) {
                 }
             }
         }
-        if data.len() >= 3 && xor_ok(data) {
+        if data.len() >= 3 && xor_ok(data) && data.windows(2).any(|w| w[0] != w[1]) {
             count += 1;
             bytes += data.len() - 2;
         }
@@ -148,4 +165,343 @@ pub fn pick(decodes: &[&[Block]]) -> usize {
             (bytes, programs, i == incumbent, shapes[i], std::cmp::Reverse(i))
         })
         .expect("the incumbent delivers all of itself")
+}
+
+/// Whether `data` is a header's 19 bytes whose own checksum holds: what anchors a block of one
+/// decode to the same block of another.
+fn anchor(data: &[u8]) -> Option<usize> {
+    declares(data).filter(|_| xor_ok(data))
+}
+
+/// Whether a header's name is printable, as a one-bit shift of one cannot be: its spaces become
+/// 0x40 and its characters drag their neighbours' top bits in.
+fn printable(header: &[u8]) -> bool {
+    header[2..12].iter().all(|c| (0x20..=0x7F).contains(c))
+}
+
+/// Whether `data` answers a header that declares `len`: as long, its checksum good, and not one
+/// byte over and over, which checks out at every even length (noise read at a header's length is
+/// a run of 0x00).
+fn answers(data: &[u8], len: usize) -> bool {
+    data.len() == len && xor_ok(data) && data.windows(2).any(|w| w[0] != w[1])
+}
+
+/// Puts into `base`, the mix's decode, the bytes the left and the right channel both read where
+/// the mix read other bytes, each checking out.
+///
+/// The checksum is the XOR of every byte, so a read that errs in the same bit of two bytes
+/// holds it; and the mix is the likelier to err so, two channels a few samples apart smearing
+/// every change between a short half-wave and a long one. The channels are two heads' reads of
+/// the tape, and for both to err alike, in the same bits, where their mix reads otherwise, is
+/// far less likely than for the mix alone to err. So where each channel reads a block whose
+/// extent overlaps a block of `base`, all three as long, their checksums good and not one byte
+/// over and over, and the two channels read the same bytes and `base` others, theirs stand, at
+/// `base`'s place and pause ([`Finding::BothChannels`]).
+pub fn outvote(base: &mut Decoded, left: &Decoded, right: &Decoded) {
+    let whole = |data: &[u8]| data.len() >= 3 && xor_ok(data) && data.windows(2).any(|w| w[0] != w[1]);
+    let read_at = |d: &Decoded, at: &Extent| -> Option<Vec<u8>> {
+        let j = (0..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some() && overlap(&d.extents[j], at))?;
+        image(&d.blocks[j]).filter(|data| whole(data)).map(<[u8]>::to_vec)
+    };
+    for i in 0..base.blocks.len() {
+        let at = base.extents[i];
+        let Body::Standard { data, .. } = &mut base.blocks[i].body else { continue };
+        if !whole(data) {
+            continue;
+        }
+        let (Some(l), Some(r)) = (read_at(left, &at), read_at(right, &at)) else { continue };
+        if l == r && l.len() == data.len() && l != *data {
+            *data = l;
+            base.findings.push(Finding::BothChannels { block: i });
+        }
+    }
+}
+
+/// Whether two extents of one recording overlap.
+fn overlap(a: &Extent, b: &Extent) -> bool {
+    a.start < b.end && b.start < a.end
+}
+
+/// The data-bearing blocks of `blocks`, by index, in tape order.
+fn data_view(blocks: &[Block]) -> Vec<(usize, &[u8])> {
+    blocks.iter().enumerate().filter_map(|(i, b)| image(b).map(|d| (i, d))).collect()
+}
+
+/// Per header, each time a decode reads it: where, and the block that answers it where the pair
+/// is whole.
+type Occurrences<'a> = HashMap<&'a [u8], Vec<(usize, Option<(usize, &'a [u8])>)>>;
+
+/// What goes where in the decode kept.
+enum Splice {
+    /// The blocks in the range, a failed read of a leg in pieces, become one with these bytes and
+    /// this pause.
+    Replace { range: std::ops::Range<usize>, data: Vec<u8>, pause: u16 },
+    /// The block goes in behind the header at the index, at the donor's extent.
+    Insert { header: usize, block: Block, extent: Extent },
+    /// The checksum-bad pieces in the range, between a header and its own read of the leg, go.
+    Drop(std::ops::Range<usize>),
+}
+
+/// Folds into `base`, the decode kept, the data blocks each of `donors` reads where `base`'s
+/// read failed.
+///
+/// A header and its block from another channel stand where `base` reads the same header and no
+/// block that answers it.
+/// The channels of a stereo recording lose different blocks, so no one decode may hold every
+/// program, and a block clean in another is the tape's own, under proof:
+/// - the anchor is the header itself, byte for byte, checksum good, and both decodes must read
+///   it as often, so that the n-th time is the same program in both; where the counts differ
+///   nothing is guessed. Both reads of the header must overlap in the recording;
+/// - the donor's pair must be whole: a printable name, and a block behind as long as the header
+///   declares whose checksum holds. A block read a bit out cannot be one;
+/// - `base`'s pair must have failed, its next block of data not the length declared, its
+///   checksum bad, or one byte over and over. The failed block is replaced where it lies at the
+///   donor's block, with every checksum-bad piece and every stretch kept as raw signal behind it
+///   that starts inside the donor's block (each a failed read of the same signal), and keeps
+///   `base`'s pause and extent, the donor's pause where the last piece is raw signal, which
+///   played through the pause `base` never heard; with none, or where it is shaped like a header
+///   (the next header misread, which a replacement would take off the tape), the donor's block
+///   goes in behind the header, with its own.
+///   Where `base` reads the donor's block itself behind pieces that are no block, the pieces go;
+///   where it holds that block anywhere else at the same place, nothing is done.
+///
+/// Donors are asked in order, the first fix standing. Each block placed is reported
+/// ([`Finding::FromChannel`]).
+pub fn combine(base: &mut Decoded, donors: &[(Channel, &Decoded)]) {
+    for &(channel, donor) in donors {
+        let mut plan: Vec<(usize, Splice)> = Vec::new();
+        {
+            let donor_view = data_view(&donor.blocks);
+            let mut donor_occ: Occurrences = HashMap::new();
+            for (k, &(hi, d)) in donor_view.iter().enumerate() {
+                let Some(len) = anchor(d) else { continue };
+                let next = donor_view.get(k + 1).copied();
+                let whole = printable(d) && next.is_some_and(|(_, l)| answers(l, len));
+                donor_occ.entry(d).or_default().push((hi, if whole { next } else { None }));
+            }
+            let base_view = data_view(&base.blocks);
+            let mut counts: HashMap<&[u8], usize> = HashMap::new();
+            for &(_, d) in &base_view {
+                if anchor(d).is_some() {
+                    *counts.entry(d).or_default() += 1;
+                }
+            }
+            let mut seen: HashMap<&[u8], usize> = HashMap::new();
+            for (k, &(hi, header)) in base_view.iter().enumerate() {
+                let Some(len) = anchor(header) else { continue };
+                let n = {
+                    let c = seen.entry(header).or_default();
+                    *c += 1;
+                    *c - 1
+                };
+                let next = base_view.get(k + 1).copied();
+                if next.is_some_and(|(_, l)| answers(l, len)) {
+                    continue;
+                }
+                let Some(list) = donor_occ.get(header).filter(|l| l.len() == counts[header]) else {
+                    continue;
+                };
+                let Some(&(donor_hi, Some((li, leg)))) = list.get(n) else { continue };
+                if !overlap(&base.extents[hi], &donor.extents[donor_hi]) {
+                    continue;
+                }
+                let leg_at = donor.extents[li];
+                let own = own_leg_behind_strays(base, hi, leg, &leg_at);
+                if own.is_none()
+                    && (hi + 1..base.blocks.len())
+                        .any(|j| image(&base.blocks[j]) == Some(leg) && overlap(&base.extents[j], &leg_at))
+                {
+                    continue;
+                }
+                let follower = next
+                    .filter(|&(fi, d)| declares(d).is_none() && overlap(&base.extents[fi], &leg_at))
+                    .map(|(fi, _)| fi);
+                let splice = match (own, follower) {
+                    (Some(li), _) => (hi + 1, Splice::Drop(hi + 1..li)),
+                    (None, Some(fi)) => {
+                        let mut end = fi + 1;
+                        while base.blocks.get(end).is_some_and(failed_piece)
+                            && leg_at.start <= base.extents[end].start
+                            && base.extents[end].start < leg_at.end
+                        {
+                            end += 1;
+                        }
+                        let pause = match (&base.blocks[end - 1].body, &donor.blocks[li].body) {
+                            (Body::Csw { .. }, Body::Standard { pause, .. }) => *pause,
+                            (Body::Standard { pause, .. } | Body::Csw { pause, .. }, _) => *pause,
+                            _ => unreachable!("a piece of a read is a block of data or raw signal"),
+                        };
+                        (fi, Splice::Replace { range: fi..end, data: leg.to_vec(), pause })
+                    }
+                    (None, None) => {
+                        let pause = match donor.blocks[li].body {
+                            Body::Standard { pause, .. } => pause,
+                            _ => unreachable!("a leg is a block of data"),
+                        };
+                        let block = Block::new(Body::Standard { pause, data: leg.to_vec() });
+                        (hi, Splice::Insert { header: hi, block, extent: leg_at })
+                    }
+                };
+                plan.push(splice);
+            }
+        }
+        // Back to front, so that a splice never moves the place of one still to come.
+        plan.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+        for (_, splice) in plan {
+            match splice {
+                Splice::Replace { range, data, pause } => {
+                    let last = range.end - 1;
+                    let extent = Extent {
+                        start: base.extents[range.start].start,
+                        end: base.extents[last].end,
+                        signal_end: base.extents[last].signal_end,
+                    };
+                    let at = range.start;
+                    splice_into(base, range, vec![(Block::new(Body::Standard { pause, data }), extent)]);
+                    base.findings.push(Finding::FromChannel { block: at, channel });
+                }
+                Splice::Insert { header, block, extent } => {
+                    end_pause_at(base, header, extent.start);
+                    splice_into(base, header + 1..header + 1, vec![(block, extent)]);
+                    base.findings.push(Finding::FromChannel { block: header + 1, channel });
+                }
+                Splice::Drop(range) => {
+                    let at = range.start;
+                    splice_into(base, range, Vec::new());
+                    base.findings.push(Finding::FromChannel { block: at, channel });
+                }
+            }
+        }
+        unheard_signal(base, channel, donor);
+    }
+}
+
+/// How far apart, in samples, two views of one boundary may lie: where one decode ends a block
+/// and another starts the next.
+const POSITION_TOL: f64 = 1000.0;
+
+/// Puts into `base` each stretch of raw signal `donor` kept where `base` heard silence and read
+/// nothing proved.
+///
+/// A stereo recording can hold a stretch on one track alone: a custom loader's data recorded on
+/// one head, a dropout on the other. Such data proves nothing a ROM block proves, so the folds
+/// above never move it, and whichever channel is kept decides whether the signal is on the tape
+/// at all. The evidence is each side's own verdict: `base` played the stretch as a pause, its
+/// claim that it heard nothing there; `donor` kept it as raw signal, so by its measure it is
+/// signal and not noise.
+///
+/// The stretch goes in at its own place. What it replaces is what `base` holds between its last
+/// block whose signal ends before the stretch starts and its first block that starts at or past
+/// the stretch's end (each within [`POSITION_TOL`]): it must be silence, a pause of that block's
+/// running into the stretch or pause blocks, and nothing else but reads that prove nothing, of
+/// under three bytes or with a bad checksum. Nothing either side of the stretch is cut or
+/// doubled: the block before keeps its pause up to the stretch, which keeps the donor's.
+fn unheard_signal(base: &mut Decoded, channel: Channel, donor: &Decoded) {
+    for di in 0..donor.blocks.len() {
+        if !matches!(donor.blocks[di].body, Body::Csw { .. } | Body::Direct { .. }) {
+            continue;
+        }
+        let span = donor.extents[di];
+        let Some(after) =
+            (0..base.blocks.len()).find(|&i| base.extents[i].start + POSITION_TOL >= span.signal_end)
+        else {
+            continue;
+        };
+        let Some(before) = (0..after)
+            .rev()
+            .find(|&i| !is_pause(&base.blocks[i]) && base.extents[i].signal_end <= span.start + POSITION_TOL)
+        else {
+            continue;
+        };
+        let run = before + 1..after;
+        let proves_nothing = |b: &Block| match &b.body {
+            Body::Pause { .. } => true,
+            Body::Standard { data, .. } => data.len() < 3 || !xor_ok(data),
+            _ => false,
+        };
+        let pause_into =
+            pause_of(&base.blocks[before]).is_some_and(|p| p > 0) && base.extents[before].end > span.start;
+        let silence = pause_into || base.blocks[run.clone()].iter().any(is_pause);
+        if !silence || !base.blocks[run.clone()].iter().all(proves_nothing) {
+            continue;
+        }
+        // The block before plays its pause up to where the stretch starts.
+        let ms = |samples: f64| (samples.max(0.0) / f64::from(base.rate_hz) * 1000.0).round() as u16;
+        let held = ms(span.start - base.extents[before].signal_end);
+        if let Some(pause) = pause_mut(&mut base.blocks[before]) {
+            *pause = held;
+        }
+        base.extents[before].end =
+            base.extents[before].end.min(span.start).max(base.extents[before].signal_end);
+        let at = run.start;
+        splice_into(base, run, vec![(donor.blocks[di].clone(), span)]);
+        base.findings.push(Finding::FromChannel { block: at, channel });
+    }
+}
+
+/// Ends the pause of `base`'s block `i` where a block put in behind it starts, at `at`: `base`
+/// played that stretch as the pause while it heard nothing there.
+fn end_pause_at(base: &mut Decoded, i: usize, at: f64) {
+    let extent = base.extents[i];
+    if extent.end <= at {
+        return;
+    }
+    let held = ((at - extent.signal_end).max(0.0) / f64::from(base.rate_hz) * 1000.0).round() as u16;
+    if let Some(pause) = pause_mut(&mut base.blocks[i]) {
+        *pause = (*pause).min(held);
+    }
+    base.extents[i].end = at.max(extent.signal_end);
+}
+
+fn is_pause(b: &Block) -> bool {
+    matches!(b.body, Body::Pause { .. })
+}
+
+/// The pause a block plays after its signal, where it has one.
+fn pause_of(b: &Block) -> Option<u16> {
+    match b.body {
+        Body::Standard { pause, .. } | Body::Csw { pause, .. } | Body::Direct { pause, .. } => Some(pause),
+        _ => None,
+    }
+}
+
+fn pause_mut(b: &mut Block) -> Option<&mut u16> {
+    match &mut b.body {
+        Body::Standard { pause, .. } | Body::Csw { pause, .. } | Body::Direct { pause, .. } => Some(pause),
+        _ => None,
+    }
+}
+
+/// The index of `base`'s own read of `leg`, the donor's block at `leg_at`, behind strays: where
+/// a block of the same bytes overlaps the donor's and every block between it and the header at
+/// `header` is a checksum-bad block of data. A read can cut a fragment between a header and a
+/// leg it reads whole; replaced, the fragment would put the leg in twice.
+fn own_leg_behind_strays(base: &Decoded, header: usize, leg: &[u8], leg_at: &Extent) -> Option<usize> {
+    for j in header + 1..base.blocks.len() {
+        let data = image(&base.blocks[j])?;
+        if data == leg {
+            return (j > header + 1 && overlap(&base.extents[j], leg_at)).then_some(j);
+        }
+        if xor_ok(data) {
+            return None;
+        }
+    }
+    None
+}
+
+/// Puts `with` in place of `range` in `base`, its findings about the blocks there dropped and
+/// those after moved along.
+fn splice_into(base: &mut Decoded, range: std::ops::Range<usize>, with: Vec<(Block, Extent)>) {
+    let (start, end, n) = (range.start, range.end, with.len());
+    let (blocks, extents): (Vec<Block>, Vec<Extent>) = with.into_iter().unzip();
+    base.blocks.splice(range.clone(), blocks);
+    base.extents.splice(range, extents);
+    base.findings.retain_mut(|f| match f.block_mut() {
+        Some(b) if *b >= end => {
+            *b = *b + n - (end - start);
+            true
+        }
+        Some(b) => *b < start,
+        None => true,
+    });
 }
