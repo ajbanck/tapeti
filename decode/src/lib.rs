@@ -8,6 +8,7 @@ pub mod channels;
 pub mod entry;
 pub mod fallback;
 pub mod framing;
+pub mod proof;
 pub mod pulses;
 pub mod readers;
 pub mod wasm;

@@ -357,3 +357,54 @@ fn a_glitch_inside_a_pilot_is_no_sync() {
     t.push(3_500_000.0);
     assert_eq!(read(&t), h);
 }
+
+/// A backward merge 15% off its prediction, past DECIDE and within ASK, so the readings answer.
+/// The pair read whole starts half a bit on, straddling the header's bits into a 20-byte
+/// reading (a CODE header's type reads 7, and a tape copier's 0x00 behind the header makes it
+/// 20 bytes, no header's shape), its XOR checksum held by some choice of parameters; the backward
+/// reading, a header in every field, outranks it.
+#[test]
+fn a_header_outranks_a_reading_half_a_bit_out_whose_checksum_holds() {
+    let straddled_xor = |h: &[u8]| {
+        let bits: Vec<u8> =
+            h.iter().chain(&[0u8]).flat_map(|&b| (0..8).rev().map(move |k| b >> k & 1)).collect();
+        let g: Vec<u8> = (0..160).map(|k| bits[k] | bits.get(k + 1).copied().unwrap_or(0)).collect();
+        g.chunks(8).map(|byte| byte.iter().fold(0, |b, &bit| b << 1 | bit)).fold(0u8, |x, b| x ^ b)
+    };
+    let mut h = header();
+    h[1] = 3;
+    let mut found = false;
+    'search: for p1 in 0..=255u8 {
+        for p3 in 0..=255u8 {
+            h[14] = p1;
+            h[16] = p3;
+            h[18] = h[..18].iter().fold(0, |a, b| a ^ b);
+            if straddled_xor(&h) == 0 {
+                found = true;
+                break 'search;
+            }
+        }
+    }
+    assert!(found, "no parameters keep the straddled checksum");
+    let mut t = vec![PILOT; PILOT_PULSES];
+    t.push(0.85 * (PILOT + SYNC1 + SYNC2));
+    for byte in h.iter().chain(&[0u8]) {
+        for k in (0..8).rev() {
+            let half = if byte >> k & 1 == 1 { ONE } else { ZERO };
+            t.extend([half, half]);
+        }
+    }
+    t.push(3_500_000.0);
+    let got = decode(&t);
+    let datas: Vec<&Vec<u8>> = got
+        .blocks
+        .iter()
+        .filter_map(|b| match &b.body {
+            Body::Standard { data, .. } => Some(data),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(datas, [&h], "{:?}", got.findings);
+    assert!(got.findings.contains(&Finding::StrayZero { block: 0 }), "{:?}", got.findings);
+    assert!(merged(&t));
+}

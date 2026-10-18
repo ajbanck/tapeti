@@ -20,78 +20,39 @@
 //! ([`outvote`]).
 
 use crate::entry::{Decoded, Extent, Finding};
+use crate::proof::{self, asks, header_shaped, image, Proof};
 use crate::readers::Channel;
 use std::collections::{BTreeSet, HashMap};
 use tapeti_core::types::{Block, Body};
-
-/// A header's 19 bytes: flag `0x00`, type, name, length, two parameters, checksum.
-const HEADER_LEN: usize = 19;
-
-fn xor_ok(data: &[u8]) -> bool {
-    data.iter().fold(0, |x, &d| x ^ d) == 0
-}
-
-fn image(b: &Block) -> Option<&[u8]> {
-    match &b.body {
-        Body::Standard { data, .. } => Some(data),
-        _ => None,
-    }
-}
 
 /// Whether `b` is what a failed read leaves: a block of data whose checksum is bad, or a stretch
 /// kept as raw signal.
 fn failed_piece(b: &Block) -> bool {
     match &b.body {
-        Body::Standard { data, .. } => !xor_ok(data),
+        Body::Standard { data, .. } => proof::of(data) == Proof::None,
         Body::Csw { .. } => true,
         _ => false,
     }
 }
 
-/// The length, flag and checksum included, that a block shaped like a header declares for the
-/// block after it, its checksum good or not.
-fn declares(data: &[u8]) -> Option<usize> {
-    (data.len() == HEADER_LEN && data[0] == 0x00)
-        .then(|| usize::from(u16::from_le_bytes([data[12], data[13]])) + 2)
-}
-
-/// Whether the block at `i` is a header with a good checksum whose next block of bytes answers it:
-/// as long as it declares, its checksum good. Pauses and raw signal between the two do not count.
-fn heads_pair(blocks: &[Block], i: usize) -> bool {
-    let Some(data) = image(&blocks[i]) else { return false };
-    let Some(len) = declares(data).filter(|_| xor_ok(data)) else { return false };
-    blocks[i + 1..].iter().find_map(image).is_some_and(|d| d.len() == len && xor_ok(d))
-}
-
-/// The shortest block under a flag other than `0xFF` that proves its bytes. Its checksum is a
-/// chance of one in 256 at any length, and the chance-valid junk found inside correctly read
-/// tapes runs from 4 to 24 bytes; a custom loader's blocks run to thousands.
-const OTHER_FLAG_LEAST: usize = 64;
-
-/// A block whose bytes prove themselves, its checksum good and not one byte over and over (a run
-/// of one byte checks out at every even length): three bytes or more under flag `0xFF`,
-/// [`OTHER_FLAG_LEAST`] under another, never under the header flag `0x00`, where a long block
-/// that checks out is a misread of something else.
-fn verified(b: &Block) -> Option<&[u8]> {
-    let data = image(b)?;
-    let long_enough = match data.first() {
-        Some(0xFF) => data.len() >= 3,
-        Some(0x00) | None => false,
-        Some(_) => data.len() >= OTHER_FLAG_LEAST,
-    };
-    (long_enough && data.windows(2).any(|w| w[0] != w[1]) && xor_ok(data)).then_some(data)
-}
-
-/// The header that heads the pair at `i`, and the block answering it, when that block carries
-/// payload.
-fn program_at(blocks: &[Block], i: usize) -> Option<(&[u8], &Block)> {
-    if !heads_pair(blocks, i) {
-        return None;
-    }
+/// The block that answers the ROM header at `i` ([`Proof::Answer`]): its next block of bytes,
+/// pauses and raw signal between the two not counting.
+fn answered(blocks: &[Block], i: usize) -> Option<&Block> {
+    let len = image(&blocks[i]).and_then(asks)?;
     let leg = blocks[i + 1..].iter().find(|b| image(b).is_some())?;
-    let data = image(leg)?;
-    let carries = data.len() >= 3 && data.windows(2).any(|w| w[0] != w[1]);
-    carries.then(|| (image(&blocks[i]).expect("a pair's header has bytes"), leg))
+    (proof::answering(image(leg)?, len) == Proof::Answer).then_some(leg)
+}
+
+/// A block whose bytes alone prove themselves as loaded material ([`Proof::Verified`]). A
+/// header is a name, no loaded material, and counts with the program it heads.
+fn verified(b: &Block) -> Option<&[u8]> {
+    image(b).filter(|d| proof::of(d) == Proof::Verified)
+}
+
+/// The header that heads the pair at `i`, and the block answering it.
+fn program_at(blocks: &[Block], i: usize) -> Option<(&[u8], &Block)> {
+    let leg = answered(blocks, i)?;
+    Some((image(&blocks[i]).expect("a pair's header has bytes"), leg))
 }
 
 /// What a decode delivers: the programs it proves and its verified bytes, each counted once.
@@ -121,18 +82,18 @@ fn images(blocks: &[Block]) -> BTreeSet<&[u8]> {
 
 /// The shape of a decode: blocks that check out and headers that are answered, then payload.
 ///
-/// The blocks are those of three bytes or more whose checksum is good and that are not one byte
-/// over and over, the headers those whose next block is as long as they declare. A one-bit slip
-/// through a whole block keeps its checksum good about half the time but spoils the length a
-/// header declares, so the pairs tell a slipped decode from a true one where the checksums
-/// cannot. A run of one byte checks out at every even length, and a channel that reads pilot
-/// tones and headers as runs of 0xFF cuts them into such blocks, as many as it loses; counted,
-/// they would name it the incumbent over a decode that reads every block whole.
+/// The blocks are those whose checksum holds over more than a misread leaves
+/// ([`Proof::Checksum`] or better), the headers those shaped like one whose next block is as
+/// long as they declare, checksum or not. A one-bit slip through a whole block keeps its
+/// checksum good about half the time but spoils the length a header declares, so the pairs tell
+/// a slipped decode from a true one where the checksums cannot. A channel that reads pilot
+/// tones and headers as runs of 0xFF cuts them into blocks that check out; counted, they would
+/// name it the incumbent over a decode that reads every block whole.
 pub fn shape(blocks: &[Block]) -> (usize, usize) {
     let (mut count, mut bytes, mut pairs) = (0, 0, 0);
     let mut pending = None;
     for data in blocks.iter().filter_map(image) {
-        match declares(data) {
+        match header_shaped(data) {
             Some(len) => pending = Some(len),
             None => {
                 if pending.take() == Some(data.len()) {
@@ -140,7 +101,7 @@ pub fn shape(blocks: &[Block]) -> (usize, usize) {
                 }
             }
         }
-        if data.len() >= 3 && xor_ok(data) && data.windows(2).any(|w| w[0] != w[1]) {
+        if proof::of(data) >= Proof::Checksum {
             count += 1;
             bytes += data.len() - 2;
         }
@@ -167,23 +128,15 @@ pub fn pick(decodes: &[&[Block]]) -> usize {
         .expect("the incumbent delivers all of itself")
 }
 
-/// Whether `data` is a header's 19 bytes whose own checksum holds: what anchors a block of one
-/// decode to the same block of another.
+/// The length a ROM header in `data` asks for ([`asks`]): what anchors a block of one decode to
+/// the same block of another.
 fn anchor(data: &[u8]) -> Option<usize> {
-    declares(data).filter(|_| xor_ok(data))
+    asks(data)
 }
 
-/// Whether a header's name is printable, as a one-bit shift of one cannot be: its spaces become
-/// 0x40 and its characters drag their neighbours' top bits in.
-fn printable(header: &[u8]) -> bool {
-    header[2..12].iter().all(|c| (0x20..=0x7F).contains(c))
-}
-
-/// Whether `data` answers a header that declares `len`: as long, its checksum good, and not one
-/// byte over and over, which checks out at every even length (noise read at a header's length is
-/// a run of 0x00).
+/// Whether `data` answers a header that asks for `len` bytes ([`Proof::Answer`]).
 fn answers(data: &[u8], len: usize) -> bool {
-    data.len() == len && xor_ok(data) && data.windows(2).any(|w| w[0] != w[1])
+    proof::answering(data, len) == Proof::Answer
 }
 
 /// Puts into `base`, the mix's decode, the bytes the left and the right channel both read where
@@ -198,7 +151,7 @@ fn answers(data: &[u8], len: usize) -> bool {
 /// over and over, and the two channels read the same bytes and `base` others, theirs stand, at
 /// `base`'s place and pause ([`Finding::BothChannels`]).
 pub fn outvote(base: &mut Decoded, left: &Decoded, right: &Decoded) {
-    let whole = |data: &[u8]| data.len() >= 3 && xor_ok(data) && data.windows(2).any(|w| w[0] != w[1]);
+    let whole = |data: &[u8]| proof::of(data) >= Proof::Checksum;
     let read_at = |d: &Decoded, at: &Extent| -> Option<Vec<u8>> {
         let j = (0..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some() && overlap(&d.extents[j], at))?;
         image(&d.blocks[j]).filter(|data| whole(data)).map(<[u8]>::to_vec)
@@ -230,13 +183,16 @@ pub fn outvote(base: &mut Decoded, left: &Decoded, right: &Decoded) {
 pub fn faded_legs(base: &mut Decoded, donors: &[(Channel, &Decoded)]) {
     let faded = |d: &Decoded, i: usize| d.findings.contains(&Finding::FadeBand { block: i });
     for i in 0..base.blocks.len() {
-        let Some(read) = image(&base.blocks[i]).filter(|d| xor_ok(d) && faded(base, i)) else { continue };
+        let Some(read) = image(&base.blocks[i]).filter(|d| proof::of(d) >= Proof::Checksum && faded(base, i))
+        else {
+            continue;
+        };
         let ordinary = donors.iter().find_map(|&(channel, d)| {
             (0..d.blocks.len()).find_map(|j| {
                 let other = image(&d.blocks[j])?;
                 (other.len() == read.len()
                     && other != read
-                    && xor_ok(other)
+                    && proof::of(other) >= Proof::Checksum
                     && !faded(d, j)
                     && overlap(&d.extents[j], &base.extents[i]))
                 .then(|| (channel, other.to_vec()))
@@ -286,8 +242,8 @@ enum Splice {
 /// - the anchor is the header itself, byte for byte, checksum good, and both decodes must read
 ///   it as often, so that the n-th time is the same program in both; where the counts differ
 ///   nothing is guessed. Both reads of the header must overlap in the recording;
-/// - the donor's pair must be whole: a printable name, and a block behind as long as the header
-///   declares whose checksum holds. A block read a bit out cannot be one;
+/// - the donor's pair must be whole: a header its fields prove ([`Proof::Header`]), and a block
+///   behind that answers it ([`Proof::Answer`]). A block read a bit out cannot be either;
 /// - `base`'s pair must have failed, its next block of data not the length declared, its
 ///   checksum bad, or one byte over and over. The failed block is replaced where it lies at the
 ///   donor's block, with every checksum-bad piece and every stretch kept as raw signal behind it
@@ -310,7 +266,7 @@ pub fn combine(base: &mut Decoded, donors: &[(Channel, &Decoded)]) {
             for (k, &(hi, d)) in donor_view.iter().enumerate() {
                 let Some(len) = anchor(d) else { continue };
                 let next = donor_view.get(k + 1).copied();
-                let whole = printable(d) && next.is_some_and(|(_, l)| answers(l, len));
+                let whole = proof::of(d) == Proof::Header && next.is_some_and(|(_, l)| answers(l, len));
                 donor_occ.entry(d).or_default().push((hi, if whole { next } else { None }));
             }
             let base_view = data_view(&base.blocks);
@@ -348,7 +304,7 @@ pub fn combine(base: &mut Decoded, donors: &[(Channel, &Decoded)]) {
                     continue;
                 }
                 let follower = next
-                    .filter(|&(fi, d)| declares(d).is_none() && overlap(&base.extents[fi], &leg_at))
+                    .filter(|&(fi, d)| header_shaped(d).is_none() && overlap(&base.extents[fi], &leg_at))
                     .map(|(fi, _)| fi);
                 let splice = match (own, follower) {
                     (Some(li), _) => (hi + 1, Splice::Drop(hi + 1..li)),
@@ -427,8 +383,8 @@ const POSITION_TOL: f64 = 1000.0;
 /// The stretch goes in at its own place. What it replaces is what `base` holds between its last
 /// block whose signal ends before the stretch starts and its first block that starts at or past
 /// the stretch's end (each within [`POSITION_TOL`]): it must be silence, a pause of that block's
-/// running into the stretch or pause blocks, and nothing else but reads that prove nothing, of
-/// under three bytes or with a bad checksum. Nothing either side of the stretch is cut or
+/// running into the stretch or pause blocks, and nothing else but reads that prove nothing
+/// (under [`Proof::Checksum`]). Nothing either side of the stretch is cut or
 /// doubled: the block before keeps its pause up to the stretch, which keeps the donor's.
 fn unheard_signal(base: &mut Decoded, channel: Channel, donor: &Decoded) {
     for di in 0..donor.blocks.len() {
@@ -450,7 +406,7 @@ fn unheard_signal(base: &mut Decoded, channel: Channel, donor: &Decoded) {
         let run = before + 1..after;
         let proves_nothing = |b: &Block| match &b.body {
             Body::Pause { .. } => true,
-            Body::Standard { data, .. } => data.len() < 3 || !xor_ok(data),
+            Body::Standard { data, .. } => proof::of(data) < Proof::Checksum,
             _ => false,
         };
         let pause_into =
@@ -516,7 +472,7 @@ fn own_leg_behind_strays(base: &Decoded, header: usize, leg: &[u8], leg_at: &Ext
         if data == leg {
             return (j > header + 1 && overlap(&base.extents[j], leg_at)).then_some(j);
         }
-        if xor_ok(data) {
+        if proof::of(data) != Proof::None {
             return None;
         }
     }

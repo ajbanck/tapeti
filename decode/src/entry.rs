@@ -12,7 +12,8 @@ use crate::capture::{
     csw_block, csw_of_tstates, direct_recording, spacing, tzx_size, MAX_BLOCK_BYTES, MAX_CSW_RATE,
 };
 use crate::fallback::{block_shaped, raw_signal, sort, Part};
-use crate::framing::{next_block, proven_header, PILOT_PULSE_MOST};
+use crate::framing::{next_block, PILOT_PULSE_MOST};
+use crate::proof::{self, Proof};
 use crate::pulses::{from_runs, from_tstates, Pulse};
 use crate::readers::{read, Channel, Csw, ReadError, Recording, Sound};
 use crate::waveform::edges;
@@ -685,7 +686,7 @@ fn read_faded(
         let (from, to) = (start_at(b.tone), start_at(b.bits_end));
         let zeros_behind =
             b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
-        let answers_it = b.data.len() == want && b.data.iter().fold(0, |x, &d| x ^ d) == 0;
+        let answers_it = proof::answering(&b.data, want) == Proof::Answer;
         if answers_it && !zeros_behind && from < extent.end && answers.last().is_none_or(|a| a.2 <= from) {
             answers.push((b.data, from, to));
         }
@@ -729,20 +730,16 @@ fn read_faded(
     Ok(again)
 }
 
-/// The blocks that follow a proven header without answering it, with the length it asks for:
-/// the next block of bytes behind the header, whatever lies between, not as long or its
-/// checksum bad.
+/// The blocks that follow a ROM header without answering it ([`proof::answering`]), with the
+/// length it asks for: the next block of bytes behind the header, whatever lies between.
 fn unanswered(d: &Decoded) -> Vec<(usize, usize)> {
-    let image = |b: &Block| match &b.body {
-        Body::Standard { data, .. } => Some(data.clone()),
-        _ => None,
-    };
+    let image = proof::image;
     let mut owed = Vec::new();
     for (i, b) in d.blocks.iter().enumerate() {
-        let Some(want) = image(b).and_then(|h| header_asks(&h)) else { continue };
+        let Some(want) = image(b).and_then(proof::asks) else { continue };
         let Some(leg) = (i + 1..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some()) else { continue };
         let data = image(&d.blocks[leg]).expect("found by its bytes");
-        if data.len() != want || data.iter().fold(0, |x, &v| x ^ v) != 0 {
+        if proof::answering(data, want) != Proof::Answer {
             owed.push((leg, want));
         }
     }
@@ -838,7 +835,7 @@ fn decode_pulses_from(
         if b.stray_zero {
             out.findings.push(Finding::StrayZero { block: index });
         }
-        if data.iter().fold(0, |x, &d| x ^ d) != 0 {
+        if proof::of(&data) == Proof::None {
             out.findings.push(Finding::BadChecksum { block: index });
         }
         if b.merged_sync {
@@ -848,7 +845,7 @@ fn decode_pulses_from(
             let expected = expected.unwrap_or(0);
             out.findings.push(Finding::Short { block: index, expected, read: data.len() });
         }
-        expected = header_asks(&data);
+        expected = proof::asks(&data);
         out.blocks.push(Block::new(Body::Standard { pause: 0, data }));
         out.extents.push(Extent { start: at(b.tone), end: at(b.end), signal_end: at(b.end) });
         pos = b.end;
@@ -963,9 +960,4 @@ fn add_pause(out: &mut Decoded, t: f64, start: f64, end: f64) -> Option<usize> {
         ms -= part;
     }
     first
-}
-
-/// The length, flag and checksum included, that a ROM header in `data` asks the next block for.
-fn header_asks(data: &[u8]) -> Option<usize> {
-    proven_header(data).then(|| usize::from(u16::from_le_bytes([data[12], data[13]])) + 2)
 }

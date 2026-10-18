@@ -17,6 +17,7 @@ mod merged;
 pub use merged::{ASK, DECIDE, WIDTH};
 
 use crate::fallback::TONE_RUN;
+use crate::proof::{self, Proof};
 use crate::pulses::Pulse;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tapeti_core::types::RomTimings;
@@ -508,39 +509,25 @@ struct Read {
 
 /// Whether `data` is a whole ROM block: a flag and at least a checksum, which holds.
 fn complete(data: &[u8]) -> bool {
-    data.len() >= 2 && data.iter().fold(0, |x, &d| x ^ d) == 0
+    proof::of(data) >= Proof::Trivial
 }
 
 /// A ROM header's length, flag and checksum included.
-pub const HEADER_LEN: usize = 19;
+const HEADER_LEN: usize = proof::HEADER_LEN;
 
 /// The half-waves of a byte: eight bits of two each.
 const BYTE_PULSES: usize = 16;
-
-/// Whether `data` is a ROM header its own bytes prove.
-///
-/// That is 19 bytes, flag 0x00, a type the ROM saves (0 to 3), and a checksum that holds over
-/// more than one value behind the flag. A flag and 18 copies of one value fold clean whatever
-/// it is (17 copies of `v` XOR to `v`, the checksum's own value), so nineteen zeros prove
-/// nothing.
-pub fn proven_header(data: &[u8]) -> bool {
-    data.len() == HEADER_LEN
-        && data[0] == 0x00
-        && data[1] <= 3
-        && data[2..].iter().any(|&b| b != data[1])
-        && data.iter().fold(0, |x, &d| x ^ d) == 0
-}
 
 /// Bytes from `start` until the bit loop stops ([`Bits::pair`]) or `expected` bytes are read.
 ///
 /// A block whose flag reads 0x00 is a ROM header and stops at its 19 bytes, whatever was
 /// expected: the ROM asks for a header by its flag, and loading data it fails at a header's
-/// first byte, reading none of it. Where the 19 do not prove a header ([`proven_header`]), a
-/// data block's first byte read 0x00 by chance, and the block is read again as it would be
-/// without that stop.
+/// first byte, reading none of it. Where the 19 ask for nothing ([`proof::asks`]), a data
+/// block's first byte read 0x00 by chance, and the block is read again as it would be without
+/// that stop.
 fn read_bytes(pulses: &[Pulse], start: Start, expected: Option<usize>, pilot_half: f64) -> Read {
     let read = read_gated(pulses, start, expected, pilot_half, true);
-    if read.bytes.len() == HEADER_LEN && read.bytes[0] == 0x00 && !proven_header(&read.bytes) {
+    if read.bytes.len() == HEADER_LEN && read.bytes[0] == 0x00 && proof::asks(&read.bytes).is_none() {
         return read_gated(pulses, start, expected, pilot_half, false);
     }
     read
@@ -610,7 +597,7 @@ fn read_gated(
     // the 19 bytes, and the byte behind them is read here so that its pulses stay in the
     // block that owns them and the pause is measured from the true gap.
     let mut stray_zero = false;
-    if gate == Some(HEADER_LEN) && proven_header(&bytes) {
+    if gate == Some(HEADER_LEN) && proof::asks(&bytes).is_some() {
         let mut extra = 0u8;
         let got = (bit..bit + 8)
             .all(|b| bits.pair(b).map(|p| extra = extra << 1 | u8::from(bits.one(p))).is_some());

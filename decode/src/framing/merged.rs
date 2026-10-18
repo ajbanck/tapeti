@@ -19,8 +19,8 @@
 //! Each form predicts the merged pulse from what has been measured: the leader's pilot half,
 //! the saver's pair at the tape's speed, and for the forward forms the surviving half, which is
 //! as long as the half it lost. Within [`DECIDE`] the length decides, unless the other form is
-//! within [`ASK`] and only its reading is a block; within [`ASK`] the length only asks, and the
-//! block answers (`Seam::genuine`).
+//! within [`ASK`] and its reading proves more ([`crate::proof`]); within [`ASK`] the length
+//! only asks, and the readings answer, the one that proves most standing (`Seam::rank`).
 //!
 //! A pair can also be whole and still miss the ROM's window. A recording that moves one kind of
 //! edge against the other moves where the pair splits, not its sum, and the ROM, which judges
@@ -28,13 +28,14 @@
 //! its sync. So a pair is a sync pair by its sum too, within [`WIDTH`] of the saver's, widened
 //! by the skew the pilot's own halves measure (`Seam::skew`). The ROM's reading then lies half
 //! a bit out, and can still be a block, its checksum holding by chance; where the pair whole
-//! reads a block too, the phase decides (`Seam::half_a_bit_out`).
+//! reads a block that proves as much, the phase decides (`Seam::half_a_bit_out`).
 //!
-//! The ROM's own reading stays wherever a genuine block stands behind it that no reading of
-//! the right phase displaces, and wherever nothing answers.
+//! The ROM's own reading stays wherever a block stands behind it that no reading proves more
+//! than, or displaces at the right phase, and wherever nothing answers.
 
 use super::{read_bytes, Speed, Start, BOUNCE_MOST, LEADER_PAIRS};
 use crate::fallback::TONE_RUN;
+use crate::proof::{self, Proof};
 use crate::pulses::Pulse;
 use std::cell::OnceCell;
 use tapeti_core::types::RomTimings;
@@ -51,7 +52,7 @@ pub const DECIDE: f64 = 0.10;
 /// How near the merged pulse must come to a form's prediction to be asked at all.
 ///
 /// The length cannot decide here, only open the question, and the block each reading makes
-/// answers it (`Seam::genuine`). From below, a band-pass on a worn tape annihilates the second sync
+/// answers it (`Seam::rank`). From below, a band-pass on a worn tape annihilates the second sync
 /// pulse and moves the crossings around it: the merged pulse then misses its prediction by
 /// 11.4% to 14.6%, and a header still reads past it up to 17.5%. From above nothing bounds it
 /// but that test, since a wider window only puts more seams to the bytes: at 0.20 a real
@@ -79,9 +80,6 @@ pub const WIDTH: f64 = 0.35;
 /// whose first 1 bit comes by bit 19. Past that wall more pairs only average more noise out.
 const FIT_BITS: usize = 96;
 
-/// The Spectrum's printable characters, which a header's name is made of.
-const PRINTABLE: std::ops::RangeInclusive<u8> = 0x20..=0x7F;
-
 /// The block's bits where a merged or moved sync pair left them, where that decides against the
 /// ROM's own reading; `None` where that stands.
 ///
@@ -104,7 +102,7 @@ pub(super) fn bits_start(
         speed: Speed::of_pilot(pilot_half),
         expected,
         rom,
-        rom_genuine: OnceCell::new(),
+        rom_rank: OnceCell::new(),
     };
     let from = first_checked + 2 * LEADER_PAIRS;
     let to = anchor.min(pulses.len().saturating_sub(1));
@@ -128,9 +126,9 @@ struct Seam<'a> {
     pilot_half: f64,
     speed: Speed,
     expected: Option<usize>,
-    /// Where the ROM's own bits begin, if it read a sync pair, and whether they make a block.
+    /// Where the ROM's own bits begin, if it read a sync pair, and what they prove.
     rom: Option<usize>,
-    rom_genuine: OnceCell<bool>,
+    rom_rank: OnceCell<Proof>,
 }
 
 impl Seam<'_> {
@@ -146,16 +144,16 @@ impl Seam<'_> {
         let back = Start::At(b + 1);
         let fwd = |o: f64| self.orphan(o, b + 2);
 
-        // The length decides, unless the other form is open and only its reading is a block.
+        // The length decides, unless the other form is open and its reading proves more.
         if let Some(o) = orphan.filter(|_| fwd_off <= DECIDE && fwd_off < back_off) {
-            if back_off <= ASK && self.genuine(fwd(o)).is_none() && self.genuine(back).is_some() {
+            if back_off <= ASK && self.rank(back) > self.rank(fwd(o)) {
                 return Some(back);
             }
             return Some(fwd(o));
         }
         if back_off <= DECIDE {
             if let Some(o) = orphan.filter(|_| fwd_off <= ASK) {
-                if self.genuine(back).is_none() && self.genuine(fwd(o)).is_some() {
+                if self.rank(fwd(o)) > self.rank(back) {
                     return Some(fwd(o));
                 }
             }
@@ -167,53 +165,60 @@ impl Seam<'_> {
         if self.rom == Some(b + 2) {
             return None;
         }
-        // The pair whole, by its sum, unless the ROM's reading behind is a block or the pilot
+        // The pair whole, by its sum, unless the ROM's reading behind proves more, or the pilot
         // runs on behind the pair: then it is a click in the pilot. Where the ROM took the
         // pair's second pulse for its first sync pulse, its reading lies half a bit out, and a
-        // block there is one by chance; the phase decides between the two (`half_a_bit_out`).
+        // block there is one by chance; between two readings that prove as much, the phase
+        // decides (`half_a_bit_out`).
         let (kind, last) = self.skew(b);
         let pair = len(b + 1).map(|t| breaker + t);
         let (floor, ceiling) =
             ((1.0 - WIDTH) * syncs - kind.max(0.0), (1.0 + WIDTH) * syncs + (-kind).max(0.0));
         let pilot_behind = || (b + 2..b + 4).any(|k| super::pilot_run_at(self.pulses, k, self.pilot_half));
-        if pair.is_some_and(|p| (floor..=ceiling).contains(&p))
-            && (!self.rom_genuine() || self.half_a_bit_out(b + 2))
-            && !pilot_behind()
-        {
-            return Some(Start::At(b + 2));
+        let whole = Start::At(b + 2);
+        if pair.is_some_and(|p| (floor..=ceiling).contains(&p)) && !pilot_behind() {
+            let (sum, rom) = (self.rank(whole), self.rom_rank());
+            if sum > rom || rom == Proof::None || sum == rom && self.half_a_bit_out(b + 2) {
+                return Some(whole);
+            }
         }
-        // Only asked: the block answers, the ROM's own reading first, then the pair whole. The
-        // pair's own window opens the question by where the pilot's last edge lies: one
-        // half-wave is a single measurement, as far off on a run of hiss as on a pilot.
+        // Only asked: the reading that proves most stands, the pair whole before either form and
+        // one form before the other only where both read the same bytes. The window opens by
+        // where the pilot's last edge lies: one half-wave is as far off on hiss as on a pilot.
         let back_open = back_off <= ASK;
         let fwd_open = orphan.filter(|_| fwd_off <= ASK);
         let last_open = pair.is_some_and(|p| p >= floor - (-last).max(0.0) && p <= ceiling + last.max(0.0));
-        if !back_open && fwd_open.is_none() && !last_open || self.rom_genuine() {
+        if !back_open && fwd_open.is_none() && !last_open {
             return None;
         }
-        if self.genuine(Start::At(b + 2)).is_some() {
-            return Some(Start::At(b + 2));
+        let sum = self.rank(whole);
+        let fwd_read = fwd_open.map(|o| (fwd(o), self.reading(fwd(o))));
+        let back_read = back_open.then(|| self.reading(back));
+        let ask = |r: &Option<(Start, (Proof, Vec<u8>))>| r.as_ref().map_or(Proof::None, |(_, (p, _))| *p);
+        let top = sum.max(ask(&fwd_read)).max(back_read.as_ref().map_or(Proof::None, |(p, _)| *p));
+        if top < Proof::Checksum || self.rom_rank() >= top {
+            return None;
         }
-        let fwd_read = fwd_open.and_then(|o| self.genuine(fwd(o)).map(|bytes| (fwd(o), bytes)));
-        let back_read = if back_open { self.genuine(back) } else { None };
+        if sum == top {
+            return Some(whole);
+        }
         match (fwd_read, back_read) {
-            (Some((f, fwd_bytes)), Some(back_bytes)) if fwd_bytes == back_bytes => {
-                Some(if fwd_off < back_off { f } else { back })
+            (Some((f, (fp, fwd_bytes))), Some((bp, back_bytes))) if fp == top && bp == top => {
+                (fwd_bytes == back_bytes).then_some(if fwd_off < back_off { f } else { back })
             }
-            (Some((f, _)), None) => Some(f),
-            (None, Some(_)) => Some(back),
-            _ => None,
+            (Some((f, (fp, _))), _) if fp == top => Some(f),
+            _ => Some(back),
         }
     }
 
-    /// Whether the ROM's own reading makes a block.
-    fn rom_genuine(&self) -> bool {
-        *self.rom_genuine.get_or_init(|| self.rom.is_some_and(|at| self.genuine(Start::At(at)).is_some()))
+    /// What the ROM's own reading proves ([`rank`]): nothing where it read no sync pair.
+    fn rom_rank(&self) -> Proof {
+        *self.rom_rank.get_or_init(|| self.rom.map_or(Proof::None, |at| self.rank(Start::At(at))))
     }
 
-    /// Whether the ROM's reading, which is a block, lies half a bit behind the bits read from
-    /// pulse `at`: it begins one pulse later, and the reading from `at` is a block too whose
-    /// pairs lie nearer the bits' own lengths ([`fit`]).
+    /// Whether the ROM's reading lies half a bit behind the bits read from pulse `at`: it begins
+    /// one pulse later, and the reading from `at` is a block whose pairs lie nearer the bits'
+    /// own lengths ([`fit`]).
     ///
     /// Half a bit out, a pair straddles two bits; where they differ it lies between a 0's pair
     /// and a 1's, and decides by which side of the split the recording moved it. A recording
@@ -223,7 +228,9 @@ impl Seam<'_> {
     /// split. The checksum is the XOR of every byte, so two such bytes wrong in the same bit
     /// leave it holding.
     fn half_a_bit_out(&self, at: usize) -> bool {
-        self.rom == Some(at + 1) && self.genuine(Start::At(at)).is_some() && self.fit(at) < self.fit(at + 1)
+        self.rom == Some(at + 1)
+            && self.rank(Start::At(at)) >= Proof::Checksum
+            && self.fit(at) < self.fit(at + 1)
     }
 
     /// Whether a pulse of `t` T-states is pilot ([`WIDTH`]).
@@ -282,35 +289,31 @@ impl Seam<'_> {
             return start;
         }
         let zero = Start::Lone(self.speed.of(f64::from(RomTimings::ZERO)), at);
-        match self.genuine(zero) {
-            Some(bytes) if bytes.len() == 19 && bytes[0] == 0x00 => zero,
+        match self.reading(zero) {
+            (Proof::Header, _) => zero,
             _ => start,
         }
     }
 
-    /// The bytes read from `start` as the block a header in front asks for, or without one, where
-    /// they are a block: they end at a byte, and a header's checksum holds, its type is one the
-    /// ROM knows and its name is printable; any other block's checksum holds over three bytes or
-    /// more that are not all 0x00.
-    ///
-    /// A checksum cannot tell a block from the same block a bit out: a one-bit shift moves the
-    /// checksum with it, so a header must be one in every field, which a shifted one is not (its
-    /// spaces become 0x40 and its name drags its neighbours' top bits in). A reading of noise at
-    /// the wrong phase is all 0x00, which every checksum passes, and any two equal bytes check
-    /// out.
-    fn genuine(&self, start: Start) -> Option<Vec<u8>> {
+    /// The bytes read from `start` as the block a header in front asks for, or without one,
+    /// and what they prove ([`proof::of`]): nothing where they do not end at a byte, or run
+    /// short of what the header asked.
+    fn reading(&self, start: Start) -> (Proof, Vec<u8>) {
         let read = read_bytes(self.pulses, start, self.expected, self.pilot_half);
         if read.short || !read.whole {
-            return None;
+            return (Proof::None, read.bytes);
         }
-        let bytes = read.bytes;
-        let sums = |b: &[u8]| b.iter().fold(0, |x, &d| x ^ d) == 0;
-        let block = if bytes.len() == 19 && bytes[0] == 0x00 {
-            sums(&bytes) && bytes[1] <= 3 && bytes[2..12].iter().all(|c| PRINTABLE.contains(c))
-        } else {
-            bytes.len() >= 3 && bytes.iter().any(|&b| b != 0) && sums(&bytes)
-        };
-        block.then_some(bytes)
+        (proof::of(&read.bytes), read.bytes)
+    }
+
+    /// What the bytes read from `start` prove, as a block: nothing short of a checksum that holds
+    /// over more than a misread leaves ([`Proof::Checksum`]; a header must be one in every
+    /// field, which one read a bit out is not).
+    fn rank(&self, start: Start) -> Proof {
+        match self.reading(start).0 {
+            p if p >= Proof::Checksum => p,
+            _ => Proof::None,
+        }
     }
 
     /// The bits of a hidden forward merge at `b`, where the pulse before it is the merged one and
@@ -320,9 +323,9 @@ impl Seam<'_> {
     /// sync pair's sum `syncs` (a real sync pair misses a 0 bit's pair by 18%), and the pulse
     /// before it must lie within [`DECIDE`] of `syncs` and `b`. Neither length can decide: a
     /// merge with a 0 bit's half is 4% off a pilot half-wave, and a sync pair stretched by wow
-    /// passes both tests. The bits do, where they can: the merge stands where its bits pair
-    /// nearer the bits' own lengths than the ROM's ([`fit`]). Where they do not, its reading
-    /// stands only as a block where the ROM's is none.
+    /// passes both tests. The readings do: the merge stands where its reading proves more than
+    /// the ROM's, and where the two prove as much, where its bits pair nearer the bits' own
+    /// lengths than the ROM's ([`fit`]).
     fn hidden(&self, b: usize, syncs: f64) -> Option<Start> {
         let len = |k: usize| self.pulses.get(k).map(|p| p.tstates);
         let (before, orphan, next) = (len(b.checked_sub(1)?)?, len(b)?, len(b + 1)?);
@@ -343,8 +346,9 @@ impl Seam<'_> {
             return None;
         }
         let start = self.orphan(orphan, b + 1);
+        let (merge, rom) = (self.rank(start), self.rom_rank());
         let decided = self.fit(b + 1) < self.fit(b + 2);
-        (decided || !self.rom_genuine() && self.genuine(start).is_some()).then_some(start)
+        (merge > rom || merge == rom && decided).then_some(start)
     }
 
     /// How far the pairs from pulse `from` lie from the bits' own lengths, on average, as a share:
