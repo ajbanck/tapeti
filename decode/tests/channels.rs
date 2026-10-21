@@ -10,8 +10,8 @@ use common::same_tape;
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, Channels, Decoded, Extent, Finding};
-use tapeti_decode::fold::{delivered, fold, pick, pick_reading, shape, Source};
+use tapeti_decode::entry::{decode_file, Channels, Decoded, Extent, Finding, Loss};
+use tapeti_decode::fold::{delivered, fold, pick, pick_reading, shape, vote, Source};
 use tapeti_decode::readers::Channel;
 use tapeti_decode::waveform::edges::Axis;
 use tapeti_decode::waveform::filter::Filter;
@@ -288,6 +288,62 @@ fn a_block_one_reading_reads_whole_answers_the_header_another_read() {
 }
 
 #[test]
+fn a_block_another_reading_puts_where_a_pilot_was_heard_is_no_longer_lost() {
+    // The midline heard the data block's pilot in the header's pause and read nothing of it;
+    // the zero line reads it there.
+    let a = program("A", &(0..200u8).collect::<Vec<u8>>());
+    let lost = |block| Finding::Lost { block, pulses: 4000, what: Loss::Pilot };
+    let mut midline = laid(a[..1].to_vec(), 0.0);
+    midline.extents[0].end = 200_000.0;
+    midline.findings = vec![lost(Some(0))];
+    let zero = laid(a.clone(), 0.0);
+    let got = folded(&midline, &[(Source::Axis(Axis::Zero), &zero)]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromAxis { block: 1, axis: Axis::Zero }]);
+    // Before the first block, where the lead-in held it.
+    let mut midline = laid(Vec::new(), 0.0);
+    midline.findings = vec![Finding::LeadIn { ms: 4000, pulses: 4000 }, lost(None)];
+    let got = folded(&midline, &[(Source::Axis(Axis::Zero), &zero)]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert!(!got.findings.contains(&lost(None)), "{:?}", got.findings);
+}
+
+#[test]
+fn a_block_no_reading_reads_whole_is_read_byte_by_byte_where_most_readings_agree() {
+    let a = program("A", &(0..200u8).map(|k| k.wrapping_mul(13).wrapping_add(1)).collect::<Vec<u8>>());
+    let wrong_at = |at: &[usize]| laid(flipped(&a, 1, at, 0x10), 0.0);
+    let voted = |base: &Decoded, readings: &[&Decoded]| {
+        let mut base = base.clone();
+        vote(&mut base, readings);
+        base
+    };
+    // Three readings, each wrong at a byte of its own: every byte has a majority.
+    let base = wrong_at(&[7]);
+    let (r1, r2, r3) = (wrong_at(&[7]), wrong_at(&[50]), wrong_at(&[120]));
+    let got = voted(&base, &[&r1, &r2, &r3]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::Voted { block: 1, readings: 3 }]);
+    // Two are not a vote.
+    assert_eq!(voted(&base, &[&r1, &r2]).blocks, base.blocks);
+    // Two readings wrong alike at a byte outvote the one right there, and the checksum then
+    // fails: nothing is taken.
+    assert_eq!(voted(&base, &[&r1, &wrong_at(&[7, 50]), &r3]).blocks, base.blocks);
+    // A reading that slips out of step counts up to the slip: behind it three are left in step,
+    // two of them right.
+    let mut slipped = laid(a.clone(), 0.0);
+    if let Body::Standard { data, .. } = &mut slipped.blocks[1].body {
+        let tail: Vec<u8> = data[100..].iter().map(|&d| d.rotate_left(1) ^ 0x5A).collect();
+        data[100..].copy_from_slice(&tail);
+    }
+    let r4 = wrong_at(&[60]);
+    let got = voted(&base, &[&slipped, &r2, &r3, &r4]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::Voted { block: 1, readings: 4 }]);
+    // Where the slip leaves two in step, a byte one of them misreads has no vote.
+    assert_eq!(voted(&base, &[&slipped, &r2, &r3]).blocks, base.blocks);
+}
+
+#[test]
 fn a_header_one_reading_reads_whole_goes_in_front_of_the_block_another_read() {
     // The left channel reads the block and not the header, the mix the header and not the
     // block: the header goes in front, and the block behind it answers it.
@@ -409,6 +465,41 @@ fn a_stretch_one_channel_heard_as_silence_takes_the_others_raw_signal() {
     // The left alone plays the stretch as the pause of the block in front.
     let left_only = decode(&wav, Channels::Only(Channel::Left));
     assert!(!left_only.blocks.iter().any(|b| matches!(b.body, Body::Csw { .. })));
+}
+
+/// The one-track case above with the right track `lag` samples behind the left: what the decode
+/// keeps, as block lengths (0 for raw signal).
+fn one_track_lagging(lag: usize) -> Vec<usize> {
+    let blocks: Vec<Block> = [
+        program("ONE", &(0..64u8).collect::<Vec<u8>>()),
+        vec![turbo()],
+        program("TWO", &(0..64u8).map(|k| k.wrapping_mul(5)).collect::<Vec<u8>>()),
+    ]
+    .concat();
+    let s = render(&blocks);
+    let quiet = span(&blocks, 2);
+    let mut left = s.clone();
+    let mut right: Vec<f32> = std::iter::repeat_n(0.0, lag).chain(s.iter().copied()).take(s.len()).collect();
+    left[quiet.start - 22050..quiet.end].iter_mut().for_each(|v| *v = 0.0);
+    let trashed = span(&blocks, 4);
+    trash(&mut right, trashed.start + lag..trashed.end + lag, 3);
+    let got = decode(&stereo_wav(&left, &right), Channels::Best);
+    got.blocks
+        .iter()
+        .map(|b| match &b.body {
+            Body::Standard { data, .. } => data.len(),
+            _ => 0,
+        })
+        .collect()
+}
+
+#[test]
+fn a_stretch_one_track_heard_comes_in_to_a_lag_of_4000_samples() {
+    // The raw-signal rung takes another reading's stretch matched to the blocks either side
+    // within `POSITION_TOL`, 1,000 samples; past that, an extra header can enter the pause in
+    // front of it as a block too many. Two heads 0.9 mm apart lag 2.4 samples per 10' of azimuth.
+    assert_eq!(one_track_lagging(4000), [19, 66, 0, 19, 66]);
+    assert_eq!(one_track_lagging(5000), [19, 19, 66, 0, 19, 19, 66]);
 }
 
 #[test]

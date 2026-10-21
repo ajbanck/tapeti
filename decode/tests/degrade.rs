@@ -314,3 +314,21 @@ fn stereo_wav_interleaves_the_channels() {
     assert_eq!(wav.len(), 44 + 8);
     assert_eq!(wav[44..], [0x00, 0x40, 0x00, 0x00, 0x01, 0x80, 0xFF, 0x7F]);
 }
+
+#[test]
+fn a_sharp_resampler_passes_a_level_and_a_low_tone_and_rings_at_an_edge() {
+    // A level stays where it is, away from the ends.
+    let level = resample_sharp(&vec![0.25; 4410], 44_100, 8000);
+    assert_eq!(level.len(), 800);
+    assert!(level[100..700].iter().all(|&v| (v - 0.25).abs() < 1e-6));
+    // A square wave of 21 samples a half, 1,050 Hz, keeps its crossings within a sample at
+    // 8 kHz, and its top rings past the level.
+    let sq = square(21, 40);
+    let y = resample_sharp(&sq, 44_100, 8000);
+    let want: Vec<f64> = gaps(&sq).iter().map(|g| g * 8000.0 / 44_100.0).collect();
+    let got = gaps(&y);
+    assert_eq!(got.len(), want.len());
+    assert!(got.iter().zip(&want).skip(2).all(|(a, b)| (a - b).abs() < 1.0), "{got:?}");
+    assert!(y.iter().any(|&v| v > 0.52));
+    assert_eq!(resample_sharp(&sq, 44_100, 8000), y);
+}

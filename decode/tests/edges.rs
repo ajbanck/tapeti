@@ -80,7 +80,7 @@ fn reads(samples: &[f32], rate: u32, bits: u16, filter: Filter) {
 fn the_spectrums_output_decodes_to_the_same_blocks() {
     for rate in [22050, 44100, 48000] {
         let got = decode_wav(&encode_wav(&render(&tape(), rate, true), rate, 16), Filter::None);
-        assert_eq!(got.findings, [Finding::LeadIn { ms: 250 }], "{rate} Hz");
+        assert_eq!(got.findings, [Finding::LeadIn { ms: 250, pulses: 0 }], "{rate} Hz");
         assert_eq!(got.blocks, tape(), "{rate} Hz");
         assert_eq!(got.rate_hz, rate);
     }
@@ -90,9 +90,8 @@ fn the_spectrums_output_decodes_to_the_same_blocks() {
 fn a_square_wave_holding_its_pause_level_decodes_to_the_same_blocks() {
     // A plain square wave holds a pause at the low level for a second, which no tape carries,
     // and the DC blocker drains it to zero, so the first pilot halves after it rise from zero.
-    // The tape still comes back block for block, pauses included, with no raw signal.
     let got = decode_wav(&encode_wav(&render(&tape(), 44100, false), 44100, 16), Filter::None);
-    assert_eq!(got.findings, [Finding::LeadIn { ms: 250 }]);
+    assert_eq!(got.findings, [Finding::LeadIn { ms: 250, pulses: 0 }]);
     assert_eq!(got.blocks, tape());
 }
 
@@ -230,7 +229,7 @@ fn dead_air_is_quiet_and_plays_as_the_pause() {
         let Body::Standard { pause, .. } = b.body else { unreachable!() };
         assert!(pause.abs_diff(want) <= 5, "a pause of {pause} ms for {want}");
     }
-    assert!(matches!(got.findings[0], Finding::LeadIn { ms: 3150..=3350 }), "{:?}", got.findings);
+    assert!(matches!(got.findings[0], Finding::LeadIn { ms: 3150..=3350, .. }), "{:?}", got.findings);
     let collapsed: Vec<usize> = got
         .findings
         .iter()

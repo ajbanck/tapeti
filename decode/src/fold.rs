@@ -11,6 +11,7 @@
 //! Sampled audio is read on the zero line and on the signal's own midline ([`Axis`]), for a worn
 //! tape whose centre wanders. No statistic of the signal tells beforehand which reading is best,
 //! so each is decoded, one is kept ([`pick`]) and the others are folded into it ([`fold`]).
+//! A block none of them reads whole is read again from all of them, byte by byte ([`vote`]).
 //!
 //! A Spectrum loads a block by its checksum, and nothing else on a tape is proved, so a decode
 //! is judged by its verified bytes, never by how many blocks it counts. The shape score of the
@@ -19,7 +20,7 @@
 //! decode that delivers every verified image the incumbent does and more verified bytes; a
 //! program's header adds a name, which is no loaded material.
 
-use crate::entry::{Decoded, Extent, Finding};
+use crate::entry::{Decoded, Extent, Finding, Loss};
 use crate::proof::{self, asks, header_shaped, image, Proof};
 use crate::readers::Channel;
 use crate::waveform::edges::Axis;
@@ -233,8 +234,8 @@ const POSITION_TOL: f64 = 1000.0;
 ///   comes only behind that block taken from the donor.
 ///
 /// Nothing a donor failed to read enters. The block before a block put in plays its pause up
-/// to where that block starts, and what a donor said of the block (its sync, its band, a stray
-/// zero, a partial last byte, that it is raw signal or a run-on) comes with it. Donors are
+/// to where that block starts, and what a donor said of the block (its sync, its band, its
+/// leader, a stray zero, a partial last byte, that it is raw signal) comes with it. Donors are
 /// asked in order, each block by block against `base` as folded so far; each block placed is
 /// reported ([`Finding::FromChannel`], [`Finding::FromAxis`], or [`Finding::BothChannels`] where
 /// readings alike decided).
@@ -371,6 +372,12 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     if let (false, Some(b)) = (tie, before) {
         end_pause_at(base, b, extent.start);
     }
+    if !tie && run.clone().all(|k| is_pause(&base.blocks[k])) {
+        // Put into the pause behind `before`, or before the first block, it is the block whose
+        // pilot `base` heard there and did not read.
+        base.findings
+            .retain(|f| !matches!(f, Finding::Lost { block, what: Loss::Pilot, .. } if *block == before));
+    }
     splice_into(base, run, vec![(block, extent)]);
     for f in &donor.findings {
         let said = matches!(
@@ -378,6 +385,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
             Finding::RawSignal { .. }
                 | Finding::MergedSync { .. }
                 | Finding::FadeBand { .. }
+                | Finding::ShortLeader { .. }
                 | Finding::RunOn { .. }
                 | Finding::StrayZero { .. }
                 | Finding::PartialFinalByte { .. }
@@ -395,17 +403,105 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     });
 }
 
-/// Whether the checksum tells `whole`, a reading of a block that proves itself, from `failed`, a
-/// reading of it that proves nothing: whether the bytes where the two part in step differ by
-/// more than XOR is blind to.
+/// Reads again, byte by byte, each block of `base` that fails the checksum of the header in front.
 ///
-/// Where the failed reading slips, it is out of step to the end and parts in most bytes from
-/// there (a byte it lacks parting too): that tail is one event, and is set aside. Before it, the
-/// bytes where the two part are where one of them is wrong. If their differences XOR to anything
-/// but zero, the checksum that holds over `whole` fails over `failed` there, and `whole` is the
-/// tape's. If they XOR to zero, one bit wrong in two bytes, which a reading through a merged
-/// sync or half a bit out leaves readily, `whole` checks out whichever of the two is right at
-/// them, and the failed reading is as likely right.
+/// A block as long as the header asks is read from the blocks of `readings` at its place
+/// (`by_majority`), where the result answers the header ([`Proof::Answer`]):
+/// [`Finding::Voted`].
+///
+/// A recording read on two lines in three channels has six readings, and a block none of them
+/// reads whole can still be in them: each reading goes wrong at its own bytes, where a dropout,
+/// a click or the hiss strikes the one track or the one line, and slips out of step at its own
+/// place. Both tracks carry the tape's own defects, and two readings can share a wrong byte, so
+/// a byte is taken only from a majority of the readings in step there, three of them at least,
+/// and the whole only where the checksum then holds. The readings are those the decode was kept
+/// and folded from; `base` is not one of them.
+pub fn vote(base: &mut Decoded, readings: &[&Decoded]) {
+    for i in 0..base.blocks.len() {
+        let Some(data) = image(&base.blocks[i]) else { continue };
+        let Some(asked) = base.blocks[..i].iter().rev().find_map(image).and_then(asks) else { continue };
+        if data.len() != asked || proof::of(data) != Proof::None {
+            continue;
+        }
+        let span = base.extents[i];
+        let at: Vec<&[u8]> = readings
+            .iter()
+            .filter_map(|r| {
+                (0..r.blocks.len())
+                    .filter(|&k| overlap(&r.extents[k], &span))
+                    .find_map(|k| image(&r.blocks[k]))
+            })
+            .collect();
+        let Some(voted) = by_majority(&at, asked).filter(|v| proof::answering(v, asked) >= Proof::Answer)
+        else {
+            continue;
+        };
+        if let Body::Standard { data, .. } = &mut base.blocks[i].body {
+            *data = voted;
+        }
+        // What was said of the block's bytes and how they were read is said of none of them now;
+        // what its pause holds stays.
+        base.findings.retain(|f| {
+            f.block() != Some(i)
+                || matches!(f, Finding::Collapsed { .. } | Finding::Lost { what: Loss::Pilot, .. })
+        });
+        base.findings.push(Finding::Voted { block: i, readings: at.len() });
+    }
+}
+
+/// `n` bytes, each the value a majority of `readings` hold where they are in step, at least
+/// three of them; `None` where a byte has no such majority.
+///
+/// A reading is in step from its first byte up to where it slips: from there it parts from the
+/// majority of all the readings in most of its bytes to its end, a byte it lacks parting too, as
+/// [`told_apart`] sets a slip aside. That majority is a first pass over every reading, from its
+/// first byte, whose slipped tails seldom agree with each other.
+fn by_majority(readings: &[&[u8]], n: usize) -> Option<Vec<u8>> {
+    const LEAST: usize = 3;
+    if readings.len() < LEAST {
+        return None;
+    }
+    // The value more than half of `held` hold.
+    let most = |held: &[u8]| {
+        held.iter().copied().find(|&v| 2 * held.iter().filter(|&&h| h == v).count() > held.len())
+    };
+    let first: Vec<Option<u8>> = (0..n)
+        .map(|k| most(&readings.iter().filter_map(|r| r.get(k).copied()).collect::<Vec<u8>>()))
+        .collect();
+    let in_step: Vec<usize> = readings
+        .iter()
+        .map(|r| {
+            let (mut slip, mut parted) = (n, 0);
+            for k in (0..n).rev() {
+                if r.get(k).copied() != first[k] {
+                    parted += 1;
+                    if 2 * parted > n - k {
+                        slip = k;
+                    }
+                }
+            }
+            slip
+        })
+        .collect();
+    (0..n)
+        .map(|k| {
+            let held: Vec<u8> =
+                readings.iter().zip(&in_step).filter(|&(_, &s)| k < s).map(|(r, _)| r[k]).collect();
+            if held.len() < LEAST {
+                return None;
+            }
+            most(&held)
+        })
+        .collect()
+}
+
+/// Whether the checksum tells `whole`, a reading of a block that proves itself, from `failed`, a
+/// reading that proves nothing: whether the bytes where the two part, outside a slipped tail
+/// (set aside as one event), differ by more than XOR is blind to.
+///
+/// If their differences there XOR to anything but zero, `whole` is the tape's. If they XOR to
+/// zero, a single bit wrong in two bytes, which a merged sync or a half-bit slip leaves readily,
+/// `whole` checks out whichever of the two is right, and `failed` is as likely to be it.
 fn told_apart(failed: &[u8], whole: &[u8]) -> bool {
     let n = failed.len().max(whole.len());
     let parts = |k: usize| failed.get(k) != whole.get(k);

@@ -144,23 +144,7 @@ fn from_decoded(path: &Path, d: Decoded, audio: bool) -> Decode {
         .findings
         .iter()
         .map(|f| Finding {
-            class: match f {
-                Found::BadChecksum { .. } | Found::Short { .. } | Found::PartialFinalByte { .. } => {
-                    NoteClass::Problem
-                }
-                Found::RawSignal { .. }
-                | Found::Collapsed { .. }
-                | Found::LeadIn { .. }
-                | Found::Channel { .. }
-                | Found::Midline
-                | Found::FromChannel { .. }
-                | Found::FromAxis { .. }
-                | Found::BothChannels { .. }
-                | Found::FadeBand { .. }
-                | Found::RunOn { .. }
-                | Found::StrayZero { .. }
-                | Found::MergedSync { .. } => NoteClass::Info,
-            },
+            class: if f.is_problem() { NoteClass::Problem } else { NoteClass::Info },
             text: f.text(),
             row: f.block(),
         })

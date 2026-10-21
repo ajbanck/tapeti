@@ -251,9 +251,19 @@ pub fn hum(x: &[f32], rate: u32, hz: f64, amplitude: f32) -> Vec<f32> {
 /// In the samples: the floor. In the pulses: chatter in the pauses, crossings moved, false
 /// edges on weak lobes.
 pub fn hiss(x: &[f32], snr_db: u32, seed: u64) -> Vec<f32> {
+    hiss_under(x, rms(x), snr_db, seed)
+}
+
+/// The root mean square of `x`, 0 for none.
+pub fn rms(x: &[f32]) -> f64 {
     let n = x.len().max(1) as f64;
-    let rms = (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / n).sqrt();
-    let dev = rms * below_db(snr_db);
+    (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / n).sqrt()
+}
+
+/// [`hiss`] `snr_db` below a level of `level` RMS rather than `x`'s own: dead air added around
+/// a tape lowers its RMS, and hiss measured on it would be quieter against the signal.
+pub fn hiss_under(x: &[f32], level: f64, snr_db: u32, seed: u64) -> Vec<f32> {
+    let dev = level * below_db(snr_db);
     let mut rng = Rng::new(seed);
     x.iter().map(|&v| v + (dev * rng.gauss()) as f32).collect()
 }
@@ -425,6 +435,66 @@ pub fn downsample(x: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         out.push((sum / r) as f32);
     }
     out
+}
+
+/// A sine by multiplication and addition alone, the same to the last bit everywhere: reduced to
+/// a quarter turn either side of zero, then its Taylor series to the 17th power, under 1e-12 off.
+fn sine(x: f64) -> f64 {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let mut r = x - (x / (2.0 * PI)).round() * 2.0 * PI;
+    if r > FRAC_PI_2 {
+        r = PI - r;
+    } else if r < -FRAC_PI_2 {
+        r = -PI - r;
+    }
+    let (mut term, mut sum) = (r, r);
+    for k in 1..=8 {
+        term *= -r * r / f64::from(2 * k * (2 * k + 1));
+        sum += term;
+    }
+    sum
+}
+
+/// `sin(πx) / (πx)`, 1 at 0.
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        sine(std::f64::consts::PI * x) / (std::f64::consts::PI * x)
+    }
+}
+
+/// `x` at `from_rate` resampled to `to_rate` as a careful resampler does it: a low-pass sharp at
+/// 0.45 of the new rate, a sinc eight zero crossings either side under a Lanczos window,
+/// normalised to pass a level as it is, read at each new sample's time. The output has
+/// `floor(len · to_rate / from_rate)` samples.
+///
+/// In the samples: every harmonic over the cut gone, a square wave's edges rounded and ringing
+/// on either side. In the pulses: the sync's 2.6 kHz near the cut at 6 kHz.
+pub fn resample_sharp(x: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if x.is_empty() || to_rate == 0 || from_rate == 0 {
+        return Vec::new();
+    }
+    let r = f64::from(from_rate) / f64::from(to_rate);
+    let cut = 0.45 * f64::from(to_rate.min(from_rate)) / f64::from(from_rate);
+    const LOBES: f64 = 8.0;
+    let width = LOBES / (2.0 * cut);
+    let out_len = (x.len() as f64 / r).floor() as usize;
+    (0..out_len)
+        .map(|n| {
+            let p = n as f64 * r;
+            let from = (p - width).ceil().max(0.0) as usize;
+            let to = ((p + width).floor() as usize).min(x.len() - 1);
+            let (mut sum, mut weight) = (0.0f64, 0.0f64);
+            for (k, &v) in x.iter().enumerate().take(to + 1).skip(from) {
+                let d = p - k as f64;
+                let h = sinc(2.0 * cut * d) * sinc(d / width);
+                sum += f64::from(v) * h;
+                weight += h;
+            }
+            (sum / weight) as f32
+        })
+        .collect()
 }
 
 /// A recording at `bits` bits (8 or 16): each sample, clamped to ±1.0, moved to the nearest level

@@ -12,6 +12,7 @@
 //! pause it lasts.
 
 use crate::capture::csw_of_runs;
+use crate::framing::{bit_timeout, leader_pair, Speed, BOUNCE_MOST, BYTE_PULSES, LEADER_PAIRS};
 use crate::pulses::Pulse;
 use std::ops::Range;
 use tapeti_core::audio::TSTATES_PER_SEC;
@@ -56,7 +57,7 @@ pub enum Part {
 /// `stretch` in gaps and signal, in order, with no two parts of one kind side by side. The first
 /// `keep` pulses are signal whatever they are.
 pub fn sort(stretch: &[Pulse], keep: usize) -> Vec<Part> {
-    let gap = |p: &Pulse| p.quiet || p.tstates > LONGEST_SIGNAL_PULSE;
+    let gap = |p: &Pulse| !signal(p);
     let mut parts = Vec::new();
     let mut push = |part: Part| match (parts.last_mut(), part) {
         (Some(Part::Gap(r)), Part::Gap(n)) | (Some(Part::Signal(r)), Part::Signal(n)) => r.end = n.end,
@@ -82,6 +83,83 @@ pub fn sort(stretch: &[Pulse], keep: usize) -> Vec<Part> {
         push(if block_shaped(&stretch[start..i]) { Part::Signal(start..i) } else { Part::Gap(start..i) });
     }
     parts
+}
+
+/// Whether a pulse can be signal: not dead air, and no longer than a block holds.
+pub(crate) fn signal(p: &Pulse) -> bool {
+    !p.quiet && p.tstates <= LONGEST_SIGNAL_PULSE
+}
+
+/// The first run in `gap` of pilot the ROM's leader loop locks on, [`LEADER_PAIRS`] pairs in a
+/// row and as many more as follow at their pace ([`PILOT_PACE`]), as a range of its pulses. The
+/// leader loop's window is wider than a pilot: it takes a 1 bit's pair too, and the pairs of many
+/// a block's bits after treble loss has merged them.
+pub(crate) fn rom_pilot(gap: &[Pulse]) -> Option<Range<usize>> {
+    let pair = |k: usize| gap[k].tstates + gap[k + 1].tstates;
+    (0..2).find_map(|phase| {
+        let mut from = phase;
+        let mut k = phase;
+        while k + 1 < gap.len() {
+            if !leader_pair(pair(k), false) {
+                k += 2;
+                from = k;
+                continue;
+            }
+            k += 2;
+            if k - from >= 2 * LEADER_PAIRS {
+                let pace = gap[from..k].iter().map(|p| p.tstates).sum::<f64>() / (k - from) as f64 * 2.0;
+                while k + 1 < gap.len() && (pair(k) - pace).abs() <= PILOT_PACE * pace {
+                    k += 2;
+                }
+                return Some(from..k);
+            }
+        }
+        None
+    })
+}
+
+/// How far a pilot's pair may lie from the mean of its pairs: 15%, between a pilot's last pairs
+/// as it fades into a recording's end (seen to stray 10% to 20%) and a 1 bit's pair, 21% under a
+/// pilot pair.
+const PILOT_PACE: f64 = 0.15;
+
+/// Whether behind `pilot`, a run of [`rom_pilot`] in `gap`, lies the signal of a block that did
+/// not read: at least a flag and a checksum of pairs the bit loop reads as bits, [`BYTE_PULSES`]
+/// pairs in a row, none of them a gap.
+///
+/// A pilot alone says no block was lost: a recording that starts inside one, or ends inside one
+/// as the next program's pilot fades, or a block cut by a hole in its pilot and read from what
+/// follows the hole, leaves a pilot and at most fragments of it behind in the gap. A block that
+/// fades under the edge detector's floor leaves the same, and so does a pilot with no block
+/// behind it on the tape; the pulses cannot tell them apart ([`crate::entry::Finding::Collapsed`]
+/// names the pilot). A bit is a pair the bit loop takes before it runs out ([`bit_timeout`]) at
+/// the pilot's speed, and longer than [`BOUNCE_MOST`] twice, half the shortest 0 bit's pair the
+/// ROM loads: treble loss that merges a block's halves moves its edges but keeps its pairs about
+/// a bit long, where the tone of a motor or a deck's noise behind a pilot that a recording ends
+/// inside keeps pairs longer, and hiss shorter, than any bit. A pair at the pilot's pace
+/// ([`PILOT_PACE`]), such as the rest of a pilot behind a hole or its last pairs as it fades,
+/// neither counts nor breaks the run. Unlike [`block_shaped`], which keeps signal, this keeps
+/// nothing: the gap plays as it did, and the decode says what is in it.
+pub(crate) fn burst_behind(gap: &[Pulse], pilot: Range<usize>) -> bool {
+    let half = gap[pilot.clone()].iter().map(|p| p.tstates).sum::<f64>() / pilot.len() as f64;
+    let speed = Speed::of_pilot(half);
+    let bit = |pair: f64| pair > speed.of(2.0 * BOUNCE_MOST) && pair <= speed.of(bit_timeout(1));
+    (0..2).any(|phase| {
+        let mut run = 0;
+        for k in (pilot.end + phase..gap.len().saturating_sub(1)).step_by(2) {
+            let (a, b) = (&gap[k], &gap[k + 1]);
+            let pair = a.tstates + b.tstates;
+            if !signal(a) || !signal(b) || !bit(pair) {
+                run = 0;
+            } else if (pair - 2.0 * half).abs() > PILOT_PACE * 2.0 * half {
+                run += 1;
+                if run >= BYTE_PULSES {
+                    return true;
+                }
+            }
+        }
+        false
+    })
 }
 
 /// Whether `burst` holds a tone of [`TONE_RUN`] pulses followed, anywhere after it, by as many

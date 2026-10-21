@@ -11,7 +11,7 @@ use common::{clicks, jitter, lengths, pulses, same_tape, speed, wobble};
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{block_duration, TSTATES_PER_SEC};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding};
+use tapeti_decode::entry::{decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding, Loss};
 use tapeti_decode::fallback::{sort, Part, TONE_RUN};
 use tapeti_decode::framing::{
     bit_timeout, leader_pair, pilot_pulse, pilot_run_at, BOUNCE_MOST, ONE_ABOVE, PILOT_PULSE_MOST,
@@ -119,8 +119,9 @@ fn a_block_with_no_pause_behind_it_ends_at_the_next_blocks_pilot() {
     assert_eq!(same_tape(&got.blocks, &header_first, 1.0..=1.0), Ok(()));
 }
 
-/// The run's walls: `TONE_RUN` (32) pulses each within 10% of the block's pilot half. A 1 bit's
-/// half, 1,710 T, lies 21% under a 2,168 T pilot.
+/// The run's walls: `TONE_RUN` (32) pulses, each one the sync loop takes for pilot and pairing
+/// with a neighbour within 10% of a pair of the block's pilot halves. A 1 bit's pair, 3,420 T,
+/// lies 21% under a 4,336 T pilot pair.
 #[test]
 fn a_pilot_run_is_32_pulses_within_a_tenth_of_the_pilot() {
     let run = |t: f64, n: usize| pulses(&vec![t as u64; n]);
@@ -134,6 +135,28 @@ fn a_pilot_run_is_32_pulses_within_a_tenth_of_the_pilot() {
     // Measured against the block's own pilot: on a tape playing 15% slow, so is the next pilot.
     assert!(pilot_run_at(&run(2493.0, 32), 0, 2493.0));
     assert!(!pilot_run_at(&run(1967.0, 32), 0, 2493.0));
+    // A pilot whose halves a skew between the two kinds of edge moves 17% either way holds its
+    // pairs, and so does one whose skew changes sides, two long halves and later two short.
+    let skewed: Vec<u64> = (0..33).map(|k| if k % 2 == 0 { 2540 } else { 1796 }).collect();
+    assert!(pilot_run_at(&pulses(&skewed), 0, 2168.0));
+    assert!(pilot_run_at(&pulses(&skewed), 1, 2168.0));
+    let flips: Vec<u64> = (0..40).map(|k| if (k + k / 12) % 2 == 0 { 2540 } else { 1796 }).collect();
+    assert!(pilot_run_at(&pulses(&flips), 0, 2168.0));
+    // Falls slow by 1.5 ms move them 42% either way, and the sync loop still takes every half
+    // for pilot: over 1,048 T and to 3,644 T. Past that window a pulse is no pilot, whatever
+    // it pairs into.
+    let alternate = |long: u64, short: u64| {
+        pulses(&(0..32).map(|k| if k % 2 == 0 { long } else { short }).collect::<Vec<u64>>())
+    };
+    assert!(pilot_run_at(&alternate(3100, 1250), 0, 2168.0));
+    assert!(pilot_run_at(&alternate(3288, 1049), 0, 2168.0));
+    assert!(!pilot_run_at(&alternate(3290, 1048), 0, 2168.0), "a first sync pulse");
+    assert!(pilot_run_at(&alternate(3644, 1100), 0, 2168.0));
+    assert!(!pilot_run_at(&alternate(3645, 1100), 0, 2168.0), "the sync loop's counter runs out");
+    // Nor does a run start a pulse early, on the last 1 bit's half in front of a pilot.
+    let behind_ones: Vec<u64> = [1710].into_iter().chain([2168; 32]).collect();
+    assert!(!pilot_run_at(&pulses(&behind_ones), 0, 2168.0));
+    assert!(pilot_run_at(&pulses(&behind_ones), 1, 2168.0));
 }
 
 #[test]
@@ -168,6 +191,32 @@ fn a_tape_too_fast_for_the_rom_is_kept_as_raw_signal_of_the_same_length() {
 }
 
 #[test]
+fn a_pilot_whose_block_did_not_read_is_said_lost() {
+    // A pilot with its sync gone, and behind it pairs as long as bits whose halves are all too
+    // long for a sync pulse, as treble loss leaves a block, loads nothing and is no block-shaped
+    // burst to keep as raw signal: a block lost. A pilot fragment that a gap ends, with the block
+    // saved again behind it, loses nothing.
+    let [h, d] = code_pair(b"again     ", 20, 9);
+    let pilot = Block::new(Body::PureTone { pulse_len: 2168, count: 1200 });
+    let merged = Block::new(Body::PulseSeq { pulses: [1100, 2200, 1400, 1300].repeat(16) });
+    let gap = Block::new(Body::Pause { pause: 500 });
+    let lost = |got: &Decoded, at: Option<usize>| {
+        got.findings
+            .iter()
+            .any(|f| matches!(*f, Finding::Lost { block, pulses: 1264.., what: Loss::Pilot } if block == at))
+    };
+    let got =
+        decode(&of_blocks(&[h.clone(), pilot.clone(), merged.clone(), gap.clone(), d.clone()]).unwrap());
+    assert_eq!(datas(&got.blocks), datas(&[h.clone(), d.clone()]));
+    assert!(lost(&got, Some(0)), "{:?}", got.findings);
+    let got = decode(&of_blocks(&[pilot.clone(), merged, gap.clone(), h.clone(), d.clone()]).unwrap());
+    assert!(lost(&got, None), "{:?}", got.findings);
+    let got = decode(&of_blocks(&[pilot, gap, h.clone(), d.clone()]).unwrap());
+    assert_eq!(datas(&got.blocks), datas(&[h, d]));
+    assert!(!got.findings.iter().any(|f| matches!(f, Finding::Lost { .. })), "{:?}", got.findings);
+}
+
+#[test]
 fn a_stretch_between_blocks_with_no_blocks_shape_is_part_of_the_pause() {
     let junk = [300u16, 5000, 777, 12000, 50];
     let [h, d] = code_pair(b"between   ", 20, 9);
@@ -179,7 +228,11 @@ fn a_stretch_between_blocks_with_no_blocks_shape_is_part_of_the_pause() {
     }
     blocks.remove(1);
     assert_eq!(got.blocks, blocks);
-    assert!(matches!(got.findings[..], [Finding::Collapsed { block: 0, pulses: 5.. }]), "{:?}", got.findings);
+    assert!(
+        matches!(got.findings[..], [Finding::Collapsed { block: 0, pulses: 5.., pilot: false }]),
+        "{:?}",
+        got.findings
+    );
 }
 
 #[test]
@@ -312,7 +365,7 @@ fn the_block_after_a_header_has_the_headers_length() {
     let blocks = [h.clone(), standard(0, data.clone()), tail, Block::new(Body::Pause { pause: 1000 })];
     let got = decode(&of_blocks(&blocks).unwrap());
     assert_eq!(got.blocks, vec![h, standard(1001, data.clone())]);
-    assert_eq!(got.findings, vec![Finding::Collapsed { block: 1, pulses: 4 }]);
+    assert_eq!(got.findings, vec![Finding::Collapsed { block: 1, pulses: 4, pilot: false }]);
 
     // A run-on that ends in 1 bits right before the next block's pilot: their halves are as long
     // as the sync loop takes for pilot, and the pilot does not start among them.
@@ -645,6 +698,14 @@ fn a_stray_zero_behind_a_header_is_left_out() {
     let got = decode(&of_blocks(&tape).unwrap());
     assert_eq!(got.blocks, vec![header.clone(), data.clone()]);
     assert_eq!(got.findings, vec![Finding::StrayZero { block: 0 }]);
+    // Its last bit is the block's, run into the saver's closing half-wave, as a block's last 0
+    // can be (`a_last_0_run_into_the_savers_closing_half_is_read_from_its_first_half`).
+    let mut lens = lengths(&of_blocks(&tape).unwrap());
+    let level = lens.iter().position(|&t| t == 3500).unwrap();
+    lens[level - 1] += 945;
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), datas(&[header.clone(), data.clone()]));
+    assert_eq!(got.findings, vec![Finding::StrayZero { block: 0 }]);
 
     // Only behind a header whose checksum holds; anything else stays the block's.
     let mut broken = h.clone();
@@ -756,6 +817,27 @@ fn the_last_bit_of_a_block_of_known_length_is_read_from_its_first_half_when_the_
 }
 
 #[test]
+fn a_last_0_run_into_the_savers_closing_half_is_read_from_its_first_half() {
+    // The ROM's saver closes a block with a half-wave of 945 T behind its last bit's. Where that
+    // lobe fades into the silence, the edge between it and the bit's second half goes, and a
+    // last 0 pairs to 855 + 1,800 T, which the ROM reads as a 1. A last 1 so run on pairs to
+    // 1,710 + 2,655 T, whose second half proves nothing already.
+    let mut last_bits = Vec::new();
+    for len in [10, 11] {
+        let [h, d] = code_pair(b"closing   ", len, 3);
+        let Body::Standard { data, .. } = &d.body else { unreachable!() };
+        let blocks = [h, d.clone()];
+        let mut lens = lengths(&of_blocks(&blocks).unwrap());
+        let level = lens.iter().rposition(|&t| t == 3500).unwrap();
+        lens[level - 1] += 945;
+        let got = decode(&pulses(&lens));
+        assert_eq!(datas(&got.blocks), datas(&blocks), "last bit {}", data[data.len() - 1] & 1);
+        last_bits.push(data[data.len() - 1] & 1);
+    }
+    assert_eq!(last_bits, [0, 1]);
+}
+
+#[test]
 fn a_one_ms_pause_level_standing_in_a_headers_last_half_is_not_paired() {
     // A header with a 1 ms pause, its last half-wave and the pause's level one pulse: as a
     // second half that pulse would make the bit a 1. The pilot behind it is not the header's.
@@ -844,4 +926,97 @@ fn a_pilot_one_pulse_into_a_byte_ends_the_block_in_front() {
     p.insert(at, Pulse { tstates: 1300.0, ..p[at] });
     let got = decode(&p);
     assert_eq!(datas(&got.blocks), datas(&[a, b]), "{:?}", got.findings);
+}
+
+/// The pulse index of the first sync pulse of block `k`: behind the `k`th pilot.
+fn sync_of(lens: &[u64], k: usize) -> usize {
+    (1..lens.len()).filter(|&i| lens[i] == 667 && lens[i - 1] == 2168).nth(k).unwrap()
+}
+
+#[test]
+fn a_block_behind_a_pilot_shorter_than_the_roms_stands_on_its_own_proof() {
+    // A recording that starts 40 pulses before a header's sync, and a 25 ms dropout 40 pulses
+    // before the data block's: the ROM, which needs 256 pairs, loads neither. The header proves
+    // itself in every field and the data block answers it, so both are read.
+    let [header, data] = code_pair(b"cut       ", 100, 3);
+    let lens = lengths(&of_blocks(&[header.clone(), data.clone()]).unwrap());
+    let (first, second) = (sync_of(&lens, 0), sync_of(&lens, 1));
+    let mut cut = lens[first - 40..].to_vec();
+    cut[second - first - 1] = 88_290;
+    let got = decode(&pulses(&cut));
+    assert_eq!(datas(&got.blocks), datas(&[header, data.clone()]), "{:?}", got.findings);
+    for block in [0, 1] {
+        assert!(got.findings.contains(&Finding::ShortLeader { block }), "{:?}", got.findings);
+    }
+    // A block no header asks for proves no more than its checksum, which a misread can hold, and
+    // behind so short a pilot it stays raw signal. So does one under 16 pairs of pilot.
+    let lens = lengths(&of_blocks(std::slice::from_ref(&data)).unwrap());
+    let got = decode(&pulses(&lens[sync_of(&lens, 0) - 40..]));
+    assert!(!got.blocks.iter().any(|b| matches!(b.body, Body::Standard { .. })), "{:?}", got.blocks);
+    assert!(got.findings.contains(&Finding::RawSignal { block: 0 }), "{:?}", got.findings);
+    let [header, data] = code_pair(b"cut       ", 100, 3);
+    let lens = lengths(&of_blocks(&[header, data]).unwrap());
+    let got = decode(&pulses(&lens[sync_of(&lens, 0) - 30..]));
+    assert_eq!(got.blocks.iter().filter(|b| matches!(b.body, Body::Standard { .. })).count(), 1);
+}
+
+#[test]
+fn a_recording_that_starts_inside_a_block_leaves_its_rest_in_the_lead_in() {
+    // Cut a byte, fifty or the whole block in: no pilot, no sync, no flag, nothing a Spectrum
+    // loads, and nothing to say where a byte begins. The rest is left out with the lead-in, its
+    // pulses counted, and the program behind it reads whole.
+    let [_, cut] = code_pair(b"first     ", 300, 1);
+    let next = code_pair(b"second    ", 100, 5);
+    let lens = lengths(&of_blocks(&[cut, next[0].clone(), next[1].clone()]).unwrap());
+    for (bytes_in, held) in [(1, 4818), (50, 4034), (301, 18)] {
+        let got = decode(&pulses(&lens[sync_of(&lens, 0) + 2 + 16 * bytes_in..]));
+        assert_eq!(datas(&got.blocks), datas(&next), "{bytes_in} bytes in");
+        assert!(
+            matches!(got.findings[..], [Finding::LeadIn { pulses, .. }] if pulses == held),
+            "{bytes_in} bytes in: {:?}",
+            got.findings
+        );
+    }
+}
+
+/// A CODE header whose checksum's lowest bit, the block's last bit, is `last`, and its pulses with
+/// every edge of one kind `skew` T-states late, the last half-wave run into silence.
+fn skewed_last_bit(last: u8, skew: i64) -> (Vec<u8>, Vec<Pulse>) {
+    let mut fields = vec![3];
+    fields.extend(b"skewed    ");
+    fields.extend([100, 0, 0x00, 0x80, 0x00, 0x00]);
+    let mut data = with_checksum(0x00, &fields);
+    while data[18] & 1 != last {
+        fields[16] += 1;
+        data = with_checksum(0x00, &fields);
+    }
+    let lens = lengths(&of_blocks(&[standard(1000, data.clone())]).unwrap());
+    let end = sync_of(&lens, 0) + 2 + 19 * 16;
+    let mut skewed: Vec<u64> = lens[..end]
+        .iter()
+        .enumerate()
+        .map(|(k, &t)| (t as i64 + if k % 2 == 0 { skew } else { -skew }) as u64)
+        .collect();
+    *skewed.last_mut().unwrap() += 3_500_000;
+    (data, pulses(&skewed))
+}
+
+/// The wall of a last bit read from its first half alone: the half stands 427.5 T from the split
+/// between a 0's and a 1's, and a skew between the two kinds of edge moves a lone half whole,
+/// where a pair cancels it. Read right to 400 T either way, as far as a worn head has been
+/// measured to skew one kind of edge; past it a 0 reads as a 1 at 430 T and a 1 as a 0 at 500,
+/// and the checksum, whose lowest bit it is, fails.
+#[test]
+fn a_last_bit_read_from_its_first_half_reads_right_to_a_skew_of_400_t() {
+    let read = |last: u8, skew: i64| {
+        let (data, p) = skewed_last_bit(last, skew);
+        decode(&p).blocks.iter().any(|b| matches!(&b.body, Body::Standard { data: d, .. } if *d == data))
+    };
+    for last in [0, 1] {
+        for skew in [-400, -200, 0, 200, 400] {
+            assert!(read(last, skew), "last bit {last}, skew {skew}");
+        }
+    }
+    assert!(!read(0, -430));
+    assert!(!read(1, 500));
 }

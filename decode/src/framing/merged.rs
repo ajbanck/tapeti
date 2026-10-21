@@ -33,7 +33,7 @@
 //! The ROM's own reading stays wherever a block stands behind it that no reading proves more
 //! than, or displaces at the right phase, and wherever nothing answers.
 
-use super::{read_bytes, Speed, Start, BOUNCE_MOST, LEADER_PAIRS};
+use super::{read_bytes, Speed, Start, BOUNCE_MOST};
 use crate::fallback::TONE_RUN;
 use crate::proof::{self, Proof};
 use crate::pulses::Pulse;
@@ -75,6 +75,11 @@ pub const ASK: f64 = 0.25;
 /// 2,205 T, 57% over, out of the window. 0.35 is chosen between.
 pub const WIDTH: f64 = 0.35;
 
+/// How near a pulse past [`WIDTH`] must come to the leader's halves of its parity to be pilot
+/// (`Seam::pilot`): the most hiss as loud as the band reads through moves a half, as
+/// [`WIDTH`] has it.
+const KIND_WIDTH: f64 = 0.1125;
+
 /// How many bit pairs `Seam::fit` weighs: past a ROM header's leading run of equal bits, the
 /// 0x00 flag and type, 16 bits that pair alike at either phase, and its name's first character,
 /// whose first 1 bit comes by bit 19. Past that wall more pairs only average more noise out.
@@ -83,31 +88,44 @@ const FIT_BITS: usize = 96;
 /// The block's bits where a merged or moved sync pair left them, where that decides against the
 /// ROM's own reading; `None` where that stands.
 ///
-/// `first_checked` is the leader's first checked pulse and `anchor` the pulse the ROM's sync
+/// `from` is the pulse behind the leader's pairs and `anchor` the pulse the ROM's sync
 /// loop stopped at: its first sync pulse, or the pulse it timed out on. `rom` is where the ROM's
 /// bits begin, if it read a sync pair. Each pulse behind the leader that is no pilot
 /// ([`WIDTH`]) may be where the pilot ends, in order, up to `anchor`; the ROM's own sync ends
-/// the search.
+/// the search. A pulse with the pilot running on behind it, there or behind bits that read as
+/// the pilot does, all 1s, is not where the pilot ends, but a glitch inside it
+/// ([`super::pilot_runs_on`]), whatever form its length fits.
 pub(super) fn bits_start(
     pulses: &[Pulse],
-    first_checked: usize,
+    from: usize,
     anchor: usize,
     rom: Option<usize>,
     pilot_half: f64,
     expected: Option<usize>,
 ) -> Option<Start> {
+    // The leader's last halves, by their parity: a pilot whose two kinds of edge lie apart
+    // alternates between two lengths.
+    let (mut sum, mut n) = ([0.0f64; 2], [0usize; 2]);
+    for (i, p) in pulses.iter().enumerate().take(from).skip(from.saturating_sub(TONE_RUN)) {
+        sum[i % 2] += p.tstates;
+        n[i % 2] += 1;
+    }
+    let kinds = [0, 1].map(|k| if n[k] > 0 { sum[k] / n[k] as f64 } else { pilot_half });
     let seam = Seam {
         pulses,
         pilot_half,
+        kinds,
         speed: Speed::of_pilot(pilot_half),
         expected,
         rom,
         rom_rank: OnceCell::new(),
     };
-    let from = first_checked + 2 * LEADER_PAIRS;
     let to = anchor.min(pulses.len().saturating_sub(1));
-    for (b, p) in pulses.iter().enumerate().take(to + 1).skip(from) {
-        if b < anchor && seam.pilot(p.tstates) {
+    for b in from..=to {
+        if b < anchor && seam.pilot(b) {
+            continue;
+        }
+        if super::pilot_runs_on(pulses, b + 1, pilot_half, true) {
             continue;
         }
         if let Some(start) = seam.at(b) {
@@ -124,6 +142,8 @@ pub(super) fn bits_start(
 struct Seam<'a> {
     pulses: &'a [Pulse],
     pilot_half: f64,
+    /// The leader's last halves at even pulses and at odd ones, on average.
+    kinds: [f64; 2],
     speed: Speed,
     expected: Option<usize>,
     /// Where the ROM's own bits begin, if it read a sync pair, and what they prove.
@@ -165,18 +185,15 @@ impl Seam<'_> {
         if self.rom == Some(b + 2) {
             return None;
         }
-        // The pair whole, by its sum, unless the ROM's reading behind proves more, or the pilot
-        // runs on behind the pair: then it is a click in the pilot. Where the ROM took the
-        // pair's second pulse for its first sync pulse, its reading lies half a bit out, and a
-        // block there is one by chance; between two readings that prove as much, the phase
-        // decides (`half_a_bit_out`).
+        // The pair whole, by its sum, unless the ROM's reading proves more. Where the ROM took
+        // the pair's second pulse for its sync, its reading lies half a bit out and a block
+        // there is one by chance; between two that prove as much, the phase decides (`half_a_bit_out`).
         let (kind, last) = self.skew(b);
         let pair = len(b + 1).map(|t| breaker + t);
         let (floor, ceiling) =
             ((1.0 - WIDTH) * syncs - kind.max(0.0), (1.0 + WIDTH) * syncs + (-kind).max(0.0));
-        let pilot_behind = || (b + 2..b + 4).any(|k| super::pilot_run_at(self.pulses, k, self.pilot_half));
         let whole = Start::At(b + 2);
-        if pair.is_some_and(|p| (floor..=ceiling).contains(&p)) && !pilot_behind() {
+        if pair.is_some_and(|p| (floor..=ceiling).contains(&p)) {
             let (sum, rom) = (self.rank(whole), self.rom_rank());
             if sum > rom || rom == Proof::None || sum == rom && self.half_a_bit_out(b + 2) {
                 return Some(whole);
@@ -233,9 +250,20 @@ impl Seam<'_> {
             && self.fit(at) < self.fit(at + 1)
     }
 
-    /// Whether a pulse of `t` T-states is pilot ([`WIDTH`]).
-    fn pilot(&self, t: f64) -> bool {
+    /// Whether the pulse at `b` is pilot: within [`WIDTH`] of the leader's half, or within
+    /// [`KIND_WIDTH`] of the leader's halves of its parity.
+    ///
+    /// Falls slow by a millisecond and more part the pilot's halves by more than [`WIDTH`]
+    /// either way, the pairs held, and each long one is then as long as a backward merge: read
+    /// from each, the rest of the pilot is 1 bits, 0xFF bytes that leave the checksum as it
+    /// was, and of a thousand such readings one holds by chance. Every half of a kind is as
+    /// long as the others of its kind, and no merge is: a backward merge is longer by the sync
+    /// pair, and the half a forward merge leaves is a bit's. Pairs cannot tell the two apart:
+    /// a merged pulse and the half behind it can sum to a pilot pair.
+    fn pilot(&self, b: usize) -> bool {
+        let t = self.pulses[b].tstates;
         (t - self.pilot_half).abs() <= WIDTH * self.pilot_half
+            || (t - self.kinds[b % 2]).abs() <= KIND_WIDTH * self.pilot_half
     }
 
     /// How far the pilot's edges lie off their transitions, from its halves up to pulse `b`: how
@@ -255,14 +283,15 @@ impl Seam<'_> {
     fn skew(&self, b: usize) -> (f64, f64) {
         let (mut sum, mut n) = ([0.0f64; 2], [0usize; 2]);
         let mut last_half = 0.0;
-        for (k, p) in self.pulses[..b].iter().rev().enumerate() {
-            if !self.pilot(p.tstates) {
+        for (k, i) in (0..b).rev().enumerate() {
+            if !self.pilot(i) {
                 break;
             }
+            let t = self.pulses[i].tstates;
             if k == 0 {
-                last_half = p.tstates;
+                last_half = t;
             }
-            sum[k % 2] += p.tstates;
+            sum[k % 2] += t;
             n[k % 2] += 1;
         }
         if n[0] + n[1] < TONE_RUN || n[1] == 0 {

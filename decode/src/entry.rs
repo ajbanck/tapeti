@@ -11,8 +11,8 @@
 use crate::capture::{
     csw_block, csw_of_tstates, direct_recording, spacing, tzx_size, MAX_BLOCK_BYTES, MAX_CSW_RATE,
 };
-use crate::fallback::{block_shaped, raw_signal, sort, Part};
-use crate::fold::{fold, Source};
+use crate::fallback::{block_shaped, burst_behind, raw_signal, rom_pilot, signal, sort, Part};
+use crate::fold::{fold, vote, Source};
 use crate::framing::{next_block, PILOT_PULSE_MOST};
 use crate::proof::{self, Proof};
 use crate::pulses::{from_runs, from_tstates, Pulse};
@@ -253,6 +253,16 @@ pub struct Extent {
     pub signal_end: f64,
 }
 
+/// What of a block that did not read lies in a gap ([`Finding::Lost`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Loss {
+    /// A pilot tone the ROM locks on, and signal behind it (`fallback::burst_behind`).
+    Pilot,
+    /// The rest of the block in front, whose bits stopped short of its end: shorter than its
+    /// header asked for, or with no header and its checksum wrong, and signal behind it.
+    Rest,
+}
+
 /// Something a decode found, about the block at the index it names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Finding {
@@ -263,11 +273,15 @@ pub enum Finding {
     /// A stretch no reader took, kept as raw signal.
     RawSignal { block: usize },
     /// Pulses in a gap, dead air or not shaped like a block, played as the pause of the block
-    /// that holds them.
-    Collapsed { block: usize, pulses: usize },
-    /// Silence before the first block, `ms` long, left out: it holds nothing but its length,
-    /// and a tape starts with its first block.
-    LeadIn { ms: u64 },
+    /// that holds them; `pilot` where a pilot the ROM locks on is among them, with nothing behind
+    /// it to say a block was lost (`fallback::rom_pilot`).
+    Collapsed { block: usize, pulses: usize, pilot: bool },
+    /// Pulses in a gap that hold a block that did not read, `what` of it, played as the pause of
+    /// the block that holds them, or before the first block left out with the lead-in (`None`).
+    Lost { block: Option<usize>, pulses: usize, what: Loss },
+    /// What lies before the first block, `ms` long, left out: a tape starts with its first
+    /// block. `pulses` it holds that are not a plain pause, none where it is silence.
+    LeadIn { ms: u64, pulses: usize },
     /// Of a stereo recording's mix and its two channels, the decode of `kept` delivers most.
     Channel { kept: Channel },
     /// The block's last byte holds only `used_bits` bits read from the tape, from its top bit;
@@ -293,9 +307,15 @@ pub enum Finding {
     /// The block was read again on a band that follows the signal's level down through a
     /// dropout, where the first read stopped ([`edges::Band::Fade`]).
     FadeBand { block: usize },
+    /// The pilot tone in front held fewer pairs than the ROM locks on, and the block stands on
+    /// its own proof ([`crate::framing::SHORT_LEADER_PAIRS`]).
+    ShortLeader { block: usize },
     /// The raw signal is the run-on of the block in front: the bits it reads past the length it
     /// was asked for ([`crate::framing::RawBlock::bits_end`]).
     RunOn { block: usize },
+    /// None of the readings read the block whole, and it was read byte by byte as most of them
+    /// read each byte, of `readings` that hold it ([`crate::fold::vote`]).
+    Voted { block: usize, readings: usize },
 }
 
 impl Finding {
@@ -318,8 +338,38 @@ impl Finding {
             | Finding::FromAxis { block, .. }
             | Finding::BothChannels { block }
             | Finding::FadeBand { block }
-            | Finding::RunOn { block } => Some(block),
-            Finding::LeadIn { .. } | Finding::Channel { .. } | Finding::Midline => None,
+            | Finding::ShortLeader { block }
+            | Finding::RunOn { block }
+            | Finding::Voted { block, .. }
+            | Finding::Lost { block: Some(block), .. } => Some(block),
+            Finding::Lost { block: None, .. }
+            | Finding::LeadIn { .. }
+            | Finding::Channel { .. }
+            | Finding::Midline => None,
+        }
+    }
+
+    /// Whether it says something of the tape is missing or wrong, rather than how it was read.
+    pub fn is_problem(&self) -> bool {
+        match self {
+            Finding::BadChecksum { .. }
+            | Finding::Short { .. }
+            | Finding::PartialFinalByte { .. }
+            | Finding::Lost { .. } => true,
+            Finding::RawSignal { .. }
+            | Finding::Collapsed { .. }
+            | Finding::LeadIn { .. }
+            | Finding::Channel { .. }
+            | Finding::Midline
+            | Finding::FromChannel { .. }
+            | Finding::FromAxis { .. }
+            | Finding::BothChannels { .. }
+            | Finding::FadeBand { .. }
+            | Finding::ShortLeader { .. }
+            | Finding::RunOn { .. }
+            | Finding::StrayZero { .. }
+            | Finding::MergedSync { .. }
+            | Finding::Voted { .. } => false,
         }
     }
 
@@ -331,12 +381,29 @@ impl Finding {
                 format!("The header asks for {expected} bytes; the signal holds {read}.")
             }
             Finding::RawSignal { .. } => "Kept as raw signal.".into(),
-            Finding::Collapsed { pulses, .. } => {
+            Finding::Collapsed { pulses, pilot: false, .. } => {
                 format!("The pause held {pulses} pulses of noise; they play as silence.")
             }
-            Finding::LeadIn { ms } => {
+            Finding::Collapsed { pulses, pilot: true, .. } => format!(
+                "The pause held {pulses} pulses that read as no block, a pilot tone a Spectrum locks on among them; they play as silence."
+            ),
+            // No block stands in front of the lead-in to have stopped short.
+            Finding::Lost { block: None, pulses, .. } => format!(
+                "The lead-in holds a block that did not read: a pilot tone a Spectrum locks on, and signal behind it. Its {pulses} pulses are left out with it."
+            ),
+            Finding::Lost { block: Some(_), pulses, what: Loss::Pilot } => format!(
+                "The pause holds a block that did not read: a pilot tone a Spectrum locks on, and signal behind it. Its {pulses} pulses play as silence."
+            ),
+            Finding::Lost { block: Some(_), pulses, what: Loss::Rest } => format!(
+                "The block stops short of its end: the {pulses} pulses behind where it stops play as its pause."
+            ),
+            Finding::LeadIn { ms, pulses: 0 } => {
                 format!("lead-in: {:.1} s of silence before the first block, left out", ms as f64 / 1000.0)
             }
+            Finding::LeadIn { ms, pulses } => format!(
+                "lead-in: {:.1} s before the first block, left out, with {pulses} pulses that read as no block",
+                ms as f64 / 1000.0
+            ),
             Finding::Channel { kept: Channel::Mix } => {
                 "Read from both channels mixed: neither alone reads more.".into()
             }
@@ -381,6 +448,12 @@ impl Finding {
             }
             Finding::RunOn { .. } => {
                 "The block in front reads on past the length it was asked for; the bits behind it are kept as raw signal.".into()
+            }
+            Finding::Voted { readings, .. } => format!(
+                "None of the {readings} readings of the channels and centre lines reads it whole; each byte is the one most of them read where they are in step, and the checksum holds."
+            ),
+            Finding::ShortLeader { .. } => {
+                "The pilot tone in front is too short for a Spectrum to load the block, cut or broken by a dropout; it was read from what is left, a header its fields prove or the block a header asked for.".into()
             }
         }
     }
@@ -486,18 +559,20 @@ pub fn decode_file(
         }
         Channels::Best => Channel::Mix,
     };
-    decode_channel(name, bytes, channel, filter, window, inflate, progress, cancel)
+    decode_channel(name, bytes, channel, filter, window, inflate, progress, cancel).map(|(d, _)| d)
 }
 
 /// The decode `decode` makes of the mix, the left or the right channel that delivers most, the
-/// other two folded into it ([`crate::fold::fold`]). A channel that cannot be decoded delivers
-/// nothing; when none can, the mix's error stands.
+/// other two folded into it ([`crate::fold::fold`]), and the blocks none of them reads whole
+/// read again byte by byte from every reading of every channel ([`crate::fold::vote`]). A
+/// channel that cannot be decoded delivers nothing; when none can, the mix's error stands.
 fn best_channel(
-    mut decode: impl FnMut(Channel, &mut dyn FnMut(Progress)) -> Result<Decoded, DecodeError>,
+    mut decode: impl FnMut(Channel, &mut dyn FnMut(Progress)) -> Result<Readings, DecodeError>,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<Decoded, DecodeError> {
     const ORDER: [Channel; 3] = [Channel::Mix, Channel::Left, Channel::Right];
     let mut decodes = Vec::with_capacity(ORDER.len());
+    let mut readings = Vec::new();
     let mut most = 0;
     for (i, channel) in ORDER.into_iter().enumerate() {
         let got = decode(channel, &mut |p| {
@@ -506,11 +581,15 @@ fn best_channel(
             progress(Progress { blocks: most, done, ..p });
         });
         if matches!(got, Err(DecodeError::Cancelled)) {
-            return got;
+            return Err(DecodeError::Cancelled);
         }
-        decodes.push(got);
+        decodes.push(got.map(|(kept, read)| {
+            readings.extend(read);
+            kept
+        }));
     }
     let (i, mut kept) = keep_and_fold(decodes, |k| Source::Channel(ORDER[k]))?;
+    vote(&mut kept, &readings.iter().collect::<Vec<_>>());
     kept.findings.insert(0, Finding::Channel { kept: ORDER[i] });
     Ok(kept)
 }
@@ -547,6 +626,10 @@ fn best_index(
     Ok((i, decodes))
 }
 
+/// What `decode_channel` and `decode_sound` give: the decode, and the readings it was kept
+/// and folded from, one for each line it was read on (only one for pulses).
+type Readings = (Decoded, Vec<Decoded>);
+
 /// Decodes `channel` of a recording file, as [`decode_file`] says.
 #[allow(clippy::too_many_arguments)]
 fn decode_channel(
@@ -558,7 +641,7 @@ fn decode_channel(
     inflate: Inflate,
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
-) -> Result<Decoded, DecodeError> {
+) -> Result<Readings, DecodeError> {
     let in_window = |pulses: Vec<Pulse>| -> Result<Vec<Pulse>, DecodeError> {
         let pulses: Vec<Pulse> = match &window {
             Some(window) => pulses.into_iter().filter(|p| window.contains(&p.start)).collect(),
@@ -577,7 +660,8 @@ fn decode_channel(
         }
         Recording::Out(lengths) => (from_tstates(&lengths), TSTATES_PER_SEC),
     };
-    decode_pulses_from(&in_window(pulses)?, rate_hz, progress, cancel, (0.0, 1.0))
+    let read = decode_pulses_from(&in_window(pulses)?, rate_hz, progress, cancel, (0.0, 1.0))?;
+    Ok((read.clone(), vec![read]))
 }
 
 /// Decodes sampled audio, its edges found on the zero line and on the signal's own midline
@@ -585,23 +669,22 @@ fn decode_channel(
 /// folding the other into it, as the channels are ([`crate::fold`]). `in_window` keeps the
 /// pulses asked for.
 ///
-/// A worn tape's centre can wander further than its shrunken short half-waves swing, so that
-/// they never cross zero and two bits merge into one; about the midline every lobe is its own
-/// excursion. No statistic says beforehand which line a recording reads best on, and on a
-/// clean one both read the same, so both are decoded and judged by what they deliver, and a
-/// block one line proves more surely than the other is the tape's whichever is kept. Where the
-/// zero line's decode holds nothing but whole blocks and plain pauses, the midline is not
-/// walked: neither the pick nor the fold takes anything from a decode but what it proves more
-/// surely, and there is nothing more.
-/// On either line, a block a header asks for that does not read whole is read again on the fade
-/// band ([`read_faded`]).
+/// A worn tape's centre can wander further than its shrunken short half-waves swing, so the zero
+/// line never crosses and two bits merge into one, where the midline's lobes are each their own
+/// excursion; a wander that wide also leaves the zero line no pilot to lock on, so a decode of no
+/// block at all is not taken as whole and the midline is tried too. Nothing says beforehand which
+/// line reads best, so both are decoded and a block is kept from whichever proves it more surely;
+/// the midline is skipped only once the zero line's decode holds nothing but whole blocks and
+/// plain pauses, since neither the pick nor the fold could then take anything more from it. On
+/// either line, a block a header asks for that does not read whole is read again on the fade band
+/// (`read_faded`).
 fn decode_sound(
     sound: &Sound,
     filter: Filter,
     in_window: impl Fn(Vec<Pulse>) -> Result<Vec<Pulse>, DecodeError>,
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
-) -> Result<Decoded, DecodeError> {
+) -> Result<Readings, DecodeError> {
     use std::cell::{Cell, RefCell};
     const AXES: [edges::Axis; 2] = [edges::Axis::Zero, edges::Axis::Midline];
     // The samples run out when the flag is set, so a cancel ends the edge detector's passes over
@@ -643,15 +726,17 @@ fn decode_sound(
             read_faded(read, &p, faded, sound.rate_hz, cancel)
         });
         let whole = got.as_ref().is_ok_and(|d| {
-            !d.findings.iter().any(|f| {
-                matches!(
-                    f,
-                    Finding::BadChecksum { .. }
-                        | Finding::Short { .. }
-                        | Finding::RawSignal { .. }
-                        | Finding::Collapsed { .. }
-                )
-            })
+            !d.blocks.is_empty()
+                && !d.findings.iter().any(|f| {
+                    matches!(
+                        f,
+                        Finding::BadChecksum { .. }
+                            | Finding::Short { .. }
+                            | Finding::RawSignal { .. }
+                            | Finding::Collapsed { .. }
+                            | Finding::Lost { .. }
+                    )
+                })
         });
         if whole {
             ControlFlow::Break(got)
@@ -663,12 +748,13 @@ fn decode_sound(
     if cancel.load(Ordering::Relaxed) {
         return Err(DecodeError::Cancelled);
     }
+    let readings = decodes.iter().filter_map(|d| d.as_ref().ok().cloned()).collect();
     let (i, mut kept) = keep_and_fold(decodes, |k| Source::Axis(AXES[k]))?;
     if AXES[i] == edges::Axis::Midline {
         kept.findings.insert(0, Finding::Midline);
     }
     progress(Progress { pulses_read: 0, pulses: 0, blocks: most.get(), done: 1.0 });
-    Ok(kept)
+    Ok((kept, readings))
 }
 
 /// `read`, the decode of the `ordinary` pulses, with each block behind a proven header that does
@@ -821,6 +907,8 @@ fn decode_pulses_from(
     let mut expected = None;
     // Where the bits of the last block read stop, past its end when it ran on.
     let mut bits_end = 0;
+    // Whether the last block read stopped short of its end ([`Loss::Rest`]).
+    let mut cut = false;
     loop {
         // From where the bits stop: a run-on's 1 bits are as long as pilot, and the next block's
         // pilot must not start among them.
@@ -839,7 +927,7 @@ fn decode_pulses_from(
             }
         }
         let keep = bits_end.clamp(pos, stretch_end) - pos;
-        let collapsed = settle(&mut out, &stretch, keep, at(stretch_end), grid_hz);
+        let collapsed = settle(&mut out, &stretch, keep, cut, at(stretch_end), grid_hz);
         if pos == 0 {
             out.collapsed_ends[0] = collapsed;
         }
@@ -858,16 +946,23 @@ fn decode_pulses_from(
         if b.stray_zero {
             out.findings.push(Finding::StrayZero { block: index });
         }
-        if proof::of(&data) == Proof::None {
+        let bad = proof::of(&data) == Proof::None;
+        if bad {
             out.findings.push(Finding::BadChecksum { block: index });
         }
         if b.merged_sync {
             out.findings.push(Finding::MergedSync { block: index });
         }
+        if b.short_leader {
+            out.findings.push(Finding::ShortLeader { block: index });
+        }
         if b.short {
             let expected = expected.unwrap_or(0);
             out.findings.push(Finding::Short { block: index, expected, read: data.len() });
         }
+        // Without a header to say how long it is, a block ends where its bits stop, and a wrong
+        // checksum says they stopped before the saver's did.
+        cut = b.short || expected.is_none() && bad;
         expected = proof::asks(&data);
         out.blocks.push(Block::new(Body::Standard { pause: 0, data }));
         out.extents.push(Extent { start: at(b.tone), end: at(b.end), signal_end: at(b.end) });
@@ -890,7 +985,12 @@ fn decode_pulses_from(
 /// short to round to a millisecond is kept with the signal, since a pause of 0 ms is no pause.
 /// Before any block, a gap is the lead-in, left out and reported. How many pulses went into
 /// gaps that are not a plain pause.
-fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, end: f64, grid_hz: u32) -> usize {
+///
+/// A gap that holds a block that did not read says so ([`Finding::Lost`]): a pilot tone with
+/// signal behind it, or, `cut` where the block in front stopped short of its end, signal from
+/// where it stopped on, `BYTE_PULSES` pulses of it with no gap among them; a block's pause
+/// opens with its 1 ms level and then a gap.
+fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, cut: bool, end: f64, grid_hz: u32) -> usize {
     let at = |k: usize| stretch.get(k).map_or(end, |p| p.start);
     let length = |r: &std::ops::Range<usize>| stretch[r.clone()].iter().map(|p| p.tstates).sum::<f64>();
     let opening = PAUSE_OPENING + f64::from(TSTATES_PER_SEC) / f64::from(grid_hz);
@@ -902,7 +1002,7 @@ fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, end: f64, grid_hz: 
         _ => false,
     };
     if keep == 0 && pause_shaped(stretch) {
-        add_pause(out, stretch.iter().map(|p| p.tstates).sum(), at(0), end);
+        add_pause(out, stretch.iter().map(|p| p.tstates).sum(), at(0), end, 0);
         return 0;
     }
     let mut collapsed = 0;
@@ -920,12 +1020,27 @@ fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, end: f64, grid_hz: 
     for part in parts {
         match part {
             Part::Gap(r) => {
-                let held = add_pause(out, length(&r), at(r.start), at(r.end));
-                if !pause_shaped(&stretch[r.clone()]) {
-                    collapsed += r.len();
-                    if let Some(block) = held {
-                        out.findings.push(Finding::Collapsed { block, pulses: r.len() });
+                let gap = &stretch[r.clone()];
+                let pulses = if pause_shaped(gap) { 0 } else { r.len() };
+                let held = add_pause(out, length(&r), at(r.start), at(r.end), pulses);
+                if pulses == 0 {
+                    continue;
+                }
+                collapsed += pulses;
+                let rest =
+                    cut && r.start == 0 && gap.get(..BYTE_PULSES).is_some_and(|p| p.iter().all(signal));
+                let pilot = rom_pilot(gap);
+                let lost = if rest {
+                    Some(Loss::Rest)
+                } else {
+                    pilot.clone().filter(|p| burst_behind(gap, p.clone())).map(|_| Loss::Pilot)
+                };
+                match (lost, held) {
+                    (Some(what), block) => out.findings.push(Finding::Lost { block, pulses, what }),
+                    (None, Some(block)) => {
+                        out.findings.push(Finding::Collapsed { block, pulses, pilot: pilot.is_some() })
                     }
+                    (None, None) => {}
                 }
             }
             Part::Signal(r) => {
@@ -957,12 +1072,13 @@ fn ms(t: f64) -> u64 {
 }
 
 /// Adds a pause of `t` T-states, from `start` to `end`, to the last block, and past what its field
-/// holds as Pause blocks; the block it starts in, if any. Before any block it is the lead-in.
-fn add_pause(out: &mut Decoded, t: f64, start: f64, end: f64) -> Option<usize> {
+/// holds as Pause blocks; the block it starts in, if any. Before any block it is the lead-in,
+/// which holds `pulses` that are not a plain pause.
+fn add_pause(out: &mut Decoded, t: f64, start: f64, end: f64, pulses: usize) -> Option<usize> {
     let mut ms = ms(t);
     let Some(last) = out.blocks.len().checked_sub(1) else {
         if ms > 0 {
-            out.findings.push(Finding::LeadIn { ms });
+            out.findings.push(Finding::LeadIn { ms, pulses });
         }
         return None;
     };

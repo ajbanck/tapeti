@@ -8,7 +8,7 @@
 //! the file, the Z-RLE data of a CSW file inflated (empty otherwise; the page has zlib, this
 //! crate does not), and the file's name.
 
-use crate::entry::{decode_file, describe, keep_as_raw_signal, tape_band, Channels, Finding, Kept, Progress};
+use crate::entry::{decode_file, describe, keep_as_raw_signal, tape_band, Channels, Kept, Progress};
 use crate::readers::{read, Channel, Recording};
 use crate::waveform::filter::Filter;
 use std::sync::atomic::AtomicBool;
@@ -153,16 +153,7 @@ pub unsafe extern "C" fn decode_recording(
                 .findings
                 .iter()
                 .map(|f| {
-                    let class = if matches!(
-                        f,
-                        Finding::BadChecksum { .. }
-                            | Finding::Short { .. }
-                            | Finding::PartialFinalByte { .. }
-                    ) {
-                        'P'
-                    } else {
-                        'I'
-                    };
+                    let class = if f.is_problem() { 'P' } else { 'I' };
                     let block = f.block().map_or("-".to_string(), |b| b.to_string());
                     format!("{class}\t{block}\t{}", f.text())
                 })

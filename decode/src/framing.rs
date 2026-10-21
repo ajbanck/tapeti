@@ -44,6 +44,17 @@ const LEADER_MOST: f64 = 99.0;
 /// it takes unchecked.
 pub const LEADER_PAIRS: usize = 256;
 
+/// The fewest pairs a leader the ROM gives up on may hold and still be locked on.
+///
+/// The block behind such a leader stands only where it proves itself ([`next_block`]). The
+/// count is a tone of `TONE_RUN` pulses, the run that makes a burst block-shaped. The ROM's 256
+/// pairs, and the second it waits before them, are its guard against reading noise as a block;
+/// a recording that starts inside a pilot, or a dropout that breaks one, leaves fewer pairs in
+/// front of the sync, and the ROM loads nothing there. From above, the shortest pilot any known
+/// loader writes is 65 half-waves. From below, a fragment of a dozen, which no loader loads, is
+/// no tone.
+pub const SHORT_LEADER_PAIRS: usize = TONE_RUN / 2;
+
 /// How fast a block plays against the saver's own timing, from its leader: half the mean pilot
 /// pair over the saver's 2,168 T pilot half, 1.1 for a tape playing 10% slow.
 ///
@@ -129,25 +140,84 @@ pub fn bit_timeout(bit: usize) -> f64 {
     after(c, BIT_MOST)
 }
 
-/// Whether the `TONE_RUN` pulses from `i` are a pilot tone: each within 10% of `pilot_half`, the
-/// half of the block being read.
+/// Whether the `TONE_RUN` pulses from `i` are a pilot tone, by pairs.
+///
+/// Each pulse is one the sync loop takes for more pilot ([`pilot_pulse`]) at the speed
+/// `pilot_half`, the half of the block being read, measures, and pairs with a neighbour in the
+/// run into a pilot pair, two of that half within 10%.
 ///
 /// A block saved with no pause behind it runs straight into the next block's pilot, and the bit
 /// loop reads on through it as 1 bits: a pilot half pairs with anything into more than
 /// [`ONE_ABOVE`] and less than the timeout. The ROM stops only at the length it was asked for,
 /// which a decoder without a header in front does not know; so a block ends at a byte boundary
-/// where such a run starts. No byte of data holds one: a 1 bit's halves are 1,710 T against a
-/// 2,168 T pilot, 21% under it, and a 0 bit's further still. One pulse cannot tell, since a pilot
-/// half is a plausible 1 bit's half; a run of them can. Measured against the block's own pilot,
-/// a tape that runs fast or slow keeps that margin.
+/// where such a run starts. No byte of data holds one: a 1 bit's pair is 3,420 T against a
+/// 4,336 T pilot pair, 21% under it, and a 0 bit's further still, and no half the saver writes
+/// in data is longer than a 1 bit's, so neither is a pair at either phase. One pair cannot tell,
+/// since a pilot half is a plausible 1 bit's half; a run of them can. Measured against the
+/// block's own pilot, a tape that runs fast or slow keeps that margin. The pairs, not the halves,
+/// are the measure, as they are the leader loop's: a recording that moves one kind of edge
+/// against the other moves where each pair splits, and a pilot's halves then alternate 15% or
+/// more either side of their mean while its pairs hold, past 40% behind falls slow by a
+/// millisecond and a half; so a half is held only to the sync loop's window, which takes such
+/// halves for pilot too. Two channels mixed can move the edges one way and then the other, so
+/// that two long halves follow each other, and later two short ones; each of them still pairs
+/// with its other neighbour. A data half pairs with the pilot half behind it 10.6% short, so the
+/// run cannot start a pulse early either.
+///
+/// The halves are read as the bit loop reads them, a bounce's two pulses behind one folded into
+/// it ([`BOUNCE_MOST`]): hiss cuts such pairs into a pilot, and the ROM, waiting after every
+/// edge, never sees them. Counted as pulses, one of them spoils every run of 32 around it, and a
+/// glitch in front of it that a sync pulse fits is then read as a block of 0xFF bytes.
 pub fn pilot_run_at(pulses: &[Pulse], i: usize, pilot_half: f64) -> bool {
-    pulses.get(i..i + TONE_RUN).is_some_and(|run| run.iter().all(|p| pilot_like(p.tstates, pilot_half)))
+    let speed = Speed::of_pilot(pilot_half);
+    let mut halves = Bits::new(pulses, i, pilot_half);
+    let mut run = [0.0; TONE_RUN];
+    for t in &mut run {
+        match halves.half(f64::INFINITY) {
+            Some(h) => *t = h,
+            None => return false,
+        }
+    }
+    let pair = |a: f64, b: f64| (a + b - 2.0 * pilot_half).abs() <= 0.2 * pilot_half;
+    (0..run.len()).all(|k| {
+        pilot_pulse(run[k] / speed.0)
+            && (k > 0 && pair(run[k - 1], run[k]) || k + 1 < run.len() && pair(run[k], run[k + 1]))
+    })
 }
 
-/// Whether a pulse of `t` T-states is shaped like a half-wave of the pilot whose half is
-/// `pilot_half`: within 10% of it, where a 1 bit's half lies 21% under ([`pilot_run_at`]).
-fn pilot_like(t: f64, pilot_half: f64) -> bool {
-    (t - pilot_half).abs() <= 0.1 * pilot_half
+/// Whether a pilot run ([`pilot_run_at`]) starts at any of the half-waves of a byte from pulse
+/// `at` on, or with `through_ones` further on while their pairs read as 1 bits: where bits read
+/// from `at` would be the pilot they were taken in.
+///
+/// A ROM block holds a flag and a checksum at least, so the next block's pilot cannot start
+/// inside its first byte, and a pilot run is no data. Bits that begin there begin at a glitch
+/// inside a pilot, which spoils the half-waves behind it too, so the run is looked for at each
+/// of the byte's. A pilot read as bits reads as 1s, and a glitch can spoil more than a byte;
+/// but so does a block of nothing but 0xFF bytes saved with no pause, behind a sync pair that
+/// says a block is there. So the run is looked for on through the 1s only behind a sync that
+/// was not read but inferred ([`merged`]), whose reading must bear it out; and there, 1s to the
+/// end of the recording are the pilot too, one that the recording ends inside.
+fn pilot_runs_on(pulses: &[Pulse], at: usize, pilot_half: f64, through_ones: bool) -> bool {
+    let speed = Speed::of_pilot(pilot_half);
+    let one = |k: usize| {
+        pulses.get(k..k + 2).is_some_and(|p| {
+            let pair = p[0].tstates + p[1].tstates;
+            pair > speed.of(ONE_ABOVE) && pair <= speed.of(bit_timeout(1))
+        })
+    };
+    let mut k = 0;
+    loop {
+        if through_ones && at + k + TONE_RUN > pulses.len() {
+            return (at..pulses.len().saturating_sub(1)).step_by(2).all(one);
+        }
+        if pilot_run_at(pulses, at + k, pilot_half) {
+            return true;
+        }
+        k += 1;
+        if k >= BYTE_PULSES && (!through_ones || k.is_multiple_of(2) && !one(at + k)) {
+            return false;
+        }
+    }
 }
 
 /// Whether the leader loop takes `pair` T-states as a pilot pair; `first` for the first it checks.
@@ -179,24 +249,33 @@ pub struct RawBlock {
     /// Whether the sync pair had merged into a half-wave beside it, or lay past the ROM's window,
     /// and the bits were read where they are (`merged`).
     pub merged_sync: bool,
+    /// Whether the leader in front held fewer pairs than the ROM's [`LEADER_PAIRS`], and the block
+    /// stands on its own proof ([`SHORT_LEADER_PAIRS`]).
+    pub short_leader: bool,
 }
 
 /// What stopped a lock.
 enum Lost {
     /// The pulse at this index broke it; the ROM starts again from there.
     At(usize),
+    /// A leader pair broke it, the pulse at this index, behind this many pairs that held.
+    Leader(usize, usize),
     /// The pulses ran out.
     End,
 }
 
 /// The next block in `pulses` from `from` on, as the ROM finds and reads it.
 ///
-/// `None` when there is none or `cancel` is set. `expected` is the length the ROM was asked for, flag and checksum
-/// included, when a header said; without it the block ends where a pair times out. Either way it
-/// ends at the next block's pilot ([`pilot_run_at`]).
+/// `None` when there is none or `cancel` is set. `expected` is the length the ROM was asked for,
+/// flag and checksum included, when a header said; without it the block ends where a pair times
+/// out. Either way it ends at the next block's pilot ([`pilot_run_at`]).
 ///
 /// A lock the ROM gives up on, or one that reads no whole byte, is searched past from where it
-/// broke, as the ROM starts again: from the next edge, never from an earlier one.
+/// broke, as the ROM starts again: from the next edge, never from an earlier one. Where a leader
+/// breaks short of the ROM's 256 pairs but past [`SHORT_LEADER_PAIRS`], the sync and the bits
+/// behind it are read all the same, and the block stands where it proves itself beyond any
+/// misreading: a ROM header in every field, or the block a header in front asked for, as long
+/// and its checksum good ([`Proof::Answer`]).
 pub fn next_block(
     pulses: &[Pulse],
     from: usize,
@@ -209,45 +288,70 @@ pub fn next_block(
             return None;
         }
         match lock(pulses, start, expected) {
-            Ok(Locked { first_checked, bits, pilot_half, merged_sync }) => {
-                let Read { mut bytes, mut end, short, gate, stray_zero, remainder, .. } =
-                    read_bytes(pulses, bits, expected, pilot_half);
-                let mut used_bits = 8;
-                // Bits past the last whole byte. Behind bytes that make a whole ROM block, whose
-                // checksum proves where it ends, they are the seam: such as a recording's decay
-                // behind the saver's last edge, whose pulses pair into a bit. Behind any other,
-                // nothing says where the block ended, and they are the best read there is of a
-                // damaged block: kept as a last byte filled with 0s.
-                if let Some((last, n, after)) = remainder.filter(|_| !bytes.is_empty() && !complete(&bytes)) {
-                    bytes.push(last);
-                    end = after;
-                    used_bits = n;
-                }
-                if !bytes.is_empty() {
-                    let tone = tone_start(pulses, from, first_checked);
-                    // Only a length can stop the ROM short of the bits; the bytes run out where
-                    // they do otherwise.
-                    let stopped = gate.is_some_and(|n| bytes.len() >= n);
-                    let bits_end =
-                        if stopped { bits_end(pulses, end, 8 * bytes.len(), pilot_half) } else { end };
-                    return Some(RawBlock {
-                        data: bytes,
-                        tone,
-                        end,
-                        bits_end,
-                        pilot_half,
-                        short,
-                        stray_zero,
-                        used_bits,
-                        merged_sync,
-                    });
+            Ok(locked) => {
+                let bits = locked.bits;
+                if let Some(b) = block_from(pulses, from, locked, expected) {
+                    return Some(b);
                 }
                 start = bits.pulse();
+            }
+            Err(Lost::Leader(i, pairs)) => {
+                if pairs >= SHORT_LEADER_PAIRS {
+                    let found = sync_behind(pulses, start + 2, pairs, expected)
+                        .ok()
+                        .and_then(|locked| block_from(pulses, from, locked, expected));
+                    let proof = |b: &RawBlock| match expected {
+                        Some(n) => proof::answering(&b.data, n),
+                        None => proof::of(&b.data),
+                    };
+                    if let Some(b) = found.filter(|b| proof(b) >= Proof::Answer) {
+                        return Some(RawBlock { short_leader: true, ..b });
+                    }
+                }
+                start = i.max(start + 1);
             }
             Err(Lost::At(i)) => start = i.max(start + 1),
             Err(Lost::End) => return None,
         }
     }
+}
+
+/// The block `locked` reads, the search having begun at `from`; `None` where it reads no byte.
+fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<usize>) -> Option<RawBlock> {
+    let Locked { first_checked, bits, pilot_half, merged_sync } = locked;
+    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, .. } =
+        read_bytes(pulses, bits, expected, pilot_half);
+    let mut used_bits = 8;
+    // Bits past the last whole byte. Behind bytes that make a whole ROM block, whose checksum
+    // proves where it ends, they are the seam: such as a recording's decay behind the saver's
+    // last edge, whose pulses pair into a bit. Behind any other, nothing says where the block
+    // ended, and they are the best read there is of a damaged block: kept as a last byte filled
+    // with 0s.
+    if let Some((last, n, after)) = remainder.filter(|_| !bytes.is_empty() && !complete(&bytes)) {
+        bytes.push(last);
+        end = after;
+        used_bits = n;
+    }
+    if bytes.is_empty() {
+        return None;
+    }
+    let tone = tone_start(pulses, from, first_checked);
+    // Only a length can stop the ROM short of the bits; the bytes run out where they do
+    // otherwise.
+    let stopped = gate.is_some_and(|n| bytes.len() >= n);
+    let bits_end = if stopped { bits_end(pulses, end, 8 * bytes.len(), pilot_half) } else { end };
+    Some(RawBlock {
+        data: bytes,
+        tone,
+        end,
+        bits_end,
+        pilot_half,
+        short,
+        stray_zero,
+        used_bits,
+        merged_sync,
+        short_leader: false,
+    })
 }
 
 /// Where a block's bits begin.
@@ -280,12 +384,14 @@ struct Locked {
 
 /// Where the sync loop stopped.
 enum SyncLoop {
-    /// At the first sync pulse, this one, with a second behind it.
-    Sync(usize),
+    /// At the first sync pulse, from `at`, with a second behind it from `second`, and the bits
+    /// from `bits`.
+    Sync { at: usize, second: usize, bits: usize },
     /// At this pulse, the counter run out.
     Timeout(usize),
-    /// At the first sync pulse, this one, with a second too long behind it.
-    LongSecond(usize),
+    /// At the first sync pulse, from `at`, with a second too long behind it from `second`, and
+    /// what follows that from `bits`.
+    LongSecond { at: usize, second: usize, bits: usize },
 }
 
 /// The leader and the sync from the unchecked pair at `start`, as the ROM finds them, or as a
@@ -293,53 +399,99 @@ enum SyncLoop {
 fn lock(pulses: &[Pulse], start: usize, expected: Option<usize>) -> Result<Locked, Lost> {
     let len = |i: usize| pulses.get(i).map(|p| p.tstates).ok_or(Lost::End);
     let first_checked = start + 2;
-    let mut sum = 0.0;
     for n in 0..LEADER_PAIRS {
         let i = first_checked + 2 * n;
-        let pair = len(i)? + len(i + 1)?;
-        if !leader_pair(pair, n == 0) {
-            return Err(Lost::At(i + 1));
+        if !leader_pair(len(i)? + len(i + 1)?, n == 0) {
+            return Err(Lost::Leader(i + 1, n));
         }
-        sum += pair;
     }
-    let pilot_half = sum / (2 * LEADER_PAIRS) as f64;
-    let stop = sync_loop(pulses, first_checked + 2 * LEADER_PAIRS, Speed::of_pilot(pilot_half))?;
+    sync_behind(pulses, first_checked, LEADER_PAIRS, expected)
+}
+
+/// The sync behind the `pairs` leader pairs from `first_checked`, as the ROM finds it or as a
+/// merged sync left it ([`merged`]), read at the speed the pairs measure.
+fn sync_behind(
+    pulses: &[Pulse],
+    first_checked: usize,
+    pairs: usize,
+    expected: Option<usize>,
+) -> Result<Locked, Lost> {
+    let behind = first_checked + 2 * pairs;
+    let sum: f64 = pulses[first_checked..behind].iter().map(|p| p.tstates).sum();
+    let pilot_half = sum / (2 * pairs) as f64;
+    // A pulse short enough for a first sync pulse with the pilot running on behind it is a glitch
+    // inside the pilot, a click that split a half-wave: no block begins there ([`pilot_runs_on`]),
+    // so the sync loop goes on from the pulse behind it. The ROM takes it for its sync and reads
+    // the pilot as 1 bits; it loads the block only from a leader whose 256 pairs all lie behind
+    // the glitch.
+    let mut from = behind;
+    let stop = loop {
+        match sync_loop(pulses, from, Speed::of_pilot(pilot_half))? {
+            SyncLoop::Sync { second, bits, .. } | SyncLoop::LongSecond { second, bits, .. }
+                if pilot_runs_on(pulses, bits, pilot_half, false) =>
+            {
+                from = second;
+            }
+            stop => break stop,
+        }
+    };
     let (anchor, rom) = match stop {
-        SyncLoop::Sync(i) => (i, Some(i + 2)),
-        SyncLoop::Timeout(i) | SyncLoop::LongSecond(i) => (i, None),
+        SyncLoop::Sync { at, bits, .. } => (at, Some(bits)),
+        SyncLoop::Timeout(at) | SyncLoop::LongSecond { at, .. } => (at, None),
     };
     let locked = |bits, merged_sync| Locked { first_checked, bits, pilot_half, merged_sync };
-    if let Some(bits) = merged::bits_start(pulses, first_checked, anchor, rom, pilot_half, expected) {
+    if let Some(bits) = merged::bits_start(pulses, behind, anchor, rom, pilot_half, expected) {
         return Ok(locked(bits, true));
     }
     match stop {
-        SyncLoop::Sync(i) => Ok(locked(Start::At(i + 2), false)),
+        SyncLoop::Sync { bits, .. } => Ok(locked(Start::At(bits), false)),
         SyncLoop::Timeout(i) => Err(Lost::At(i)),
-        SyncLoop::LongSecond(i) => Err(Lost::At(i + 1)),
+        SyncLoop::LongSecond { second, .. } => Err(Lost::At(second)),
     }
 }
 
-/// The sync loop from pulse `i`, behind the leader, at the tape's `speed`.
+/// The sync loop from pulse `i`, behind the leader, at the tape's `speed`, each pulse as the ROM
+/// measures it ([`rom_pulse`]).
 fn sync_loop(pulses: &[Pulse], mut i: usize, speed: Speed) -> Result<SyncLoop, Lost> {
-    let len = |i: usize| pulses.get(i).map(|p| p.tstates).ok_or(Lost::End);
     let mut c = SYNC_FROM_LEADER_C;
     loop {
-        let t = len(i)?;
+        let (t, second) = rom_pulse(pulses, i).ok_or(Lost::End)?;
         if t <= speed.of(after(c, SYNC_MOST_READS)) {
             // The reads the first sync pulse took, at least one, at the tape's speed.
             let reads = ((t / speed.0 - c) / READ).ceil().max(1.0);
-            let sync2 = len(i + 1)?;
+            let (sync2, bits) = rom_pulse(pulses, second).ok_or(Lost::End)?;
             if sync2 > speed.of(after(SYNC2_C, SYNC2_SHARE - reads)) {
-                return Ok(SyncLoop::LongSecond(i));
+                return Ok(SyncLoop::LongSecond { at: i, second, bits });
             }
-            return Ok(SyncLoop::Sync(i));
+            return Ok(SyncLoop::Sync { at: i, second, bits });
         }
         if t > after(c, SYNC_TIMEOUT_READS) {
             return Ok(SyncLoop::Timeout(i));
         }
         c = SYNC_C;
-        i += 1;
+        i = second;
     }
+}
+
+/// The pulse from `i` as the ROM measures it, and the pulse after it; `None` past the last.
+///
+/// After every edge it finds, the ROM reads no level for a while: 358 T in `LD-DELAY` and its
+/// callers' work, 468 T or more in all, 505 T behind the first sync pulse. Two edges inside that
+/// wait, a comparator's bounce or a click, are none, and the time they take is the pulse's
+/// after them: pairs of pulses lasting together under [`BOUNCE_MOST`], which the bit loop
+/// folds alike ([`Bits::half`]), are added to the pulse behind them. The sync loop judges one
+/// pulse at a time, so it is where this matters most; inside a block a bounce sits behind a
+/// half-wave and is folded into it, which comes to the same pair.
+fn rom_pulse(pulses: &[Pulse], mut i: usize) -> Option<(f64, usize)> {
+    let mut lead = 0.0;
+    while let (Some(a), Some(b), Some(_)) = (pulses.get(i), pulses.get(i + 1), pulses.get(i + 2)) {
+        if lead + a.tstates + b.tstates >= BOUNCE_MOST {
+            break;
+        }
+        lead += a.tstates + b.tstates;
+        i += 2;
+    }
+    pulses.get(i).map(|p| (lead + p.tstates, i + 1))
 }
 
 /// The most two pulses inside a bit may last together and be a bounce rather than data.
@@ -364,6 +516,14 @@ pub const BOUNCE_MOST: f64 = 485.0;
 /// 3,500 T, standing in its place.
 pub const SECOND_HALF_MOST: f64 = 2308.0;
 
+/// The half-wave the saver closes a block with, behind its last bit's (`SA-BYTES`' last edge).
+const CLOSING_HALF: f64 = 945.0;
+
+/// The longest pair a last 0 bit makes with the saver's closing half run into its second half:
+/// 855 + 855 + 945 = 2,655 T, and 11.25% over it, the most hiss as loud as the band reads
+/// through moves a half ([`WIDTH`]). A 1 bit's pair, 3,420 T, lies over it by as much under.
+const CLOSED_ZERO_MOST: f64 = 2954.0;
+
 /// The bits of a block, read a pair of half-waves at a time as the bit loop reads them, with
 /// bounces folded ([`BOUNCE_MOST`]).
 struct Bits<'a> {
@@ -379,10 +539,11 @@ impl<'a> Bits<'a> {
         Bits { pulses, at, pilot_half, speed: Speed::of_pilot(pilot_half) }
     }
 
-    /// The half-wave at the cursor, with the bounces behind it.
+    /// The half-wave at the cursor, with the bounces before it ([`rom_pulse`]), which only a
+    /// block's first half can have, and those behind it.
     fn half(&mut self, timeout: f64) -> Option<f64> {
-        let h = self.pulses.get(self.at)?.tstates;
-        self.at += 1;
+        let (h, next) = rom_pulse(self.pulses, self.at)?;
+        self.at = next;
         let (mut k, mut sum) = (self.at, 0.0);
         while let (Some(a), Some(b)) = (self.pulses.get(k), self.pulses.get(k + 1)) {
             if sum + a.tstates + b.tstates >= BOUNCE_MOST {
@@ -463,6 +624,13 @@ impl<'a> Bits<'a> {
     /// and [`SECOND_HALF_MOST`], with no pilot run starting at it. Proven, the pair decides as
     /// every other bit's does; otherwise the first half decides alone, and the pulse after it is
     /// left to the gap.
+    ///
+    /// A pair can prove its second half and still not be the bit's: the saver closes the block
+    /// with a half-wave of its own ([`CLOSING_HALF`]), and where that lobe fades into the
+    /// silence a last 0's second half runs into it, 1,800 T, a half its pair proves, and pairs over
+    /// the split to a 1, as the ROM reads it. Its halves are no bit's, which the saver writes alike,
+    /// and the pair lies between the split and [`CLOSED_ZERO_MOST`], which no whole bit's does;
+    /// there, with the second half the longer by over half the closing half, the first decides.
     fn final_bit(&mut self, bit: usize) -> Option<bool> {
         let start = self.at;
         let timeout = self.speed.of(bit_timeout(bit));
@@ -476,7 +644,10 @@ impl<'a> Bits<'a> {
         if second.is_some_and(half_wave) && !pilot_run_at(self.pulses, self.at, self.pilot_half) {
             let at = self.at;
             if let Some(pair) = self.half(timeout).map(|h| first + h).filter(|&p| p <= timeout) {
-                return Some(self.one(pair));
+                let closed = self.one(pair)
+                    && pair <= self.speed.of(CLOSED_ZERO_MOST)
+                    && pair - 2.0 * first > self.speed.of(CLOSING_HALF / 2.0);
+                return Some(self.one(if closed { 2.0 * first } else { pair }));
             }
             self.at = at;
         }
@@ -516,7 +687,7 @@ fn complete(data: &[u8]) -> bool {
 const HEADER_LEN: usize = proof::HEADER_LEN;
 
 /// The half-waves of a byte: eight bits of two each.
-const BYTE_PULSES: usize = 16;
+pub(crate) const BYTE_PULSES: usize = 16;
 
 /// Bytes from `start` until the bit loop stops ([`Bits::pair`]) or `expected` bytes are read.
 ///
@@ -543,12 +714,9 @@ fn read_gated(
 ) -> Read {
     let mut bits = Bits::new(pulses, start.pulse(), pilot_half);
     let (mut bytes, mut end) = (Vec::new(), start.pulse());
-    // A ROM block holds a flag and a checksum at least, so the next block's pilot cannot start
-    // inside its first byte, and a pilot run is no data ([`pilot_run_at`]): one starting there
-    // is the pilot the sync was taken in, a glitch inside it read as a sync pair, whose pairs
-    // the bit loop would read as 1 bits. The glitch spoils the half-waves behind it too, so the
-    // run is looked for at each of the byte's.
-    if (0..BYTE_PULSES).any(|k| pilot_run_at(pulses, start.pulse() + k, pilot_half)) {
+    // A pilot running on inside the first byte is the pilot the sync was taken in, whose pairs
+    // the bit loop would read as 1 bits ([`pilot_runs_on`]).
+    if pilot_runs_on(pulses, start.pulse(), pilot_half, false) {
         let short = expected.is_some();
         return Read { bytes, end, short, whole: true, gate: expected, stray_zero: false, remainder: None };
     }
@@ -596,11 +764,15 @@ fn read_gated(
     // checksum of its own: the bytes already add up to zero, so it is a 0x00. The ROM stops at
     // the 19 bytes, and the byte behind them is read here so that its pulses stay in the
     // block that owns them and the pause is measured from the true gap.
+    // Its last bit is the block's last, behind which the saver's closing half-wave lies
+    // ([`Bits::final_bit`]).
     let mut stray_zero = false;
     if gate == Some(HEADER_LEN) && proof::asks(&bytes).is_some() {
         let mut extra = 0u8;
-        let got = (bit..bit + 8)
-            .all(|b| bits.pair(b).map(|p| extra = extra << 1 | u8::from(bits.one(p))).is_some());
+        let got = (bit..bit + 8).all(|b| {
+            let one = if b == bit + 7 { bits.final_bit(b) } else { bits.pair(b).map(|p| bits.one(p)) };
+            one.map(|one| extra = extra << 1 | u8::from(one)).is_some()
+        });
         if got && extra == 0x00 {
             end = bits.at;
             stray_zero = true;
