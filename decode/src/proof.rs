@@ -108,6 +108,18 @@ pub fn answering(data: &[u8], asked: usize) -> Proof {
     }
 }
 
+/// What `proof` comes to for a block whose last byte the decoder filled out with 0s past the bits
+/// it read ([`crate::entry::Finding::PartialFinalByte`]): at most [`Proof::Trivial`].
+///
+/// The checksum proves a bit position by the parity of every byte's bit there, and the bits the
+/// decoder put in were never read: where they complete the checksum, they do so as any other
+/// value of them would fail it. A block cut inside its last byte but one does not hold its
+/// checksum byte at all. Either way the bits stopped before the saver's did, and nothing proves
+/// what was there.
+pub fn filled_out(proof: Proof) -> Proof {
+    proof.min(Proof::Trivial)
+}
+
 /// The bytes of a block of data, if it is one.
 pub fn image(b: &Block) -> Option<&[u8]> {
     match &b.body {

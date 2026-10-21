@@ -252,6 +252,9 @@ pub struct RawBlock {
     /// Whether the leader in front held fewer pairs than the ROM's [`LEADER_PAIRS`], and the block
     /// stands on its own proof ([`SHORT_LEADER_PAIRS`]).
     pub short_leader: bool,
+    /// How many of its bits were read from two half-waves that differ as no saver writes a bit's
+    /// ([`UNLIKE_HALVES`]).
+    pub unlike: usize,
 }
 
 /// What stopped a lock.
@@ -300,9 +303,16 @@ pub fn next_block(
                     let found = sync_behind(pulses, start + 2, pairs, expected)
                         .ok()
                         .and_then(|locked| block_from(pulses, from, locked, expected));
-                    let proof = |b: &RawBlock| match expected {
-                        Some(n) => proof::answering(&b.data, n),
-                        None => proof::of(&b.data),
+                    let proof = |b: &RawBlock| {
+                        let p = match expected {
+                            Some(n) => proof::answering(&b.data, n),
+                            None => proof::of(&b.data),
+                        };
+                        if b.used_bits < 8 {
+                            proof::filled_out(p)
+                        } else {
+                            p
+                        }
                     };
                     if let Some(b) = found.filter(|b| proof(b) >= Proof::Answer) {
                         return Some(RawBlock { short_leader: true, ..b });
@@ -319,7 +329,7 @@ pub fn next_block(
 /// The block `locked` reads, the search having begun at `from`; `None` where it reads no byte.
 fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<usize>) -> Option<RawBlock> {
     let Locked { first_checked, bits, pilot_half, merged_sync } = locked;
-    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, .. } =
+    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, unlike, .. } =
         read_bytes(pulses, bits, expected, pilot_half);
     let mut used_bits = 8;
     // Bits past the last whole byte. Behind bytes that make a whole ROM block, whose checksum
@@ -351,6 +361,7 @@ fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<us
         used_bits,
         merged_sync,
         short_leader: false,
+        unlike,
     })
 }
 
@@ -524,6 +535,31 @@ const CLOSING_HALF: f64 = 945.0;
 /// through moves a half ([`WIDTH`]). A 1 bit's pair, 3,420 T, lies over it by as much under.
 const CLOSED_ZERO_MOST: f64 = 2954.0;
 
+/// The most the two halves of a bit may differ and the bit be one a saver wrote, as long as one
+/// and a half of a 0 bit's halves: 1,282.5 T, at a block's own [`Speed`].
+///
+/// The saver writes both halves of a bit through the same delay loop, alike within a few
+/// T-states (`Bits::last_before_gap`). A lobe the signal loses, a short one treble loss shrank
+/// under the line or one a wander lifted off it, merges three half-waves into one, and the pair
+/// holding the merged half sums to a 1's or more: two bits read as one, the bits behind it a bit
+/// out, and where a length gate or the block's end supplies the bit the read lacks, its checksum
+/// holds one time in 256. The sum, which is all the ROM judges, cannot tell such a pair; its
+/// halves can, since the merge puts a 0 bit's pair, 1,710 T, between them. From below, the
+/// most a genuine bit's halves part: a lobe the edge detector just keeps, its lost time on a
+/// neighbour, with the crest of the hiss on its crossings, or a bit's middle crossing moved by
+/// the wander that lifts a 0 bit's lobe off the line where treble loss leaves it half a 1's
+/// height, 957 T. From above, the 0 bit's pair less the hiss's crest on three crossings, 1,543
+/// T. 1.5 halves lies between. The longer half must also be longer than a 1 bit's: a merged one
+/// is three halves, and a pair the ROM reads as a 0 with one half all but gone, 59 and 1,651 T,
+/// parts as far without one.
+///
+/// Past those walls a genuine bit parts as far: on a recording whose one kind of edge comes late,
+/// a 1 behind a run of 0s has been measured at 1,030 and 2,345 T. So such a pair is read by its
+/// sum as the ROM reads it, never refused, and only counted ([`RawBlock::unlike`]): of two
+/// readings of a block that both check out, the one through fewer such pairs is the tape's
+/// (`crate::fold`).
+pub const UNLIKE_HALVES: f64 = 1.5 * RomTimings::ZERO as f64;
+
 /// The bits of a block, read a pair of half-waves at a time as the bit loop reads them, with
 /// bounces folded ([`BOUNCE_MOST`]).
 struct Bits<'a> {
@@ -532,11 +568,25 @@ struct Bits<'a> {
     at: usize,
     pilot_half: f64,
     speed: Speed,
+    /// The pairs read so far whose halves differ as no saver writes a bit's ([`UNLIKE_HALVES`]).
+    unlike: usize,
 }
 
 impl<'a> Bits<'a> {
     fn new(pulses: &'a [Pulse], at: usize, pilot_half: f64) -> Self {
-        Bits { pulses, at, pilot_half, speed: Speed::of_pilot(pilot_half) }
+        Bits { pulses, at, pilot_half, speed: Speed::of_pilot(pilot_half), unlike: 0 }
+    }
+
+    /// The pair of halves `a` and `b`, counted where they differ as no saver writes a bit's
+    /// ([`UNLIKE_HALVES`]) and the longer one is longer than a 1 bit's: a pair the ROM reads as
+    /// a 0 with one half all but gone, 59 and 1,651 T, parts as far without being a merge.
+    fn cell(&mut self, a: f64, b: f64) -> f64 {
+        if (a - b).abs() > self.speed.of(UNLIKE_HALVES)
+            && a.max(b) > self.speed.of(f64::from(RomTimings::ONE))
+        {
+            self.unlike += 1;
+        }
+        a + b
     }
 
     /// The half-wave at the cursor, with the bounces before it ([`rom_pulse`]), which only a
@@ -575,12 +625,13 @@ impl<'a> Bits<'a> {
         }
         let start = self.at;
         let timeout = self.speed.of(bit_timeout(bit));
-        let pair = self.half(timeout).zip(self.half(timeout)).map(|(a, b)| a + b);
-        if pair.is_none_or(|t| t > timeout) {
-            self.at = start;
-            return None;
+        match self.half(timeout).zip(self.half(timeout)) {
+            Some((a, b)) if a + b <= timeout => Some(self.cell(a, b)),
+            _ => {
+                self.at = start;
+                None
+            }
         }
-        pair
     }
 
     /// Bit `bit` read from its first half alone, where its second is the gap after the block:
@@ -643,7 +694,9 @@ impl<'a> Bits<'a> {
         let half_wave = |t: f64| (self.speed.of(BOUNCE_MOST)..=self.speed.of(SECOND_HALF_MOST)).contains(&t);
         if second.is_some_and(half_wave) && !pilot_run_at(self.pulses, self.at, self.pilot_half) {
             let at = self.at;
-            if let Some(pair) = self.half(timeout).map(|h| first + h).filter(|&p| p <= timeout) {
+            if let Some(pair) =
+                self.half(timeout).filter(|&h| first + h <= timeout).map(|h| self.cell(first, h))
+            {
                 let closed = self.one(pair)
                     && pair <= self.speed.of(CLOSED_ZERO_MOST)
                     && pair - 2.0 * first > self.speed.of(CLOSING_HALF / 2.0);
@@ -676,6 +729,8 @@ struct Read {
     /// The 1 to 7 bits read past the last whole byte: as a byte from its top bit, filled with
     /// 0s, how many bits there are, and the pulse after them.
     remainder: Option<(u8, u8, usize)>,
+    /// The pairs read whose halves differ as no saver writes a bit's ([`UNLIKE_HALVES`]).
+    unlike: usize,
 }
 
 /// Whether `data` is a whole ROM block: a flag and at least a checksum, which holds.
@@ -718,7 +773,16 @@ fn read_gated(
     // the bit loop would read as 1 bits ([`pilot_runs_on`]).
     if pilot_runs_on(pulses, start.pulse(), pilot_half, false) {
         let short = expected.is_some();
-        return Read { bytes, end, short, whole: true, gate: expected, stray_zero: false, remainder: None };
+        return Read {
+            bytes,
+            end,
+            short,
+            whole: true,
+            gate: expected,
+            stray_zero: false,
+            remainder: None,
+            unlike: 0,
+        };
     }
     let mut byte = 0u8;
     let mut bit = 0usize;
@@ -766,7 +830,7 @@ fn read_gated(
     // block that owns them and the pause is measured from the true gap.
     // Its last bit is the block's last, behind which the saver's closing half-wave lies
     // ([`Bits::final_bit`]).
-    let mut stray_zero = false;
+    let (mut stray_zero, mut unlike) = (false, bits.unlike);
     if gate == Some(HEADER_LEN) && proof::asks(&bytes).is_some() {
         let mut extra = 0u8;
         let got = (bit..bit + 8).all(|b| {
@@ -776,13 +840,14 @@ fn read_gated(
         if got && extra == 0x00 {
             end = bits.at;
             stray_zero = true;
+            unlike = bits.unlike;
         }
     }
     // Short of a length a header asked for; a header's own 19 are no request.
     let short = expected.is_some_and(|n| bytes.len() < n) && gate == expected;
     let rest = bit % 8;
     let remainder = (rest > 0).then(|| (byte << (8 - rest), rest as u8, bits.at));
-    Read { bytes, end, short, whole: rest == 0, gate, stray_zero, remainder }
+    Read { bytes, end, short, whole: rest == 0, gate, stray_zero, remainder, unlike }
 }
 
 /// Where the last whole byte ends that the bit loop reads from pulse `end` on, counting on from

@@ -892,7 +892,7 @@ fn bits_past_the_last_whole_byte_are_kept_only_behind_a_block_that_does_not_prov
     *want.last_mut().unwrap() &= 0xF8;
     assert_eq!(datas(&got.blocks)[0], want);
     assert!(
-        got.findings.contains(&Finding::PartialFinalByte { block: 0, used_bits: 5 }),
+        got.findings.contains(&Finding::PartialFinalByte { block: 0, used_bits: 5, completes: false }),
         "{:?}",
         got.findings
     );
@@ -1019,4 +1019,52 @@ fn a_last_bit_read_from_its_first_half_reads_right_to_a_skew_of_400_t() {
     }
     assert!(!read(0, -430));
     assert!(!read(1, 500));
+}
+
+/// A CODE program, its pulse lengths, and where its data block's bits begin: the flag's first
+/// half.
+fn program_bits() -> ([Block; 2], Vec<u64>, usize) {
+    let pair = code_pair(b"unlike    ", 64, 9);
+    let lens = lengths(&of_blocks(&pair).unwrap());
+    let at = sync_of(&lens, 1) + 2;
+    (pair, lens, at)
+}
+
+/// The data block's bit `k`, from the flag's top bit.
+fn bit_of(data: &Block, k: usize) -> bool {
+    match &data.body {
+        Body::Standard { data, .. } => data[k / 8] >> (7 - k % 8) & 1 == 1,
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn a_bit_read_across_a_lost_lobe_is_counted_and_read_by_its_sum() {
+    let (pair, lens, at) = program_bits();
+    let unlike = |got: &Decoded| {
+        got.findings.iter().find_map(|f| match f {
+            Finding::UnlikeHalves { block: 1, bits } => Some(*bits),
+            _ => None,
+        })
+    };
+    // A lobe lost between two 0 bits merges three half-waves into one, 2,565 T: its pair sums to
+    // a 1, the bits behind it are one out, and the pair's halves part by a 0 bit's pair.
+    let k = (8..64 * 8).find(|&k| !bit_of(&pair[1], k) && !bit_of(&pair[1], k + 1)).unwrap();
+    let i = at + 2 * k + 1;
+    let mut lost = lens[..i - 1].to_vec();
+    lost.push(lens[i - 1] + lens[i] + lens[i + 1]);
+    lost.extend(&lens[i + 2..]);
+    let got = decode(&pulses(&lost));
+    assert!(!datas(&got.blocks).contains(&datas(&pair)[1]));
+    assert_eq!(unlike(&got), Some(1), "{:?}", got.findings);
+    // A 1 behind a 0 on a recording whose one kind of edge comes late parts as far, and is read
+    // by its sum, as the ROM reads it: counted, never refused. Just under the bound, uncounted.
+    let k = (8..64 * 8).find(|&k| bit_of(&pair[1], k) && !bit_of(&pair[1], k - 1)).unwrap();
+    for (halves, counted) in [([1030, 2345], Some(1)), ([1085, 2335], None)] {
+        let mut skewed = lens.clone();
+        skewed[at + 2 * k..at + 2 * k + 2].copy_from_slice(&halves);
+        let got = decode(&pulses(&skewed));
+        assert_eq!(datas(&got.blocks), datas(&pair), "{halves:?}");
+        assert_eq!(unlike(&got), counted, "{halves:?}: {:?}", got.findings);
+    }
 }

@@ -411,6 +411,35 @@ fn a_reading_through_the_sync_pair_with_two_bytes_wrong_does_not_outrank_one_thr
     assert_eq!(got.findings[1..], [Finding::BothChannels { block: 1 }]);
 }
 
+#[test]
+fn at_one_rank_a_block_read_through_fewer_unlike_halves_outranks_the_other() {
+    // A reading a bit out from a lost lobe on, whose checksum holds by chance, the same bit
+    // wrong in an even number of bytes, against the tape's: both answer the header, and the
+    // pair whose halves no saver writes tells them apart, whichever was kept.
+    let a = program("A", &(0..112u8).collect::<Vec<u8>>());
+    let out = flipped(&a, 1, &(40..=111).collect::<Vec<usize>>(), 0x10);
+    let through = |blocks: &[Block], bits: usize, more: Option<Finding>| {
+        let mut d = laid(blocks.to_vec(), 0.0);
+        if bits > 0 {
+            d.findings.push(Finding::UnlikeHalves { block: 1, bits });
+        }
+        d.findings.extend(more);
+        d
+    };
+    let got = folded(&through(&out, 1, None), &[(Source::Channel(Channel::Left), &through(&a, 0, None))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromChannel { block: 1, channel: Channel::Left }]);
+    let got = folded(&through(&a, 0, None), &[(Source::Channel(Channel::Left), &through(&out, 1, None))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert!(got.findings.is_empty(), "{:?}", got.findings);
+    // Fewer, not none; and over a reading on the ordinary band.
+    let got = folded(&through(&out, 2, None), &[(Source::Channel(Channel::Left), &through(&a, 1, None))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    let faded = Some(Finding::FadeBand { block: 1 });
+    let got = folded(&through(&out, 1, None), &[(Source::Axis(Axis::Midline), &through(&a, 0, faded))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+}
+
 /// A turbo block at about twice the ROM's speed: signal shaped like a block that the ROM's
 /// windows do not read, which a decode keeps as raw signal.
 fn turbo() -> Block {
@@ -671,4 +700,35 @@ fn a_reading_that_checks_out_against_a_failed_one_parting_twice_is_not_kept_for_
     let twice = laid(flipped(&flipped(&tape, 1, &[300], 0x20), 1, &[1200], 0x04), 0.0);
     assert_eq!(pick_reading(&[Some(&twice), Some(&laid(tape.clone(), 0.0))]), 1);
     assert_eq!(pick_reading(&[None, Some(&damaged)]), 1);
+}
+
+#[test]
+fn a_block_whose_last_byte_was_filled_out_proves_nothing_where_the_0s_complete_its_checksum() {
+    // A reading stops five bits into the checksum byte of a block it read one bit wrong, and the
+    // 0s the decode fills the byte out with make up for that bit: the checksum holds, by bits
+    // that were never read.
+    let a = program("A", &(0..200u8).map(|k| k.wrapping_mul(7).wrapping_add(3)).collect::<Vec<u8>>());
+    let tape = [a.clone(), program("NEXT", &[1, 2, 3])].concat();
+    let Body::Standard { data, .. } = &tape[1].body else { unreachable!() };
+    let unread = data[data.len() - 1] & 0x07;
+    assert_ne!(unread, 0, "the 0s must differ from the bits they stand for");
+    let mut filled = laid(flipped(&tape, 1, &[7], unread), 0.0);
+    if let Body::Standard { data, .. } = &mut filled.blocks[1].body {
+        *data.last_mut().unwrap() &= 0xF8;
+        assert!(data.iter().fold(0, |x, &d| x ^ d) == 0, "the checksum holds by the 0s");
+    }
+    filled.findings = vec![Finding::PartialFinalByte { block: 1, used_bits: 5, completes: true }];
+    let failed = laid(flipped(&tape, 1, &[50], 0x01), 0.0);
+
+    // Not put over a reading that fails there.
+    let got = folded(&failed, &[(Source::Axis(Axis::Midline), &filled)]);
+    assert_eq!(got.blocks, failed.blocks);
+    // Not kept for it: the two weigh alike, and the first stands.
+    assert_eq!(pick_reading(&[Some(&failed), Some(&filled)]), 0);
+    // Read again byte by byte where it was kept, its filled-out byte no vote.
+    let wrong_at = |at: &[usize]| laid(flipped(&tape, 1, at, 0x10), 0.0);
+    let mut base = filled.clone();
+    vote(&mut base, &[&filled, &wrong_at(&[60]), &wrong_at(&[90]), &wrong_at(&[120])]);
+    assert_eq!(datas(&base.blocks), datas(&tape));
+    assert_eq!(base.findings, [Finding::Voted { block: 1, readings: 4 }]);
 }

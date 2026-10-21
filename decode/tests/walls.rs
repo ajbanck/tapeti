@@ -114,6 +114,8 @@ enum Said {
     /// Pulses played as a pause, or left out with the lead-in, that hold a block that did not
     /// read: a pilot with signal behind it, or the rest of a block that stopped short.
     Lost,
+    /// A last byte filled out with 0s past the bits read, which make its checksum hold.
+    FilledOut,
 }
 
 /// A decode against the tape.
@@ -169,6 +171,7 @@ fn outcome(got: &Decoded, want: &[Block], speed: (f64, f64)) -> Outcome {
             Finding::Collapsed { pilot: false, .. } => Some(Said::Collapsed),
             Finding::Collapsed { pilot: true, .. } => Some(Said::CollapsedPilot),
             Finding::Lost { .. } => Some(Said::Lost),
+            Finding::PartialFinalByte { completes: true, .. } => Some(Said::FilledOut),
             _ => None,
         })
         .collect();
@@ -817,7 +820,7 @@ fn dull_wandering(microns: f64, wander: f32) -> Judged {
 /// a wander up to 0.9, nearly twice the level, where the zero line, on which the short lobes no
 /// longer cross, has read no block since 0.4. At 1.0 the midline's data block stops five bits
 /// into its last byte but one, short, and the 0s that fill that byte out complete its checksum,
-/// which the decode says it cannot vouch for. The treble wall is this tape's, which has little
+/// which the decode says proves nothing. The treble wall is this tape's, which has little
 /// dead air (`dead_air_takes_the_noise_line_out_of_the_signal`). A worn deck's low end carries
 /// 10% of the level under 300 Hz on a tape that reads, 23% on one that does not.
 const WANDER: f32 = 0.025;
@@ -826,7 +829,7 @@ const WANDER_WHOLE: f32 = 0.9;
 const WANDER_LOSS: f32 = 1.0;
 
 fn wander_lost() -> Judged {
-    (Outcome::Lost(vec![1], vec![Said::Short, Said::Collapsed]), Vec::new())
+    (Outcome::Lost(vec![1], vec![Said::Short, Said::Collapsed, Said::FilledOut]), Vec::new())
 }
 
 fn nothing_left() -> Judged {
@@ -917,7 +920,13 @@ fn dead_air_takes_the_noise_line_out_of_the_signal() {
     assert_eq!(in_dead_air(10.0, wandering(WANDER_WHOLE)), (Outcome::Pause, Vec::new()));
     assert_eq!(
         in_dead_air(10.0, wandering(WANDER_LOSS)),
-        (Outcome::Lost(vec![1], vec![Said::Short, Said::RawSignal, Said::Collapsed, Said::Lost]), Vec::new())
+        (
+            Outcome::Lost(
+                vec![1],
+                vec![Said::Short, Said::RawSignal, Said::Collapsed, Said::Lost, Said::FilledOut]
+            ),
+            Vec::new()
+        )
     );
 }
 

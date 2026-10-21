@@ -142,20 +142,36 @@ pub fn pick_reading(readings: &[Option<&Decoded>]) -> usize {
 
 /// The blocks of `d`, each block that checks out weighed as a failed reading of it in one of
 /// `others` that the checksum cannot tell it from ([`pick_reading`]).
+///
+/// A block whose last byte the decode filled out proves nothing ([`proof::filled_out`]): it is
+/// weighed with the bits it did not read set, under which the checksum the 0s complete fails.
 fn witnessed<'a, 'b>(
     d: &'a Decoded,
     others: impl Iterator<Item = &'b Decoded> + Clone,
 ) -> std::borrow::Cow<'a, [Block]> {
     let mut out = std::borrow::Cow::Borrowed(&d.blocks[..]);
     for i in 0..d.blocks.len() {
-        let Some(whole) = image(&d.blocks[i]).filter(|w| proof::of(w) >= Proof::Checksum) else { continue };
+        let Some(data) = image(&d.blocks[i]) else { continue };
+        let read = d.findings.iter().find_map(|f| match f {
+            Finding::PartialFinalByte { block, used_bits, .. } if *block == i => Some(*used_bits),
+            _ => None,
+        });
+        if let Some(read) = read {
+            if let Body::Standard { data, .. } = &mut out.to_mut()[i].body {
+                *data.last_mut().expect("a byte to fill out") |= 0xFF >> read;
+            }
+            continue;
+        }
+        if proof::of(data) < Proof::Checksum {
+            continue;
+        }
         let span = d.extents[i];
         let against = others.clone().find_map(|r| {
             (0..r.blocks.len()).find_map(|k| {
                 image(&r.blocks[k]).filter(|failed| {
-                    proof::of(failed) < Proof::Checksum
+                    r.proof_of(k, proof::of(failed)) < Proof::Checksum
                         && overlap(&r.extents[k], &span)
-                        && !told_apart(failed, whole)
+                        && !told_apart(failed, data)
                 })
             })
         });
@@ -181,18 +197,19 @@ pub enum Source {
 ///
 /// Silence, then signal that proves nothing (raw signal, a checksum that fails, a block
 /// [`Proof::Trivial`]), then a block by its [`Proof`] from [`Proof::Checksum`] up. At one rank,
-/// how the bytes were read decides, in this order: through the ROM's own sync pair over a form
-/// of it ([`Finding::MergedSync`]) where the two differ in most of their bytes, as a reading out
-/// of step does; on the ordinary band over the fade band, a last resort ([`Finding::FadeBand`]);
-/// and by more readings alike. A checksum is blind to one bit wrong in two bytes, which a
-/// reading through a merged sync or half a bit out leaves readily, so two readings that both
-/// check out are told apart by these and never by which came first; where they tie on all of
-/// them, the reading kept stands.
+/// ties go, in order: to the ROM's own sync pair over a form of it where the two readings differ
+/// in most of their bytes ([`Finding::MergedSync`]); to fewer bits read through halves no saver
+/// writes ([`Finding::UnlikeHalves`]), each where a lobe was lost and the bits behind it may be
+/// one out; to the ordinary band over the
+/// fade band ([`Finding::FadeBand`]); then to more readings alike. A checksum is blind to one
+/// bit wrong in two bytes and holds by chance over a reading a bit out one time in 256, so two
+/// readings that both check out are told apart only by these; where they tie on all of them, the
+/// reading kept stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Standing {
     Silence,
     Unproven,
-    Proven { proof: Proof, rom_sync: bool, ordinary: bool, alike: usize },
+    Proven { proof: Proof, rom_sync: bool, unlike: std::cmp::Reverse<usize>, ordinary: bool, alike: usize },
 }
 
 /// How far apart, in samples, two readings of one boundary may lie: where one decode ends a block
@@ -235,7 +252,8 @@ const POSITION_TOL: f64 = 1000.0;
 ///
 /// Nothing a donor failed to read enters. The block before a block put in plays its pause up
 /// to where that block starts, and what a donor said of the block (its sync, its band, its
-/// leader, a stray zero, a partial last byte, that it is raw signal) comes with it. Donors are
+/// leader, a stray zero, a partial last byte, unlike halves, that it is raw signal) comes with
+/// it. Donors are
 /// asked in order, each block by block against `base` as folded so far; each block placed is
 /// reported ([`Finding::FromChannel`], [`Finding::FromAxis`], or [`Finding::BothChannels`] where
 /// readings alike decided).
@@ -278,7 +296,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         Some(d) => {
             let front = base.blocks[..run.start].iter().rev().find_map(image);
             let behind = base.blocks[run.end..].iter().find_map(image);
-            let proof = proof::between(front, d, behind);
+            let proof = donor.proof_of(j, proof::between(front, d, behind));
             if proof < Proof::Checksum {
                 return;
             }
@@ -287,7 +305,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     };
     let mut here = run
         .clone()
-        .map(|i| (i, proof::at(&base.blocks, i)))
+        .map(|i| (i, base.proof_of(i, proof::at(&base.blocks, i))))
         .filter(|&(_, proof)| proof >= Proof::Checksum)
         .map(|(i, proof)| standing_of(base, i, proof, readings))
         .max()
@@ -315,9 +333,9 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     }
     let (tie, by_votes) = match (here, there) {
         (
-            Standing::Proven { proof: a, rom_sync: s, ordinary: o, .. },
-            Standing::Proven { proof: b, rom_sync: t, ordinary: p, .. },
-        ) if a == b => (true, s == t && o == p),
+            Standing::Proven { proof: a, rom_sync: s, unlike: u, ordinary: o, .. },
+            Standing::Proven { proof: b, rom_sync: t, unlike: v, ordinary: p, .. },
+        ) if a == b => (true, s == t && u == v && o == p),
         _ => (false, false),
     };
     let enters = there > here
@@ -330,9 +348,12 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
             }
             Standing::Proven { proof, .. } => {
                 proof >= Proof::Verified
-                    && run.clone().next().and_then(|i| image(&base.blocks[i])).is_none_or(|failed| {
-                        proof::of(failed) >= Proof::Checksum || data.is_some_and(|d| told_apart(failed, d))
-                    })
+                    && run.clone().next().and_then(|i| image(&base.blocks[i]).map(|b| (i, b))).is_none_or(
+                        |(i, failed)| {
+                            base.proof_of(i, proof::of(failed)) >= Proof::Checksum
+                                || data.is_some_and(|d| told_apart(failed, d))
+                        },
+                    )
             }
             Standing::Silence => false,
         };
@@ -389,6 +410,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
                 | Finding::RunOn { .. }
                 | Finding::StrayZero { .. }
                 | Finding::PartialFinalByte { .. }
+                | Finding::UnlikeHalves { .. }
         );
         if said && f.block() == Some(j) {
             let mut f = f.clone();
@@ -403,33 +425,31 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     });
 }
 
-/// Reads again, byte by byte, each block of `base` that fails the checksum of the header in front.
+/// Reads again, byte by byte, each block of `base` that the header in front asks for and that
+/// proves nothing.
 ///
-/// A block as long as the header asks is read from the blocks of `readings` at its place
-/// (`by_majority`), where the result answers the header ([`Proof::Answer`]):
-/// [`Finding::Voted`].
-///
-/// A recording read on two lines in three channels has six readings, and a block none of them
-/// reads whole can still be in them: each reading goes wrong at its own bytes, where a dropout,
-/// a click or the hiss strikes the one track or the one line, and slips out of step at its own
-/// place. Both tracks carry the tape's own defects, and two readings can share a wrong byte, so
-/// a byte is taken only from a majority of the readings in step there, three of them at least,
-/// and the whole only where the checksum then holds. The readings are those the decode was kept
-/// and folded from; `base` is not one of them.
+/// Such a block's checksum fails, holds over what a misread leaves, or holds only by the last
+/// byte the decode filled out (which then has no vote).
+/// A byte is taken from a majority of `readings` in step there, three at least
+/// (`by_majority`), since two readings can share a wrong byte where both tracks carry the
+/// tape's own defects; the block is replaced only where the result answers the header
+/// ([`Proof::Answer`], [`Finding::Voted`]). `readings` are those the decode was kept and folded
+/// from, not `base`.
 pub fn vote(base: &mut Decoded, readings: &[&Decoded]) {
     for i in 0..base.blocks.len() {
         let Some(data) = image(&base.blocks[i]) else { continue };
         let Some(asked) = base.blocks[..i].iter().rev().find_map(image).and_then(asks) else { continue };
-        if data.len() != asked || proof::of(data) != Proof::None {
+        if data.len() != asked || base.proof_of(i, proof::of(data)) >= Proof::Checksum {
             continue;
         }
         let span = base.extents[i];
         let at: Vec<&[u8]> = readings
             .iter()
             .filter_map(|r| {
-                (0..r.blocks.len())
-                    .filter(|&k| overlap(&r.extents[k], &span))
-                    .find_map(|k| image(&r.blocks[k]))
+                (0..r.blocks.len()).filter(|&k| overlap(&r.extents[k], &span)).find_map(|k| {
+                    let d = image(&r.blocks[k])?;
+                    Some(if r.filled_out(k) { &d[..d.len() - 1] } else { d })
+                })
             })
             .collect();
         let Some(voted) = by_majority(&at, asked).filter(|v| proof::answering(v, asked) >= Proof::Answer)
@@ -525,6 +545,15 @@ fn standing_of(d: &Decoded, i: usize, proof: Proof, readings: &[&Decoded]) -> St
     Standing::Proven {
         proof,
         rom_sync: !d.findings.contains(&Finding::MergedSync { block: i }),
+        unlike: std::cmp::Reverse(
+            d.findings
+                .iter()
+                .find_map(|f| match f {
+                    Finding::UnlikeHalves { block, bits } if *block == i => Some(*bits),
+                    _ => None,
+                })
+                .unwrap_or(0),
+        ),
         ordinary: !d.findings.contains(&Finding::FadeBand { block: i }),
         alike: readings
             .iter()

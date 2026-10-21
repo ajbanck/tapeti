@@ -259,7 +259,8 @@ pub enum Loss {
     /// A pilot tone the ROM locks on, and signal behind it (`fallback::burst_behind`).
     Pilot,
     /// The rest of the block in front, whose bits stopped short of its end: shorter than its
-    /// header asked for, or with no header and its checksum wrong, and signal behind it.
+    /// header asked for, inside a byte, or with no header and its checksum wrong, and signal
+    /// behind it.
     Rest,
 }
 
@@ -286,8 +287,11 @@ pub enum Finding {
     Channel { kept: Channel },
     /// The block's last byte holds only `used_bits` bits read from the tape, from its top bit;
     /// the rest are 0s, since a standard block cannot say how many bits its last byte holds.
-    PartialFinalByte { block: usize, used_bits: u8 },
-    /// A 0x00 byte read behind the header, a tape copier's, was left out ([`crate::framing::RawBlock::stray_zero`]).
+    /// `completes` where the 0s make the checksum hold, which then proves nothing
+    /// ([`proof::filled_out`]).
+    PartialFinalByte { block: usize, used_bits: u8, completes: bool },
+    /// A 0x00 byte read behind the header, a tape copier's, was left out
+    /// ([`crate::framing::RawBlock::stray_zero`]).
     StrayZero { block: usize },
     /// Of the decodes on the zero line and on the signal's own midline, the midline's delivers
     /// most ([`edges::Axis`]).
@@ -316,6 +320,12 @@ pub enum Finding {
     /// None of the readings read the block whole, and it was read byte by byte as most of them
     /// read each byte, of `readings` that hold it ([`crate::fold::vote`]).
     Voted { block: usize, readings: usize },
+    /// `bits` of the block were read from two half-waves that differ as no saver writes a bit's:
+    /// where the signal lost a lobe and three half-waves merged into one, or where one kind of
+    /// edge runs late; read by their sum, as the ROM reads them
+    /// ([`crate::framing::UNLIKE_HALVES`]). A reading of the block through fewer stands above it
+    /// ([`crate::fold::fold`]).
+    UnlikeHalves { block: usize, bits: usize },
 }
 
 impl Finding {
@@ -341,6 +351,7 @@ impl Finding {
             | Finding::ShortLeader { block }
             | Finding::RunOn { block }
             | Finding::Voted { block, .. }
+            | Finding::UnlikeHalves { block, .. }
             | Finding::Lost { block: Some(block), .. } => Some(block),
             Finding::Lost { block: None, .. }
             | Finding::LeadIn { .. }
@@ -369,7 +380,8 @@ impl Finding {
             | Finding::RunOn { .. }
             | Finding::StrayZero { .. }
             | Finding::MergedSync { .. }
-            | Finding::Voted { .. } => false,
+            | Finding::Voted { .. }
+            | Finding::UnlikeHalves { .. } => false,
         }
     }
 
@@ -433,9 +445,10 @@ impl Finding {
             Finding::Midline => {
                 "Read about the signal's own centre line, which wanders off zero: it reads more.".into()
             }
-            Finding::PartialFinalByte { used_bits, .. } => format!(
-                "The last byte holds only {used_bits} bit{} read from the tape; the rest are 0.",
-                if used_bits == 1 { "" } else { "s" }
+            Finding::PartialFinalByte { used_bits, completes, .. } => format!(
+                "The last byte holds only {used_bits} bit{} read from the tape; the rest are 0{}",
+                if used_bits == 1 { "" } else { "s" },
+                if completes { ", and they make the checksum hold: it proves nothing here." } else { "." }
             ),
             Finding::StrayZero { .. } => {
                 "A stray 0x00 byte behind the header, which a tape copier leaves, is left out.".into()
@@ -451,6 +464,10 @@ impl Finding {
             }
             Finding::Voted { readings, .. } => format!(
                 "None of the {readings} readings of the channels and centre lines reads it whole; each byte is the one most of them read where they are in step, and the checksum holds."
+            ),
+            Finding::UnlikeHalves { bits, .. } => format!(
+                "{bits} of its bits {} read from two half-waves that differ as no saver writes them: the signal lost a lobe there, or one kind of edge runs late. Read as a Spectrum reads them.",
+                if bits == 1 { "is" } else { "are" }
             ),
             Finding::ShortLeader { .. } => {
                 "The pilot tone in front is too short for a Spectrum to load the block, cut or broken by a dropout; it was read from what is left, a header its fields prove or the block a header asked for.".into()
@@ -472,6 +489,24 @@ pub struct Decoded {
     /// and went into one or the lead-in all the same ([`Finding::Collapsed`]). A decode of part
     /// of a recording that begins or ends inside a neighbour cuts that neighbour there.
     pub collapsed_ends: [usize; 2],
+}
+
+impl Decoded {
+    /// Whether the decode filled block `i`'s last byte out with 0s past the bits it read
+    /// ([`Finding::PartialFinalByte`]).
+    pub fn filled_out(&self, i: usize) -> bool {
+        self.findings.iter().any(|f| matches!(f, Finding::PartialFinalByte { block, .. } if *block == i))
+    }
+
+    /// What block `i` proves, given `proof` from its bytes: no more than [`proof::filled_out`]
+    /// allows where its last byte was filled out.
+    pub fn proof_of(&self, i: usize, proof: Proof) -> Proof {
+        if self.filled_out(i) {
+            proof::filled_out(proof)
+        } else {
+            proof
+        }
+    }
 }
 
 /// How far a decode has come.
@@ -732,6 +767,7 @@ fn decode_sound(
                         f,
                         Finding::BadChecksum { .. }
                             | Finding::Short { .. }
+                            | Finding::PartialFinalByte { .. }
                             | Finding::RawSignal { .. }
                             | Finding::Collapsed { .. }
                             | Finding::Lost { .. }
@@ -795,7 +831,7 @@ fn read_faded(
         let (from, to) = (start_at(b.tone), start_at(b.bits_end));
         let zeros_behind =
             b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
-        let answers_it = proof::answering(&b.data, want) == Proof::Answer;
+        let answers_it = b.used_bits == 8 && proof::answering(&b.data, want) == Proof::Answer;
         if answers_it && !zeros_behind && from < extent.end && answers.last().is_none_or(|a| a.2 <= from) {
             answers.push((b.data, from, to));
         }
@@ -848,7 +884,7 @@ fn unanswered(d: &Decoded) -> Vec<(usize, usize)> {
         let Some(want) = image(b).and_then(proof::asks) else { continue };
         let Some(leg) = (i + 1..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some()) else { continue };
         let data = image(&d.blocks[leg]).expect("found by its bytes");
-        if proof::answering(data, want) != Proof::Answer {
+        if d.proof_of(leg, proof::answering(data, want)) != Proof::Answer {
             owed.push((leg, want));
         }
     }
@@ -941,7 +977,8 @@ fn decode_pulses_from(
         let index = out.blocks.len();
         let data = b.data;
         if b.used_bits < 8 {
-            out.findings.push(Finding::PartialFinalByte { block: index, used_bits: b.used_bits });
+            let completes = proof::xor_ok(&data);
+            out.findings.push(Finding::PartialFinalByte { block: index, used_bits: b.used_bits, completes });
         }
         if b.stray_zero {
             out.findings.push(Finding::StrayZero { block: index });
@@ -956,13 +993,16 @@ fn decode_pulses_from(
         if b.short_leader {
             out.findings.push(Finding::ShortLeader { block: index });
         }
+        if b.unlike > 0 {
+            out.findings.push(Finding::UnlikeHalves { block: index, bits: b.unlike });
+        }
         if b.short {
             let expected = expected.unwrap_or(0);
             out.findings.push(Finding::Short { block: index, expected, read: data.len() });
         }
         // Without a header to say how long it is, a block ends where its bits stop, and a wrong
-        // checksum says they stopped before the saver's did.
-        cut = b.short || expected.is_none() && bad;
+        // checksum says they stopped before the saver's did; so do bits that stop inside a byte.
+        cut = b.short || b.used_bits < 8 || expected.is_none() && bad;
         expected = proof::asks(&data);
         out.blocks.push(Block::new(Body::Standard { pause: 0, data }));
         out.extents.push(Extent { start: at(b.tone), end: at(b.end), signal_end: at(b.end) });
