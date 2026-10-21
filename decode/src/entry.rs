@@ -793,18 +793,19 @@ fn decode_sound(
     Ok((kept, readings))
 }
 
-/// `read`, the decode of the `ordinary` pulses, with each block behind a proven header that does
-/// not answer it read again from the fade band's pulses ([`edges::Band::Fade`]), which `faded`
+/// `read`, the decode of the `ordinary` pulses, with each block owed bytes it does not hold
+/// (`unanswered`) read again from the fade band's pulses ([`edges::Band::Fade`]), which `faded`
 /// cuts when one is owed.
 ///
-/// A dropout narrower than the ordinary band's window leaves no edge across it, and the block
-/// ends there: the bytes are not in those pulses at all. Read again from the fade band at the
-/// length its header asks for, a block stands only as an answer, that long with its checksum
-/// good, and not as the ordinary read with 0x00 bytes behind it: a 0x00 keeps the checksum,
-/// and a band that arms lower can read a byte of nothing past a block's end. Each answer's
-/// stretch, from its pilot to where its bits stop, then takes the fade band's pulses in place
-/// of the ordinary ones, and the whole is decoded again, so that its pauses and the blocks
-/// around it are read as ever ([`Finding::FadeBand`]).
+/// A dropout narrower than the ordinary band's window leaves no edge across it, so the block ends
+/// there and the bytes are not in those pulses at all; read again from the fade band at the length
+/// its header asks for, a block stands only where its checksum is good there, never as the
+/// ordinary read filled out with 0x00 bytes (which also keeps the checksum) or with a byte a
+/// lower-arming band reads past the block's end. Each answer's stretch, from its pilot to where
+/// its bits stop, takes the fade band's pulses in place of the ordinary ones and the whole is
+/// decoded again, so the pauses and blocks around it are read as ever ([`Finding::FadeBand`]);
+/// what is still owed is asked again of that decode, and the passes end once none answers
+/// something new, since each answer takes a stretch no other has taken.
 fn read_faded(
     read: Decoded,
     ordinary: &[Pulse],
@@ -812,82 +813,183 @@ fn read_faded(
     grid_hz: u32,
     cancel: &AtomicBool,
 ) -> Result<Decoded, DecodeError> {
-    let owed = unanswered(&read);
-    if owed.is_empty() {
-        return Ok(read);
-    }
-    let faded = faded()?;
     let to_t = f64::from(TSTATES_PER_SEC) / f64::from(grid_hz);
     let end_of = |p: &Pulse| p.start + p.tstates / to_t;
-    let start_at = |i: usize| faded.get(i).map_or_else(|| faded.last().map_or(0.0, end_of), |p| p.start);
-    // Each answer: its bytes and the stretch it takes.
+    let (mut faded, mut band) = (Some(faded), Vec::new());
+    // Each answer: its bytes and the stretch it takes, in order.
     let mut answers: Vec<(Vec<u8>, f64, f64)> = Vec::new();
-    for (leg, want) in owed {
-        let (Body::Standard { data: had, .. }, extent) = (&read.blocks[leg].body, read.extents[leg]) else {
-            continue;
-        };
-        let Some(at) = faded.iter().position(|p| p.start >= extent.start) else { continue };
-        let Some(b) = next_block(&faded, at, Some(want), cancel) else { continue };
-        let (from, to) = (start_at(b.tone), start_at(b.bits_end));
-        let zeros_behind =
-            b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
-        let answers_it = b.used_bits == 8 && proof::answering(&b.data, want) == Proof::Answer;
-        if answers_it && !zeros_behind && from < extent.end && answers.last().is_none_or(|a| a.2 <= from) {
-            answers.push((b.data, from, to));
+    // The owed already looked for, by where and how much.
+    let mut asked: Vec<(u64, usize)> = Vec::new();
+    let (mut kept, mut merged_now): (Decoded, Option<Vec<Pulse>>) = (read, None);
+    loop {
+        let heard = merged_now.as_deref().unwrap_or(ordinary);
+        let owed: Vec<Owed> = unanswered(&kept, heard)
+            .into_iter()
+            .filter(|o| !asked.contains(&(o.from.to_bits(), o.want)))
+            .collect();
+        if owed.is_empty() {
+            return Ok(kept);
         }
-    }
-    if cancel.load(Ordering::Relaxed) {
-        return Err(DecodeError::Cancelled);
-    }
-    if answers.is_empty() {
-        return Ok(read);
-    }
-    // The ordinary pulses up to each stretch, the fade band's inside it, the pulse that runs
-    // across either end cut there.
-    let mut merged = Vec::with_capacity(ordinary.len());
-    let mut rest = ordinary;
-    for (_, from, to) in &answers {
-        let before = rest.partition_point(|p| p.start < *from);
-        merged.extend_from_slice(&rest[..before]);
-        if let Some(last) = merged.last_mut().filter(|p| end_of(p) > *from) {
-            last.tstates = (from - last.start) * to_t;
+        if let Some(cut) = faded.take() {
+            band = cut()?;
         }
-        merged.extend(faded.iter().filter(|p| p.start >= *from && p.start < *to));
-        rest = &rest[before..];
-        let after = rest.partition_point(|p| p.start < *to);
-        if let Some(across) = after.checked_sub(1).map(|k| rest[k]).filter(|p| end_of(p) > *to) {
-            merged.push(Pulse { tstates: (end_of(&across) - to) * to_t, start: *to, quiet: across.quiet });
+        let start_at = |i: usize| band.get(i).map_or_else(|| band.last().map_or(0.0, end_of), |p| p.start);
+        let mut found = Vec::new();
+        for Owed { had, from: look, until, want, behind } in owed {
+            asked.push((look.to_bits(), want));
+            let Some(at) = band.iter().position(|p| p.start >= look) else { continue };
+            let Some(b) = next_block(&band, at, Some(want), cancel) else { continue };
+            let (from, to) = (start_at(b.tone), start_at(b.bits_end));
+            let zeros_behind =
+                b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
+            let answers_it = b.used_bits == 8
+                && match behind {
+                    Some(_) => proof::between(None, &b.data, behind) >= Proof::Answer && to <= until,
+                    None => proof::answering(&b.data, want) == Proof::Answer,
+                };
+            let free = |a: &(Vec<u8>, f64, f64)| a.2 <= from || to <= a.1;
+            if answers_it && !zeros_behind && from < until && answers.iter().chain(&found).all(free) {
+                found.push((b.data, from, to));
+            }
         }
-        rest = &rest[after..];
+        if cancel.load(Ordering::Relaxed) {
+            return Err(DecodeError::Cancelled);
+        }
+        if found.is_empty() {
+            return Ok(kept);
+        }
+        let mut all = answers.clone();
+        all.extend(found);
+        all.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // The ordinary pulses up to each stretch, the fade band's inside it, the pulse that runs
+        // across either end cut there.
+        let mut merged = Vec::with_capacity(ordinary.len());
+        let mut rest = ordinary;
+        for (_, from, to) in &all {
+            let before = rest.partition_point(|p| p.start < *from);
+            merged.extend_from_slice(&rest[..before]);
+            if let Some(last) = merged.last_mut().filter(|p| end_of(p) > *from) {
+                last.tstates = (from - last.start) * to_t;
+            }
+            merged.extend(band.iter().filter(|p| p.start >= *from && p.start < *to));
+            rest = &rest[before..];
+            let after = rest.partition_point(|p| p.start < *to);
+            if let Some(across) = after.checked_sub(1).map(|k| rest[k]).filter(|p| end_of(p) > *to) {
+                merged.push(Pulse {
+                    tstates: (end_of(&across) - to) * to_t,
+                    start: *to,
+                    quiet: across.quiet,
+                });
+            }
+            rest = &rest[after..];
+        }
+        merged.extend_from_slice(rest);
+        let mut again = decode_pulses_from(&merged, grid_hz, &mut |_| {}, cancel, (0.0, 1.0))?;
+        merged_now = Some(merged);
+        for (data, from, to) in &all {
+            let found = (0..again.blocks.len()).find(|&i| {
+                matches!(&again.blocks[i].body, Body::Standard { data: d, .. } if d == data)
+                    && again.extents[i].start < *to
+                    && *from < again.extents[i].end
+            });
+            // Read again from the same pulses, the answer is there; where it is not, nothing
+            // stands.
+            let Some(block) = found else { return Ok(kept) };
+            again.findings.push(Finding::FadeBand { block });
+        }
+        answers = all;
+        kept = again;
     }
-    merged.extend_from_slice(rest);
-    let mut again = decode_pulses_from(&merged, grid_hz, &mut |_| {}, cancel, (0.0, 1.0))?;
-    for (data, from, to) in answers {
-        let found = (0..again.blocks.len()).find(|&i| {
-            matches!(&again.blocks[i].body, Body::Standard { data: d, .. } if *d == data)
-                && again.extents[i].start < to
-                && from < again.extents[i].end
-        });
-        // Read again from the same pulses, the answer is there; where it is not, nothing stands.
-        let Some(block) = found else { return Ok(read) };
-        again.findings.push(Finding::FadeBand { block });
-    }
-    Ok(again)
 }
 
-/// The blocks that follow a ROM header without answering it ([`proof::answering`]), with the
-/// length it asks for: the next block of bytes behind the header, whatever lies between.
-fn unanswered(d: &Decoded) -> Vec<(usize, usize)> {
+/// A block a decode owes: the bytes read in its place, where to look for it from, before where its
+/// pilot must start, and the length owed; and for a header owed in front of a block, that block,
+/// which must answer it.
+struct Owed<'a> {
+    had: &'a [u8],
+    from: f64,
+    until: f64,
+    want: usize,
+    behind: Option<&'a [u8]>,
+}
+
+/// The blocks owed bytes they do not hold, in order.
+///
+/// Behind a ROM header, the block it asks for: from where the header's signal ends to the end of
+/// the next block of bytes, which does not answer it ([`proof::answering`]) whatever lies
+/// between, or to the end of the recording where no block of bytes follows: a block whose
+/// pilot or sync a dropout took was read as nothing. And each block under the header's flag
+/// `0x00` that is no header its fields prove, owed a header's 19 bytes, which the ROM asks for
+/// by that flag.
+///
+/// And a header in front of a block under the data flag `0xFF` that no header asks for, where a
+/// block did not read in front of it: the pause before it holds a ROM pilot with bits behind
+/// ([`Finding::Lost`]), or `pulses`, the ones `d` was read from, show the raw signal before it
+/// does. The ROM loads such a block behind its header, and a dropout at the header's sync or flag
+/// leaves the ordinary band no block there to owe anything. Nothing says how long the lost block
+/// was, so only a header the block behind it answers is taken ([`proof::between`]), which a
+/// chance checksum is not.
+fn unanswered<'a>(d: &'a Decoded, pulses: &[Pulse]) -> Vec<Owed<'a>> {
     let image = proof::image;
     let mut owed = Vec::new();
     for (i, b) in d.blocks.iter().enumerate() {
-        let Some(want) = image(b).and_then(proof::asks) else { continue };
-        let Some(leg) = (i + 1..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some()) else { continue };
-        let data = image(&d.blocks[leg]).expect("found by its bytes");
-        if d.proof_of(leg, proof::answering(data, want)) != Proof::Answer {
-            owed.push((leg, want));
+        let Some(data) = image(b) else { continue };
+        let extent = d.extents[i];
+        if data.first() == Some(&0x00) && d.proof_of(i, proof::of(data)) < Proof::Header {
+            owed.push(Owed {
+                had: data,
+                from: extent.start,
+                until: extent.end,
+                want: proof::HEADER_LEN,
+                behind: None,
+            });
+        }
+        if data.first() == Some(&0xFF) && d.proof_of(i, proof::at(&d.blocks, i)) == Proof::Verified {
+            let front = i.checked_sub(1);
+            let lost = d
+                .findings
+                .iter()
+                .any(|f| matches!(f, Finding::Lost { block, what: Loss::Pilot, .. } if *block == front));
+            let raw = front
+                .filter(|&k| matches!(d.blocks[k].body, Body::Csw { .. } | Body::Direct { .. }))
+                .is_some_and(|k| {
+                    let e = d.extents[k];
+                    let held = &pulses[pulses.partition_point(|p| p.start < e.start)
+                        ..pulses.partition_point(|p| p.start < e.signal_end)];
+                    rom_pilot(held).is_some_and(|pilot| burst_behind(held, pilot))
+                });
+            if lost || raw {
+                let from = match front {
+                    Some(k) if raw => d.extents[k].start,
+                    Some(k) => d.extents[k].signal_end,
+                    None => 0.0,
+                };
+                owed.push(Owed {
+                    had: &[],
+                    from,
+                    until: extent.start,
+                    want: proof::HEADER_LEN,
+                    behind: Some(data),
+                });
+            }
+        }
+        let Some(want) = proof::asks(data) else { continue };
+        let from = extent.signal_end;
+        match (i + 1..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some()) {
+            Some(leg) => {
+                let data = image(&d.blocks[leg]).expect("found by its bytes");
+                if d.proof_of(leg, proof::answering(data, want)) != Proof::Answer {
+                    owed.push(Owed { had: data, from, until: d.extents[leg].end, want, behind: None });
+                }
+            }
+            None => owed.push(Owed { had: &[], from, until: f64::INFINITY, want, behind: None }),
         }
     }
+    // A block behind a header can be owed twice, as the header's answer and by its own flag: the
+    // header's request, the one the ROM loads it by, comes first, and an answer to it leaves no
+    // room for the second.
+    owed.sort_by(|a, b| a.from.total_cmp(&b.from));
+    owed.dedup_by(|b, a| a.from == b.from);
     owed
 }
 

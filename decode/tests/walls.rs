@@ -238,22 +238,22 @@ fn treble(microns: f64) -> Judged {
     judge(&spacing_loss(&render(&tape()), RATE, microns), &tape(), same(microns))
 }
 
-/// Spacing loss takes the short half-waves first: past 4.5 µm a lone sync 1 no longer crosses
-/// zero, past 5.8 µm a lone 0 bit's half. The merged sync and the midline read the blocks on to
-/// 10.5 µm; at 11 µm the header, its pilot clean and its bits merged, goes into the lead-in, said
-/// as a block lost there, and the data block reads five bytes with a bad checksum, the rest of
-/// it said as lost in its pause. A good deck keeps about 1 µm, a worn one a few, a copy of a copy
-/// about 12.
-const TREBLE_WHOLE_UM: f64 = 10.5;
-const TREBLE_LOSS_UM: f64 = 11.0;
-const TREBLE_GRID_UM: [f64; 14] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.5, 11.0, 11.5, 12.0];
+/// Spacing loss takes the short half-waves first; from 11 µm the header reads only on the fade
+/// band, and so does the data block it then asks for. At 12 µm the header reads on neither
+/// band, its pilot and bits left in the lead-in, counted and not said lost, and the data block
+/// is kept as raw signal. A good deck keeps about 1 µm, a worn one a few, a copy of a copy about
+/// 12.
+const TREBLE_WHOLE_UM: f64 = 11.5;
+const TREBLE_LOSS_UM: f64 = 12.0;
+const TREBLE_GRID_UM: [f64; 16] =
+    [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 13.0];
 
 fn treble_lost() -> Judged {
-    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Lost]), Vec::new())
+    (Outcome::Lost(vec![0, 1], vec![Said::RawSignal]), Vec::new())
 }
 
 #[test]
-fn treble_loss_reads_whole_to_ten_and_a_half_microns() {
+fn treble_loss_reads_whole_to_eleven_and_a_half_microns() {
     holds(TREBLE_WHOLE_UM, TREBLE_LOSS_UM, treble_lost(), treble);
 }
 
@@ -346,6 +346,57 @@ fn dropout_sweeps() {
     );
 }
 
+/// The sample where the header's bits start: behind its 8,063 pilot pulses and the sync pair.
+fn header_bits_at() -> usize {
+    block_at(&tape(), 0) + ((8063.0 * 2168.0 + 667.0 + 735.0) * f64::from(RATE) / 3_500_000.0) as usize
+}
+
+/// The tape with its signal sunk to `depth` of its level for `len` ms from sample `at`.
+fn sunk(at: usize, len: f64, depth: f32) -> Judged {
+    judge(&dropout(&render(&tape()), at, ms(len), depth), &tape(), same(len))
+}
+
+/// A dropout that sinks the signal to a tenth for 20 ms rather than taking it away: the ordinary
+/// band, held up for 10 ms by the signal in front, cuts no edge in the first of it, and the
+/// block stops there; the fade band follows the level down. A header is read again on it as the
+/// block behind one is, since the ROM asks for a header by its flag, 19 bytes. From 2 to 10 ms
+/// neither band reads it, the in-block dip no envelope window follows (a known limit).
+#[test]
+fn a_header_sunk_in_a_dropout_is_read_again_on_the_fade_band_as_the_block_behind_it_is() {
+    for (k, at) in [header_bits_at() + ms(20.0), bits_at(&tape(), 1) + ms(500.0)].into_iter().enumerate() {
+        assert_eq!(sunk(at, 20.0, 0.1), WHOLE, "block {k}");
+        assert!(matches!(sunk(at, 5.0, 0.1).0, Outcome::Lost(ref lost, _) if *lost == [k]), "block {k}");
+    }
+}
+
+/// A dropout that sinks the data block's sync or its flag byte for 20 ms: the ordinary band
+/// reads no block there at all, and the header, which nothing then answers, is owed its block
+/// from where it ends, read on the fade band.
+#[test]
+fn a_block_sunk_at_its_sync_is_read_on_the_fade_band_behind_its_header() {
+    let bits = bits_at(&tape(), 1);
+    for at in [bits - ms((667.0 + 735.0) / 3500.0), bits + ms(3.0)] {
+        assert_eq!(sunk(at - ms(10.0), 20.0, 0.1), WHOLE);
+    }
+}
+
+/// A dropout that sinks the header's sync or its flag byte: the ordinary band reads no header,
+/// and the data block behind it is data no header asks for. The ROM's pilot in front of it, with
+/// bits behind it, is owed a header, read on the fade band and taken because the data block
+/// answers it. At 5 ms the sink is the in-block dip neither band follows (a known limit), and a
+/// hole at nothing takes the bits away at any band: the header is kept as raw signal, or said
+/// lost.
+#[test]
+fn a_header_sunk_at_its_sync_is_read_on_the_fade_band_in_front_of_its_block() {
+    let sync = header_bits_at() - ms((667.0 + 735.0) / 3500.0);
+    for (at, len) in [(sync, 20.0), (header_bits_at() + ms(3.0), 20.0), (sync, 10.0), (sync, 30.0)] {
+        assert_eq!(sunk(at - ms(len / 2.0), len, 0.1), WHOLE, "{at}, {len} ms");
+    }
+    let raw = (Outcome::Lost(vec![0], vec![Said::RawSignal]), Vec::new());
+    assert_eq!(sunk(sync - ms(2.5), 5.0, 0.1), raw);
+    assert_eq!(sunk(sync - ms(10.0), 20.0, 0.0), (Outcome::Lost(vec![0], vec![Said::Lost]), Vec::new()));
+}
+
 // Fade.
 
 /// The tape with hiss 50 dB under it and its data block fading over its first second to `depth`
@@ -359,22 +410,22 @@ fn faded(depth: f32) -> Judged {
     judge(&x, &tape(), same(depth))
 }
 
-/// The edge detector's floor is a share of the loudest material within seconds, and a block
-/// that falls under it so soon after a loud one is taken for dead air: at 0.07 of the header's
-/// level the data block, 27 dB over the hiss, plays as the header's pause; it does without the
-/// hiss too. Its pilot is said among the pause's pulses, but not that a block was lost: its bits
-/// leave no edges, as a pilot with no block behind it leaves none. A quiet program on a
-/// collection tape has been measured at 0.07 of the loud ones around it.
-const FADE_WHOLE: f32 = 0.08;
-const FADE_LOSS: f32 = 0.07;
-const FADE_GRID: [f32; 13] = [0.5, 0.3, 0.2, 0.15, 0.12, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.03, 0.02];
+/// The edge detector's floor is a share of the loudest material within seconds, so a block that
+/// falls under it so soon after a loud one is taken for dead air. The fade band, which follows
+/// the level down, reads it to 0.04; at 0.03, 20 dB over the hiss, it plays as the header's
+/// pause, its pilot said among the pause's pulses but not that a block was lost, since its bits
+/// leave no edges. A quiet program on a collection tape can measure 0.07 of the loud ones around
+/// it.
+const FADE_WHOLE: f32 = 0.04;
+const FADE_LOSS: f32 = 0.03;
+const FADE_GRID: [f32; 14] = [0.5, 0.3, 0.2, 0.15, 0.12, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02];
 
 fn fade_lost() -> Judged {
     (Outcome::Lost(vec![1], vec![Said::CollapsedPilot]), Vec::new())
 }
 
 #[test]
-fn a_block_fading_after_a_loud_one_reads_whole_to_eight_hundredths() {
+fn a_block_fading_after_a_loud_one_reads_whole_to_four_hundredths() {
     holds(FADE_WHOLE, FADE_LOSS, fade_lost(), faded);
 }
 
@@ -742,20 +793,22 @@ fn off_speed_skewed(factor: f64, fall_us: f64) -> Judged {
 /// sync's first pulse and a block's last bit, which are read alone. The pilot's halves part with
 /// it, 42% either way at 1.5 ms on the midline, which the sync loop and the leader loop take for
 /// pilot as they are; so does the decoder, by their pairs (`pilot_run_at`) and each against the
-/// others of its kind (`a_pilot_whose_halves_part_by_more_than_a_third_reads_whole`). At 3.5 ms a
-/// run of 0 bits, the header's spaces, loses its short lobes, and both blocks stop short with bad
-/// checksums, the rest of the data block said lost. Played 17.6% slow, every half-wave is longer
-/// against the same delay, and at 2 ms the pilot's long halves pass 3,644 T, where the ROM's sync
-/// loop runs out: both blocks lock on the runs between them and read whole, the data block's
-/// pilot played as the header's pause. A rise and a fall that differ by a quarter of a
-/// millisecond are what one track of a worn head gives.
-const AZIMUTH_WHOLE_US: f64 = 3250.0;
-const AZIMUTH_LOSS_US: f64 = 3500.0;
-const SLOW_AZIMUTH_WHOLE_US: f64 = 1900.0;
-const SLOW_AZIMUTH_LOSS_US: f64 = 2000.0;
+/// others of its kind (`a_pilot_whose_halves_part_by_more_than_a_third_reads_whole`). From 3.5 ms
+/// a run of 0 bits, the header's spaces, loses its short lobes: the header reads on the fade
+/// band, and so does the data block it then asks for. At 4 ms the data block stops three bytes
+/// in with a bad checksum on either band, the rest of it played as its pause. Played 17.6% slow,
+/// every half-wave is longer against the same delay, and from 2 ms the pilot's long halves pass
+/// 3,644 T, where the ROM's sync loop runs out: the header stops a byte short, and the fade band
+/// reads it and then the data block. At 5 ms both read so, but the data block's pilot rises out
+/// of the header's pause late, which runs 3.5% long. A rise and a fall that differ by a quarter
+/// of a millisecond are what one track of a worn head gives.
+const AZIMUTH_WHOLE_US: f64 = 3750.0;
+const AZIMUTH_LOSS_US: f64 = 4000.0;
+const SLOW_AZIMUTH_WHOLE_US: f64 = 4750.0;
+const SLOW_AZIMUTH_LOSS_US: f64 = 5000.0;
 
 fn azimuth_lost() -> Judged {
-    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Collapsed, Said::Lost]), Vec::new())
+    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Short, Said::Collapsed]), Vec::new())
 }
 
 fn slow_azimuth_lost() -> Judged {
@@ -763,21 +816,22 @@ fn slow_azimuth_lost() -> Judged {
 }
 
 #[test]
-fn a_late_kind_of_edge_reads_whole_to_three_and_a_quarter_milliseconds() {
+fn a_late_kind_of_edge_reads_whole_to_three_and_three_quarter_milliseconds() {
     holds(AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, azimuth_lost(), |t| off_speed_skewed(1.0, t));
 }
 
 #[test]
-fn a_late_kind_of_edge_on_a_slow_tape_reads_whole_to_1900_us() {
+fn a_late_kind_of_edge_on_a_slow_tape_reads_whole_to_4750_us() {
     holds(SLOW_AZIMUTH_WHOLE_US, SLOW_AZIMUTH_LOSS_US, slow_azimuth_lost(), |t| off_speed_skewed(SLOW, t));
 }
 
 #[test]
 #[ignore]
 fn azimuth_sweeps() {
-    let grid = [100.0, 500.0, 1000.0, 2000.0, 3000.0, AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, 5000.0];
+    let grid = [100.0, 500.0, 1000.0, 2000.0, 3000.0, 3500.0, AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, 5000.0];
     sweep(&grid, AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, azimuth_lost(), |t| off_speed_skewed(1.0, t));
-    let grid = [25.0, 250.0, 1000.0, 1500.0, SLOW_AZIMUTH_WHOLE_US, SLOW_AZIMUTH_LOSS_US, 4000.0];
+    let grid =
+        [25.0, 250.0, 1000.0, 2000.0, 3000.0, 4000.0, SLOW_AZIMUTH_WHOLE_US, SLOW_AZIMUTH_LOSS_US, 8000.0];
     sweep(&grid, SLOW_AZIMUTH_WHOLE_US, SLOW_AZIMUTH_LOSS_US, slow_azimuth_lost(), |t| {
         off_speed_skewed(SLOW, t)
     });
@@ -815,8 +869,8 @@ fn dull_wandering(microns: f64, wander: f32) -> Judged {
 
 /// Treble loss shrinks the short lobes and a wander lifts them off the zero line; the midline
 /// reads them about the signal's own centre. A wander of 0.025, a twentieth of the level, leaves
-/// the treble wall where it is; past it no block and no raw signal is left of the tape, and the
-/// lead-in, the whole recording, is said to hold a block lost there. At 5 µm the midline follows
+/// the treble wall where it is; past it both blocks are lost, said here of the lead-in, where
+/// the header's pilot with bits behind it lies. At 5 µm the midline follows
 /// a wander up to 0.9, nearly twice the level, where the zero line, on which the short lobes no
 /// longer cross, has read no block since 0.4. At 1.0 the midline's data block stops five bits
 /// into its last byte but one, short, and the 0s that fill that byte out complete its checksum,
@@ -836,13 +890,13 @@ fn nothing_left() -> Judged {
     (Outcome::Lost(vec![0, 1], Vec::new()), Vec::new())
 }
 
-fn lost_in_the_lead_in() -> Judged {
+fn treble_wander_lost() -> Judged {
     (Outcome::Lost(vec![0, 1], vec![Said::Lost]), Vec::new())
 }
 
 #[test]
-fn treble_loss_with_a_wandering_centre_line_reads_whole_to_ten_and_a_half_microns() {
-    holds(TREBLE_WHOLE_UM, TREBLE_LOSS_UM, lost_in_the_lead_in(), |d| dull_wandering(d, WANDER));
+fn treble_loss_with_a_wandering_centre_line_reads_whole_to_eleven_and_a_half_microns() {
+    holds(TREBLE_WHOLE_UM, TREBLE_LOSS_UM, treble_wander_lost(), |d| dull_wandering(d, WANDER));
 }
 
 #[test]
@@ -894,9 +948,10 @@ fn in_dead_air(secs: f64, defect: impl Fn(&[f32]) -> Vec<f32>) -> Judged {
 
 /// Every wall's tape holds 2.25 s of silence in 10.8 s, and the edge detector measures the
 /// recording's noise and its floor over the quietest seconds, the fifth of ten (`QUIET_SECONDS`):
-/// on these tapes those seconds are mostly signal. With ten seconds of dead air either side, as a
-/// recording has, treble loss alone and with a wander reads whole at 11 µm, past its wall; with
-/// two or five it does not. The hiss wall does not move out: measured against the tape, not over
+/// on these tapes those seconds are mostly signal. Treble loss, alone and with a wander, keeps its
+/// wall in any dead air: whole at 11.5 µm with two seconds of it or ten, lost at 12. (It once
+/// read whole a step past its wall with ten seconds and not with two or five, before a block a
+/// header read on the fade band asks for was read there too.) The hiss wall does not move out: measured against the tape, not over
 /// the dead air too (which would lower it 4.6 dB), the hiss reads whole to 11 dB and the data
 /// block is lost at 10, a dB short of the bare tape. A wander on a dull tape keeps its wall, 0.9,
 /// since it lies over the dead air too. Nothing is changed here, and the walls keep their
@@ -904,12 +959,12 @@ fn in_dead_air(secs: f64, defect: impl Fn(&[f32]) -> Vec<f32>) -> Judged {
 /// it.
 #[test]
 fn dead_air_takes_the_noise_line_out_of_the_signal() {
-    let treble_wander = |x: &[f32]| hum(&spacing_loss(x, RATE, TREBLE_LOSS_UM), RATE, 120.0, WANDER);
-    assert_eq!(in_dead_air(10.0, treble_wander), (Outcome::Pause, Vec::new()));
-    assert_eq!(in_dead_air(10.0, |x| spacing_loss(x, RATE, TREBLE_LOSS_UM)), (Outcome::Pause, Vec::new()));
+    let treble_wander = |x: &[f32]| hum(&spacing_loss(x, RATE, TREBLE_WHOLE_UM), RATE, 120.0, WANDER);
+    assert_eq!(in_dead_air(2.0, treble_wander), (Outcome::Pause, Vec::new()));
+    assert_eq!(in_dead_air(10.0, |x| spacing_loss(x, RATE, TREBLE_WHOLE_UM)), (Outcome::Pause, Vec::new()));
     assert_eq!(
-        in_dead_air(5.0, treble_wander),
-        (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Lost]), Vec::new())
+        in_dead_air(10.0, |x| spacing_loss(x, RATE, TREBLE_LOSS_UM)),
+        (Outcome::Lost(vec![0, 1], vec![Said::RawSignal, Said::Collapsed, Said::Lost]), Vec::new())
     );
     assert_eq!(in_dead_air(10.0, |x| hiss_as_bare(x, 11)), (Outcome::Pause, Vec::new()));
     assert_eq!(
@@ -983,10 +1038,12 @@ fn padded_walls() -> Vec<(&'static str, Vec<f64>, Padded)> {
         ("slow flutter", vec![0.0, 0.04, 0.08, 0.12, 0.16, 0.18, 0.19, 0.2, 0.25], |x, _, v| {
             (wow(&speed(x, SLOW), RATE, v, 10.0), RATE)
         }),
-        ("azimuth", vec![500.0, 1000.0, 1500.0, 2000.0, 3000.0, 3250.0, 3500.0, 4000.0], |x, _, v| {
-            (azimuth(x, RATE, 10.0, v), RATE)
-        }),
-        ("slow azimuth", vec![500.0, 1000.0, 1500.0, 1900.0, 2000.0, 3000.0, 4000.0], |x, _, v| {
+        (
+            "azimuth",
+            vec![500.0, 1000.0, 1500.0, 2000.0, 3000.0, 3500.0, 3750.0, 4000.0, 5000.0],
+            |x, _, v| (azimuth(x, RATE, 10.0, v), RATE),
+        ),
+        ("slow azimuth", vec![500.0, 1000.0, 2000.0, 3000.0, 4000.0, 4750.0, 5000.0, 8000.0], |x, _, v| {
             (azimuth(&speed(x, SLOW), RATE, 10.0, v), RATE)
         }),
         ("fast hiss", (0..=14).rev().map(f64::from).collect(), |x, _, v| {
@@ -1076,7 +1133,7 @@ fn dead_air_sweeps() {
 #[test]
 #[ignore]
 fn treble_and_wander_sweeps() {
-    sweep(&TREBLE_GRID_UM[..12], TREBLE_WHOLE_UM, TREBLE_LOSS_UM, lost_in_the_lead_in(), |d| {
+    sweep(&TREBLE_GRID_UM[..14], TREBLE_WHOLE_UM, TREBLE_LOSS_UM, treble_wander_lost(), |d| {
         dull_wandering(d, WANDER)
     });
     let grid = [0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, WANDER_WHOLE, WANDER_LOSS, 1.25, 1.5];

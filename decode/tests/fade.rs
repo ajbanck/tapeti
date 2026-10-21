@@ -39,6 +39,13 @@ fn gauss(rng: &mut Rng) -> f32 {
 /// A program whose header asks for [`ASKED`] bytes, behind 2 s of silence, its data block
 /// faded for 12.4 ms to `depth` of its level 0.8 s into its bits, under hiss of 0.0008.
 fn faded(depth: f32) -> (Vec<f32>, Vec<u8>) {
+    let (x, _, data) = faded_twice(depth, 1.0);
+    (x, data)
+}
+
+/// [`faded`], with the header faded too, to `header_depth` for 12.4 ms 25 ms into its bits; and
+/// the header's bytes.
+fn faded_twice(depth: f32, header_depth: f32) -> (Vec<f32>, Vec<u8>, Vec<u8>) {
     let mut header = vec![0x00, 0x03];
     header.extend(b"fade      ");
     header.extend((ASKED as u16).to_le_bytes());
@@ -52,6 +59,11 @@ fn faded(depth: f32) -> (Vec<f32>, Vec<u8>) {
     let lead = 2 * RATE as usize;
     let mut x = vec![0.0f32; lead];
     x.extend(tape);
+    // The header's bits start 5.245 s into the tape.
+    let from = lead + (5.27 * f64::from(RATE)) as usize;
+    for s in &mut x[from..from + (0.0124 * f64::from(RATE)) as usize] {
+        *s *= header_depth;
+    }
     // The data block's pilot is 3,223 half-waves of 2,168 T, 2.0 s; the dropout is 0.8 s behind.
     let from = lead + data_at + (2.8 * f64::from(RATE)) as usize;
     for s in &mut x[from..from + (0.0124 * f64::from(RATE)) as usize] {
@@ -61,7 +73,7 @@ fn faded(depth: f32) -> (Vec<f32>, Vec<u8>) {
     for s in &mut x {
         *s += 0.0008 * gauss(&mut rng);
     }
-    (x, data)
+    (x, header, data)
 }
 
 fn decode(x: &[f32]) -> Decoded {
@@ -98,6 +110,20 @@ fn a_block_a_dropout_ended_is_read_again_on_the_fade_band() {
     assert!(!ordinary(&x).contains(&data), "test construction: the dropout ends the ordinary read");
     let got = decode(&x);
     assert!(datas(&got).contains(&data), "{:?}", got.findings);
+    assert!(got.findings.contains(&Finding::FadeBand { block: 1 }), "{:?}", got.findings);
+}
+
+#[test]
+fn a_header_read_on_the_fade_band_asks_for_its_block_there_too() {
+    let (x, header, data) = faded_twice(0.06, 0.06);
+    let read = ordinary(&x);
+    assert!(
+        !read.contains(&header) && !read.contains(&data),
+        "test construction: the ordinary band reads neither"
+    );
+    let got = decode(&x);
+    assert_eq!(datas(&got), [header, data], "{:?}", got.findings);
+    assert!(got.findings.contains(&Finding::FadeBand { block: 0 }), "{:?}", got.findings);
     assert!(got.findings.contains(&Finding::FadeBand { block: 1 }), "{:?}", got.findings);
 }
 
