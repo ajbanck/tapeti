@@ -252,10 +252,9 @@ const POSITION_TOL: f64 = 1000.0;
 ///
 /// Nothing a donor failed to read enters. The block before a block put in plays its pause up
 /// to where that block starts, and what a donor said of the block (its sync, its band, its
-/// leader, a stray zero, a partial last byte, unlike halves, that it is raw signal) comes with
-/// it. Donors are
-/// asked in order, each block by block against `base` as folded so far; each block placed is
-/// reported ([`Finding::FromChannel`], [`Finding::FromAxis`], or [`Finding::BothChannels`] where
+/// leader, a stray zero, a partial last byte, unlike halves, a snag, that it is raw signal)
+/// comes with it. Donors are asked in order, each block by block against `base` as folded so
+/// far; each block placed is reported ([`Finding::FromChannel`], [`Finding::FromAxis`], or [`Finding::BothChannels`] where
 /// readings alike decided).
 pub fn fold(base: &mut Decoded, donors: &[(Source, &Decoded)]) {
     if donors.is_empty() {
@@ -411,6 +410,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
                 | Finding::StrayZero { .. }
                 | Finding::PartialFinalByte { .. }
                 | Finding::UnlikeHalves { .. }
+                | Finding::Snag { .. }
         );
         if said && f.block() == Some(j) {
             let mut f = f.clone();

@@ -213,6 +213,25 @@ fn wow_swings_the_half_waves_with_its_triangle() {
 }
 
 #[test]
+fn a_snag_stretches_its_stretch_of_tape_and_nothing_else() {
+    // Half-waves of 100 samples: from input sample 4,000 stretched over 2,000 samples up to 1.5
+    // times as long, held for 2,000 and let go over 1,000.
+    let x = square(100, 120);
+    let y = snag(&x, 4000, 2000, 2000, 1000, 1.5);
+    let c = crossings(&y);
+    let at = |t: f64| {
+        let k = c.windows(2).position(|w| w[0] <= t && t < w[1]).unwrap();
+        c[k + 1] - c[k]
+    };
+    assert!((at(2000.0) - 100.0).abs() < 0.5, "{}", at(2000.0));
+    // The hold starts at output sample 4,000 + 2,000 · 1.5 / ln 1.5 ≈ 6,466 and lasts 3,000.
+    assert!((at(8000.0) - 150.0).abs() < 0.5, "{}", at(8000.0));
+    assert!((at(y.len() as f64 - 300.0) - 100.0).abs() < 0.5);
+    assert!(gaps(&y).iter().all(|&d| d > 99.5 && d < 150.5));
+    assert_eq!(snag(&x, 4000, 2000, 2000, 1000, 1.0), x);
+}
+
+#[test]
 fn invert_turns_the_signal_upside_down() {
     let x = noise(500, 0.7, 6);
     assert!(invert(&x).iter().zip(&x).all(|(a, b)| *a == -*b));

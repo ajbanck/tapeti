@@ -25,7 +25,7 @@ use std::fmt::Debug;
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, decode_pulses, Channels, Decoded, Finding};
+use tapeti_decode::entry::{decode_file, decode_pulses, tape_band, Channels, Decoded, Finding};
 use tapeti_decode::pulses::{of_blocks, Pulse};
 use tapeti_decode::readers::Channel;
 use tapeti_decode::waveform::edges::detect_pulses;
@@ -263,6 +263,61 @@ fn treble_loss_sweep() {
     sweep(&TREBLE_GRID_UM, TREBLE_WHOLE_UM, TREBLE_LOSS_UM, treble_lost(), treble);
 }
 
+// Treble loss through the band-pass.
+
+/// The decode of `x` through the band-pass the apps offer ([`tape_band`]), against `want`
+/// played at `speed`, and what the ROM's loader loads at every phase from the same filtered
+/// pulses that framing does not read.
+fn judge_filtered(x: &[f32], want: &[Block], speed: (f64, f64)) -> Judged {
+    let no_zlib = |_: &[u8]| -> Result<Vec<u8>, String> { Err("none".into()) };
+    let rom = rom_only(&detect_pulses(|| x.iter().copied(), RATE, tape_band(RATE)).unwrap(), RATE, want);
+    let wav = encode_wav(x, RATE, 16);
+    let got = decode_file(
+        "t.wav",
+        &wav,
+        Channels::Only(Channel::Mix),
+        tape_band(RATE),
+        None,
+        &no_zlib,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    (outcome(&got, want, speed), rom)
+}
+
+/// The tape through `microns` of spacing, decoded through the band-pass.
+fn filtered_treble(microns: f64) -> Judged {
+    judge_filtered(&spacing_loss(&render(&tape()), RATE, microns), &tape(), same(microns))
+}
+
+/// The band-pass rings, merging the sync pair and the header's first 0 half into one pulse
+/// under the pilot window's top (`DECIDE`). It reads whole to 11 µm; at 11.5 the data block's
+/// run of 0x00 bytes merges, its read runs short, and the header is read on the fade band.
+const FILTERED_TREBLE_WHOLE_UM: f64 = 11.0;
+const FILTERED_TREBLE_LOSS_UM: f64 = 11.5;
+
+fn filtered_treble_lost() -> Judged {
+    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Short, Said::Collapsed]), Vec::new())
+}
+
+#[test]
+fn treble_loss_through_the_band_pass_reads_whole_to_eleven_microns() {
+    holds(FILTERED_TREBLE_WHOLE_UM, FILTERED_TREBLE_LOSS_UM, filtered_treble_lost(), filtered_treble);
+}
+
+#[test]
+#[ignore]
+fn filtered_treble_sweep() {
+    sweep(
+        &TREBLE_GRID_UM,
+        FILTERED_TREBLE_WHOLE_UM,
+        FILTERED_TREBLE_LOSS_UM,
+        filtered_treble_lost(),
+        filtered_treble,
+    );
+}
+
 // Hiss.
 
 fn hissed(db: u32) -> Judged {
@@ -481,6 +536,40 @@ fn flutter_reads_whole_to_twenty_six_percent_at_10_hz() {
 fn wow_sweeps() {
     sweep(&WOW_GRID, WOW_1HZ_WHOLE, WOW_1HZ_LOSS, wow_1hz_lost(), |d| wowed(1.0, d));
     sweep(&WOW_GRID, WOW_10HZ_WHOLE, WOW_10HZ_LOSS, wow_10hz_lost(), |d| wowed(10.0, d));
+}
+
+// Snags.
+
+/// The tape with a snag in its data block, as the one measured on a recording had it: from
+/// 400 ms into the block's bits the tape slows over 70 ms to `depth` of its speed, holds there
+/// for 15 ms and is let go over 15.
+fn snagged(depth: f64) -> Judged {
+    let at = bits_at(&tape(), 1) + ms(400.0);
+    judge(&snag(&render(&tape()), at, ms(70.0), ms(15.0), ms(15.0), depth), &tape(), same(depth))
+}
+
+/// Past 1.47 of the pilot's speed a 0 bit's pair lies past the split the pilot gives, and read
+/// at that speed the block was lost from 1.45 (its slowest bits on the sample grid). Read again
+/// at the speed of the bits before each pair, it reads to 1.58: at 1.59 a 1 bit whose two
+/// halves both fall long on the sample grid pairs to 5,552 T, past the bit loop's timeout,
+/// where the ROM stops too. The snag measured on a recording reached 1.55.
+const SNAG_WHOLE: f64 = 1.58;
+const SNAG_LOSS: f64 = 1.59;
+const SNAG_GRID: [f64; 11] = [1.1, 1.2, 1.3, 1.4, 1.45, 1.5, 1.55, 1.58, 1.59, 1.65, 1.8];
+
+fn snag_lost() -> Judged {
+    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Short, Said::Lost]), Vec::new())
+}
+
+#[test]
+fn a_snag_reads_whole_to_158_percent_of_the_speed() {
+    holds(SNAG_WHOLE, SNAG_LOSS, snag_lost(), snagged);
+}
+
+#[test]
+#[ignore]
+fn snag_sweep() {
+    sweep(&SNAG_GRID, SNAG_WHOLE, SNAG_LOSS, snag_lost(), snagged);
 }
 
 // Clicks.

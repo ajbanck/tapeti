@@ -345,16 +345,21 @@ impl Seam<'_> {
         }
     }
 
-    /// The bits of a hidden forward merge at `b`, where the pulse before it is the merged one and
-    /// passed for pilot.
+    /// The bits of a hidden forward merge at `b`, where the pulse before it is the merged one
+    /// and passed for pilot.
     ///
-    /// `b` must be half a bit, and with the pulse behind it be nearer a bit's pair than the
-    /// sync pair's sum `syncs` (a real sync pair misses a 0 bit's pair by 18%), and the pulse
-    /// before it must lie within [`DECIDE`] of `syncs` and `b`. Neither length can decide: a
-    /// merge with a 0 bit's half is 4% off a pilot half-wave, and a sync pair stretched by wow
-    /// passes both tests. The readings do: the merge stands where its reading proves more than
-    /// the ROM's, and where the two prove as much, where its bits pair nearer the bits' own
-    /// lengths than the ROM's ([`fit`]).
+    /// `b` must be half a bit and, with the pulse before it, nearer a bit's pair than the sync
+    /// pair's sum `syncs` (a real sync pair misses a 0 bit's pair by 18%); the pulse before must
+    /// lie within [`DECIDE`] of `syncs` and `b` together. Neither length alone decides: a merge
+    /// with a 0 bit's half is 4% off a pilot half-wave, and a sync pair stretched by wow passes
+    /// both tests, so the merge stands where its reading proves more than the ROM's, or, tied, where its bits
+    /// pair nearer the bits' own lengths ([`fit`]). Past [`DECIDE`] and within [`ASK`] the merge
+    /// is only asked and stands only where its reading proves more: the band-pass on a worn tape
+    /// can move the crossing the merged pulse shares with `b` by 18% to 21% of the prediction, so the two
+    /// pulses' sum must also lie nearer the sync pair and the whole bit than a pilot half and a
+    /// first sync pulse, and the merged pulse must be longer than the pilot (a merge holds the
+    /// sync pair and a whole half, 2,257 T at least). Without that, only the end of a lock on
+    /// noise is asked, answered by a checksum holding by chance.
     fn hidden(&self, b: usize, syncs: f64) -> Option<Start> {
         let len = |k: usize| self.pulses.get(k).map(|p| p.tstates);
         let (before, orphan, next) = (len(b.checked_sub(1)?)?, len(b)?, len(b + 1)?);
@@ -371,8 +376,19 @@ impl Seam<'_> {
             return None;
         }
         let pred = syncs + orphan;
-        if (before - pred).abs() / pred > DECIDE {
+        let merge_off = (before - pred).abs() / pred;
+        if merge_off > ASK {
             return None;
+        }
+        if merge_off > DECIDE {
+            let bit = if 2.0 * orphan > self.speed.of(super::ONE_ABOVE) { one } else { zero };
+            let (sum, merge, run) =
+                (before + orphan, syncs + bit, self.pilot_half + self.speed.of(f64::from(RomTimings::SYNC1)));
+            if before <= self.pilot_half || (sum - merge).abs() / merge >= (sum - run).abs() / run {
+                return None;
+            }
+            let start = self.orphan(orphan, b + 1);
+            return (self.rank(start) > self.rom_rank()).then_some(start);
         }
         let start = self.orphan(orphan, b + 1);
         let (merge, rom) = (self.rank(start), self.rom_rank());

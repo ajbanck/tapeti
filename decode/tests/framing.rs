@@ -14,7 +14,8 @@ use tapeti_core::types::{Block, Body};
 use tapeti_decode::entry::{decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding, Loss};
 use tapeti_decode::fallback::{sort, Part, TONE_RUN};
 use tapeti_decode::framing::{
-    bit_timeout, leader_pair, pilot_pulse, pilot_run_at, BOUNCE_MOST, ONE_ABOVE, PILOT_PULSE_MOST,
+    bit_timeout, leader_pair, pilot_pulse, pilot_run_at, BOUNCE_MOST, HALF_CREST, ONE_ABOVE,
+    PILOT_PULSE_MOST, WOW_PEAK,
 };
 use tapeti_decode::pulses::{of_blocks, Pulse};
 use tapeti_decode::readers::Channel;
@@ -1067,4 +1068,155 @@ fn a_bit_read_across_a_lost_lobe_is_counted_and_read_by_its_sum() {
         assert_eq!(datas(&got.blocks), datas(&pair), "{halves:?}");
         assert_eq!(unlike(&got), counted, "{halves:?}: {:?}", got.findings);
     }
+}
+
+/// A headerless block of 256 pseudo-random bytes (xorshift, the same for every `seed`) under
+/// flag 0xFF, with its checksum.
+fn snag_block(seed: u64) -> Vec<u8> {
+    let mut s = seed;
+    let bytes: Vec<u8> = (0..256)
+        .map(|_| {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 24) as u8
+        })
+        .collect();
+    with_checksum(0xFF, &bytes)
+}
+
+/// The bits of `data`, from the flag's top bit.
+fn bits_of(data: &[u8]) -> Vec<bool> {
+    data.iter().flat_map(|&b| (0..8).map(move |k| b >> (7 - k) & 1 == 1)).collect()
+}
+
+/// The lengths of `data` saved as a block, its bit `k` played at `speed(k)` of the saver's
+/// timing, and where its first bit's first half lies.
+fn played_at(data: &[u8], speed: impl Fn(usize) -> f64) -> (Vec<u64>, usize) {
+    let mut lens = lengths(&of_blocks(&[standard(1000, data.to_vec())]).unwrap());
+    let at = sync_of(&lens, 0) + 2;
+    for (k, one) in bits_of(data).into_iter().enumerate() {
+        let half = (if one { 1710.0 } else { 855.0 } * speed(k)).round() as u64;
+        lens[at + 2 * k..at + 2 * k + 2].copy_from_slice(&[half, half]);
+    }
+    (lens, at)
+}
+
+/// A snag: the pilot's speed to bit 600, slowing to `depth` over 100 bits, held there over
+/// `hold`, let go over `release` (at once where it is 0).
+fn snag(k: usize, depth: f64, hold: usize, release: usize) -> f64 {
+    let (from, held) = (600, 700);
+    let free = held + hold;
+    match k {
+        k if k < from => 1.0,
+        k if k < held => 1.0 + (depth - 1.0) * (k - from) as f64 / (held - from) as f64,
+        k if k < free => depth,
+        k if k < free + release => depth - (depth - 1.0) * (k - free) as f64 / release as f64,
+        _ => 1.0,
+    }
+}
+
+/// What the read at the pilot's speed makes of `lens`'s bits from `at`: each pair against the
+/// split.
+fn at_the_pilots_speed(lens: &[u64], at: usize, len: usize) -> Vec<u8> {
+    (0..len)
+        .map(|i| {
+            (0..8).fold(0u8, |byte, b| {
+                let k = 8 * i + b;
+                byte << 1 | u8::from((lens[at + 2 * k] + lens[at + 2 * k + 1]) as f64 > ONE_ABOVE)
+            })
+        })
+        .collect()
+}
+
+fn snagged(got: &Decoded) -> bool {
+    got.findings.iter().any(|f| matches!(f, Finding::Snag { .. }))
+}
+
+/// A snag holds the tape back inside a block, by tens of percent, and lets it go: at 1.6 of the
+/// pilot's speed a 0 bit's pair, 2,736 T, lies past the split the pilot gives, and reads as a 1.
+/// The read at the pilot's speed fails its checksum; read again at the speed of the bits before
+/// each pair, the block is the one saved.
+#[test]
+fn a_snag_past_the_split_is_read_at_the_speed_of_the_bits_before() {
+    let data = snag_block(7);
+    let (lens, at) = played_at(&data, |k| snag(k, 1.6, 20, 20));
+    assert_ne!(at_the_pilots_speed(&lens, at, data.len()), data, "the pilot's speed misreads it");
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), vec![data], "{:?}", got.findings);
+    assert!(snagged(&got), "{:?}", got.findings);
+}
+
+/// Inside the noise reach every bit is read at the pilot's speed: bits moved either way by up
+/// to the reach, and among them a 0 disturbed past the split (a pair of 2,600 T, which reads as
+/// a 1 and fails the checksum), stay read so. The reach on a grid of T-states: the crest of a
+/// pair's two outer crossings, the wow's peak, and a T-state against a 0 bit's pair.
+#[test]
+fn inside_the_noise_reach_the_bits_are_read_at_the_pilots_speed() {
+    let data = snag_block(11);
+    let bits = bits_of(&data);
+    let reach = 0.99 * (HALF_CREST / 2.0 + WOW_PEAK + 1.0 / 1710.0);
+    let (mut lens, at) = played_at(&data, |k| 1.0 + reach * if (k / 5) % 2 == 0 { 1.0 } else { -1.0 });
+    let zero = (600..).find(|&k| !bits[k] && (k / 5) % 2 == 0).unwrap();
+    lens[at + 2 * zero..at + 2 * zero + 2].copy_from_slice(&[1300, 1300]);
+    let pilots = at_the_pilots_speed(&lens, at, data.len());
+    assert_ne!(pilots, data);
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), vec![pilots], "{:?}", got.findings);
+    assert!(!snagged(&got), "{:?}", got.findings);
+}
+
+/// Three bits are the fewest whose median holds the snag's speed through one disturbed bit: a
+/// 0 played at the pilot's speed inside the snag's hold, in front of another 0 at the snag's,
+/// which a window of one bit would read at the pilot's speed, as a 1.
+#[test]
+fn one_disturbed_bit_moves_no_speed() {
+    let data = snag_block(7);
+    let bits = bits_of(&data);
+    let k = (703..720).find(|&k| !bits[k - 1] && !bits[k]).unwrap();
+    let (mut lens, at) = played_at(&data, |k| snag(k, 1.6, 20, 20));
+    lens[at + 2 * (k - 1)..at + 2 * k].copy_from_slice(&[855, 855]);
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), vec![data], "{:?}", got.findings);
+}
+
+/// A snag let go at once: the window holds the snag's speed over the first bits past it and
+/// reads a 1 there as a 0, the checksum refuses the read again, and the read at the pilot's
+/// speed stands.
+#[test]
+fn a_snag_let_go_at_once_leaves_the_read_at_the_pilots_speed() {
+    let data = snag_block(7);
+    let bits = bits_of(&data);
+    let hold = (20..).find(|&h| bits[700 + h]).unwrap();
+    let (lens, at) = played_at(&data, |k| snag(k, 1.6, hold, 0));
+    let pilots = at_the_pilots_speed(&lens, at, data.len());
+    assert_ne!(pilots, data);
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), vec![pilots], "{:?}", got.findings);
+    assert!(!snagged(&got), "{:?}", got.findings);
+}
+
+/// A snag slows a block that ran at its pilot's speed, and never runs the tape faster than the
+/// capstan the pilot measured: bits that open off the pilot's speed, or run faster than it, are
+/// read at the pilot's speed.
+#[test]
+fn bits_that_open_off_the_pilots_speed_or_run_faster_are_no_snag() {
+    // At 1.4 from the first bit, the 0 bits' pairs, 2,394 T, lie under the split; any slower
+    // and the 1 bits' would pass the bit loop's timeout.
+    let data = snag_block(7);
+    let (mut lens, at) = played_at(&data, |_| 1.4);
+    let bits = bits_of(&data);
+    let zero = (600..).find(|&k| !bits[k]).unwrap();
+    lens[at + 2 * zero..at + 2 * zero + 2].copy_from_slice(&[1300, 1300]);
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), vec![at_the_pilots_speed(&lens, at, data.len())], "{:?}", got.findings);
+    assert!(!snagged(&got), "{:?}", got.findings);
+    // The snag's shape mirrored to 0.6 of the pilot's speed.
+    let data = snag_block(7);
+    let (lens, at) = played_at(&data, |k| 1.0 - (snag(k, 1.6, 20, 20) - 1.0) * 0.4 / 0.6);
+    let pilots = at_the_pilots_speed(&lens, at, data.len());
+    assert_ne!(pilots, data);
+    let got = decode(&pulses(&lens));
+    assert_eq!(datas(&got.blocks), vec![pilots], "{:?}", got.findings);
+    assert!(!snagged(&got), "{:?}", got.findings);
 }

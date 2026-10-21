@@ -326,6 +326,42 @@ pub fn wow(x: &[f32], rate: u32, depth: f64, hz: f64) -> Vec<f32> {
     out
 }
 
+/// A snag: the tape held back on its way to the capstan (a pack wound tight, a sticking pressure
+/// pad, a crease) and let go. From input sample `from` every stretch of the tape lasts longer,
+/// in a straight line over `slow` input samples up to `depth` times as long, holds there over
+/// `hold`, and comes back in a straight line over `release`; before and after it the tape plays
+/// at its speed.
+///
+/// The input position advances by `1 / s` from one output sample to the next, `s` the stretch
+/// at that position, starting at 0, and the input is read there in a straight line between the
+/// two samples either side; the output stops when the position passes the last sample.
+pub fn snag(x: &[f32], from: usize, slow: usize, hold: usize, release: usize, depth: f64) -> Vec<f32> {
+    if x.is_empty() {
+        return Vec::new();
+    }
+    let (held, free) = ((from + slow) as f64, (from + slow + hold) as f64);
+    let stretch = |pos: f64| match pos {
+        p if p < from as f64 => 1.0,
+        p if p < held => 1.0 + (depth - 1.0) * (p - from as f64) / slow as f64,
+        p if p < free => depth,
+        p if p < free + release as f64 => depth - (depth - 1.0) * (p - free) / release as f64,
+        _ => 1.0,
+    };
+    let last = (x.len() - 1) as f64;
+    let mut out = Vec::new();
+    let mut pos = 0.0_f64;
+    while pos <= last {
+        let i = pos.floor();
+        let idx = i as usize;
+        let frac = pos - i;
+        let s0 = f64::from(x[idx]);
+        let s1 = f64::from(x[(idx + 1).min(x.len() - 1)]);
+        out.push((s0 + frac * (s1 - s0)) as f32);
+        pos += 1.0 / stretch(pos);
+    }
+    out
+}
+
 /// The signal upside down.
 ///
 /// In the pulses: nothing for a reader of pairs; the first edge out of silence and a player's

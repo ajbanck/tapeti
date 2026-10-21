@@ -326,6 +326,10 @@ pub enum Finding {
     /// ([`crate::framing::UNLIKE_HALVES`]). A reading of the block through fewer stands above it
     /// ([`crate::fold::fold`]).
     UnlikeHalves { block: usize, bits: usize },
+    /// The tape slowed inside the block past the speed its pilot measured, as a snag in the
+    /// transport holds it back, and the block was read again at the speed of the bits before
+    /// each pair, where its checksum holds ([`crate::framing::SPEED_BITS`]).
+    Snag { block: usize },
 }
 
 impl Finding {
@@ -352,6 +356,7 @@ impl Finding {
             | Finding::RunOn { block }
             | Finding::Voted { block, .. }
             | Finding::UnlikeHalves { block, .. }
+            | Finding::Snag { block }
             | Finding::Lost { block: Some(block), .. } => Some(block),
             Finding::Lost { block: None, .. }
             | Finding::LeadIn { .. }
@@ -381,7 +386,8 @@ impl Finding {
             | Finding::StrayZero { .. }
             | Finding::MergedSync { .. }
             | Finding::Voted { .. }
-            | Finding::UnlikeHalves { .. } => false,
+            | Finding::UnlikeHalves { .. }
+            | Finding::Snag { .. } => false,
         }
     }
 
@@ -469,6 +475,9 @@ impl Finding {
                 "{bits} of its bits {} read from two half-waves that differ as no saver writes them: the signal lost a lobe there, or one kind of edge runs late. Read as a Spectrum reads them.",
                 if bits == 1 { "is" } else { "are" }
             ),
+            Finding::Snag { .. } => {
+                "The tape slows inside the block, as a snag in the transport holds it back; its bits were read at the speed of the bits before each one, and the checksum holds.".into()
+            }
             Finding::ShortLeader { .. } => {
                 "The pilot tone in front is too short for a Spectrum to load the block, cut or broken by a dropout; it was read from what is left, a header its fields prove or the block a header asked for.".into()
             }
@@ -1097,6 +1106,9 @@ fn decode_pulses_from(
         }
         if b.unlike > 0 {
             out.findings.push(Finding::UnlikeHalves { block: index, bits: b.unlike });
+        }
+        if b.snag {
+            out.findings.push(Finding::Snag { block: index });
         }
         if b.short {
             let expected = expected.unwrap_or(0);

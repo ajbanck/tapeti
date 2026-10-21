@@ -408,3 +408,74 @@ fn a_header_outranks_a_reading_half_a_bit_out_whose_checksum_holds() {
     assert!(got.findings.contains(&Finding::StrayZero { block: 0 }), "{:?}", got.findings);
     assert!(merged(&t));
 }
+
+/// A hidden forward merge whose crossings the recording moved, as a band-pass on a worn tape
+/// moves them: the merged pulse 2,923 T, under the pilot window's top, and the half it left
+/// 1,018 T. The merge lies 20.8% from what that half predicts, past [`DECIDE`], so its length
+/// can only ask; the header behind it answers. Read as the ROM reads it, with that half for the
+/// first sync pulse, the bits are half a bit out.
+#[test]
+fn a_hidden_merge_past_decide_is_asked_and_the_block_answers() {
+    let mut t = merge_at(&block(&header()), PILOT_PULSES);
+    t[PILOT_PULSES] = 2923.385;
+    t[PILOT_PULSES + 1] = 1018.032;
+    assert!(t[PILOT_PULSES] < PILOT * (1.0 + WIDTH), "it passes for pilot");
+    let off =
+        (t[PILOT_PULSES] - (SYNC1 + SYNC2 + t[PILOT_PULSES + 1])) / (SYNC1 + SYNC2 + t[PILOT_PULSES + 1]);
+    assert!(off > DECIDE && off < ASK, "{off}");
+    assert_eq!(read(&t), header());
+    assert!(merged(&t));
+}
+
+/// The merged pulse and the half behind it share an edge, which a distorted seam moves,
+/// lengthening one by what it takes from the other; so the question weighs their sum. On a
+/// tape whose pilot runs at 2,211 T: the merge 2,571 T, the half 747 T. The merge alone lies
+/// 18.1% from its prediction and only 16.3% over the pilot; their sum, 3,318 T, lies 4.5% from
+/// the sync pair and a whole 0 bit's pair, and 14.8% from the pilot and a first sync pulse.
+#[test]
+fn a_hidden_merge_whose_shared_edge_moved_is_asked_by_the_sum() {
+    let speed = 2211.0 / PILOT;
+    let mut t: Vec<f64> = merge_at(&block(&header()), PILOT_PULSES).iter().map(|t| t * speed).collect();
+    t[PILOT_PULSES] = 2571.0;
+    t[PILOT_PULSES + 1] = 747.0;
+    let pred = speed * (SYNC1 + SYNC2) + 747.0;
+    assert!((2571.0 - pred) / pred > (2571.0 - 2211.0) / 2211.0, "alone it fits the pilot better");
+    assert_eq!(read(&t), header());
+    assert!(merged(&t));
+}
+
+/// The pulses of a 5-byte block, 0x65 first, behind a pilot whose last pulse is `before`,
+/// and from its first bit only a half of `orphan`, as a hidden merge would leave it.
+fn behind_a_seam(before: f64, orphan: f64) -> (Vec<f64>, [u8; 5]) {
+    let bytes = [0x65u8, 0x13, 0xA7, 0x5C, 0x65 ^ 0x13 ^ 0xA7 ^ 0x5C];
+    let mut t = vec![PILOT; PILOT_PULSES];
+    t.extend([before, orphan]);
+    for k in 1..8 * bytes.len() {
+        let half = if bytes[k / 8] >> (7 - k % 8) & 1 == 1 { ONE } else { ZERO };
+        t.extend([half, half]);
+    }
+    t.push(3_500_000.0);
+    (t, bytes)
+}
+
+/// Past [`DECIDE`] a hidden merge is asked only where the seam's two pulses fit one: the merged
+/// pulse longer than the pilot, since a merge holds the sync pair and a whole data half, 2,257 T
+/// at least; and the two together nearer the sync pair and a whole bit than a pilot half and a
+/// first sync pulse. Otherwise the end of a lock on noise is asked, and a checksum holding by
+/// chance answers. Each case here lies within [`ASK`] of a merge's prediction and fails one
+/// test; the bits behind read a block at the merged phase, its checksum good, and it is not read.
+#[test]
+fn a_seam_that_fits_no_merge_is_never_asked_as_one() {
+    for (before, orphan) in [(2000.0, 1000.0), (2300.0, 535.0)] {
+        let (t, bytes) = behind_a_seam(before, orphan);
+        let pred = SYNC1 + SYNC2 + orphan;
+        let off = (before - pred).abs() / pred;
+        assert!(off > DECIDE && off < ASK, "{before}: {off}");
+        let got = decode(&t);
+        assert!(
+            !got.blocks.iter().any(|b| matches!(&b.body, Body::Standard { data, .. } if *data == bytes)),
+            "{before}: {:?}",
+            got.blocks
+        );
+    }
+}

@@ -255,6 +255,9 @@ pub struct RawBlock {
     /// How many of its bits were read from two half-waves that differ as no saver writes a bit's
     /// ([`UNLIKE_HALVES`]).
     pub unlike: usize,
+    /// Whether a snag slowed the block past the pilot's speed and its bits were read at the
+    /// speed of the bits before each ([`SPEED_BITS`]).
+    pub snag: bool,
 }
 
 /// What stopped a lock.
@@ -329,7 +332,7 @@ pub fn next_block(
 /// The block `locked` reads, the search having begun at `from`; `None` where it reads no byte.
 fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<usize>) -> Option<RawBlock> {
     let Locked { first_checked, bits, pilot_half, merged_sync } = locked;
-    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, unlike, .. } =
+    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, unlike, snag, .. } =
         read_bytes(pulses, bits, expected, pilot_half);
     let mut used_bits = 8;
     // Bits past the last whole byte. Behind bytes that make a whole ROM block, whose checksum
@@ -362,6 +365,7 @@ fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<us
         merged_sync,
         short_leader: false,
         unlike,
+        snag,
     })
 }
 
@@ -535,30 +539,38 @@ const CLOSING_HALF: f64 = 945.0;
 /// through moves a half ([`WIDTH`]). A 1 bit's pair, 3,420 T, lies over it by as much under.
 const CLOSED_ZERO_MOST: f64 = 2954.0;
 
-/// The most the two halves of a bit may differ and the bit be one a saver wrote, as long as one
-/// and a half of a 0 bit's halves: 1,282.5 T, at a block's own [`Speed`].
+/// The most the two halves of a bit may differ and the bit be one a saver wrote: 1.5 of a 0
+/// bit's halves, 1,282.5 T, at a block's own [`Speed`].
 ///
 /// The saver writes both halves of a bit through the same delay loop, alike within a few
-/// T-states (`Bits::last_before_gap`). A lobe the signal loses, a short one treble loss shrank
-/// under the line or one a wander lifted off it, merges three half-waves into one, and the pair
-/// holding the merged half sums to a 1's or more: two bits read as one, the bits behind it a bit
-/// out, and where a length gate or the block's end supplies the bit the read lacks, its checksum
-/// holds one time in 256. The sum, which is all the ROM judges, cannot tell such a pair; its
-/// halves can, since the merge puts a 0 bit's pair, 1,710 T, between them. From below, the
-/// most a genuine bit's halves part: a lobe the edge detector just keeps, its lost time on a
-/// neighbour, with the crest of the hiss on its crossings, or a bit's middle crossing moved by
-/// the wander that lifts a 0 bit's lobe off the line where treble loss leaves it half a 1's
-/// height, 957 T. From above, the 0 bit's pair less the hiss's crest on three crossings, 1,543
-/// T. 1.5 halves lies between. The longer half must also be longer than a 1 bit's: a merged one
-/// is three halves, and a pair the ROM reads as a 0 with one half all but gone, 59 and 1,651 T,
-/// parts as far without one.
-///
-/// Past those walls a genuine bit parts as far: on a recording whose one kind of edge comes late,
-/// a 1 behind a run of 0s has been measured at 1,030 and 2,345 T. So such a pair is read by its
-/// sum as the ROM reads it, never refused, and only counted ([`RawBlock::unlike`]): of two
-/// readings of a block that both check out, the one through fewer such pairs is the tape's
-/// (`crate::fold`).
+/// T-states. A lobe the signal loses, such as a short one treble loss shrank or one a wander
+/// lifted off the line, merges three half-waves into one and sums its pair to a 1's or more,
+/// misreading two bits as one; the checksum then holds one time in 256. The sum alone cannot
+/// tell such a pair, but its halves can, since the merge puts a 0 bit's pair, 1,710 T, between
+/// them. The bound lies between how far a genuine bit's halves part from below, 957 T (a
+/// wander-lifted lobe), and from above, 1,543 T (the 0 bit's pair less three crossings' worth of
+/// hiss); a wider parting, up to 1,030 and 2,345 T on a recording whose one kind of edge comes
+/// late, is still read by its sum, only counted ([`RawBlock::unlike`]): of two readings that both
+/// check out, the one through fewer such pairs is the tape's (`crate::fold`).
 pub const UNLIKE_HALVES: f64 = 1.5 * RomTimings::ZERO as f64;
+
+/// How far hiss as loud as the band reads through moves a crossing, as a share of the half-wave
+/// it closes: the crest the band leaves on a lobe's slope, √2 / 4π, 11.25%.
+pub const HALF_CREST: f64 = std::f64::consts::SQRT_2 / (4.0 * std::f64::consts::PI);
+
+/// The peak of a consumer transport's wow, 0.3% RMS, as a sinusoid's: 0.42%.
+pub const WOW_PEAK: f64 = std::f64::consts::SQRT_2 * 0.003;
+
+/// How many bits before a pair give the speed it is read at again where a snag slowed the
+/// block (`Bits::bits_split`): their median.
+///
+/// A snag is none of the speed errors the pilot measures or the windows hold: the tape, held
+/// back on its way to the capstan by a pack wound tight, a sticking pressure pad or a crease,
+/// slips under the pinch roller for a fraction of a second, slows by tens of percent and is let
+/// go. No transport bounds its depth, and past 1.47 of the pilot's speed a 0 bit's pair lies
+/// past the split. From below, three are the fewest whose median holds the speed through one
+/// disturbed bit, which moves a mean; from above, each more lags the snag by another bit.
+pub const SPEED_BITS: usize = 3;
 
 /// The bits of a block, read a pair of half-waves at a time as the bit loop reads them, with
 /// bounces folded ([`BOUNCE_MOST`]).
@@ -570,11 +582,47 @@ struct Bits<'a> {
     speed: Speed,
     /// The pairs read so far whose halves differ as no saver writes a bit's ([`UNLIKE_HALVES`]).
     unlike: usize,
+    /// Whether each bit is read at the speed of the bits before it rather than the pilot's
+    /// ([`Bits::one`]).
+    at_bits: bool,
+    /// The last [`SPEED_BITS`] whole bits, oldest first, each as a 0 bit's pair at its speed (a
+    /// 1's halved), and how many have been taken. A pair counted unlike is kept out
+    /// (`disturbed`): it is a merge's, no speed of the tape's.
+    window: [f64; SPEED_BITS],
+    taken: usize,
+    disturbed: bool,
+    /// Whether the first [`SPEED_BITS`] whole bits ran at the pilot's speed, inside the noise
+    /// reach: a block a snag can slow.
+    opened: bool,
+    /// How far, as a share of the speed, the noise moves a bit's pair on this source: the crest
+    /// on its two outer crossings, the wow's peak, and a step of the source's grid.
+    reach: f64,
+    /// Whether a bit read so far reads otherwise at the speed of the bits before it.
+    departs: bool,
 }
 
 impl<'a> Bits<'a> {
     fn new(pulses: &'a [Pulse], at: usize, pilot_half: f64) -> Self {
-        Bits { pulses, at, pilot_half, speed: Speed::of_pilot(pilot_half), unlike: 0 }
+        let speed = Speed::of_pilot(pilot_half);
+        // A pulse's T-states over its length on the source's grid: a sample, or a T-state.
+        let grid = match (pulses.get(at), pulses.get(at + 1)) {
+            (Some(p), Some(q)) if q.start > p.start => p.tstates / (q.start - p.start),
+            _ => 1.0,
+        };
+        Bits {
+            pulses,
+            at,
+            pilot_half,
+            speed,
+            unlike: 0,
+            at_bits: false,
+            window: [0.0; SPEED_BITS],
+            taken: 0,
+            disturbed: false,
+            opened: false,
+            reach: HALF_CREST / 2.0 + WOW_PEAK + grid / speed.of(f64::from(2 * RomTimings::ZERO)),
+            departs: false,
+        }
     }
 
     /// The pair of halves `a` and `b`, counted where they differ as no saver writes a bit's
@@ -585,6 +633,7 @@ impl<'a> Bits<'a> {
             && a.max(b) > self.speed.of(f64::from(RomTimings::ONE))
         {
             self.unlike += 1;
+            self.disturbed = true;
         }
         a + b
     }
@@ -697,19 +746,76 @@ impl<'a> Bits<'a> {
             if let Some(pair) =
                 self.half(timeout).filter(|&h| first + h <= timeout).map(|h| self.cell(first, h))
             {
-                let closed = self.one(pair)
+                let closed = pair > self.split()
                     && pair <= self.speed.of(CLOSED_ZERO_MOST)
                     && pair - 2.0 * first > self.speed.of(CLOSING_HALF / 2.0);
-                return Some(self.one(if closed { 2.0 * first } else { pair }));
+                if closed {
+                    self.disturbed = false;
+                    return Some(self.one(2.0 * first));
+                }
+                return Some(self.whole(pair));
             }
             self.at = at;
         }
         Some(self.one(2.0 * first))
     }
 
-    /// Whether the pair `pair` is a 1 bit.
-    fn one(&self, pair: f64) -> bool {
-        pair > self.speed.of(ONE_ABOVE)
+    /// Whether the pair `pair` is a 1 bit, read at the split in force ([`Bits::split`]).
+    fn one(&mut self, pair: f64) -> bool {
+        let at_bits = self.bits_split();
+        self.departs |= (pair > self.speed.of(ONE_ABOVE)) != (pair > at_bits);
+        pair > self.split()
+    }
+
+    /// Whether the whole pair `pair` is a 1 bit ([`Bits::one`]), the pair then taken into the
+    /// window of the bits before the next.
+    fn whole(&mut self, pair: f64) -> bool {
+        let one = self.one(pair);
+        if !std::mem::take(&mut self.disturbed) {
+            self.window.rotate_left(1);
+            self.window[SPEED_BITS - 1] = if one { pair / 2.0 } else { pair };
+            self.taken += 1;
+            if self.taken == SPEED_BITS {
+                self.opened = (self.bits_speed() - 1.0).abs() <= self.reach;
+            }
+        }
+        one
+    }
+
+    /// The split a pair is read at: the pilot's speed's, or where the block is read at the speed
+    /// of the bits before each pair, theirs ([`Bits::bits_split`]).
+    fn split(&self) -> f64 {
+        if self.at_bits {
+            self.bits_split()
+        } else {
+            self.speed.of(ONE_ABOVE)
+        }
+    }
+
+    /// The speed of the last [`SPEED_BITS`] whole bits against the pilot's: their median.
+    fn bits_speed(&self) -> f64 {
+        let mut w = self.window;
+        w.sort_by(f64::total_cmp);
+        w[SPEED_BITS / 2] / self.speed.of(f64::from(2 * RomTimings::ZERO))
+    }
+
+    /// The split at the speed of the bits before the pair: the pilot's, moved by as far as they
+    /// run slower than it past the noise reach.
+    ///
+    /// Every bit of a tape a snag has not slowed lies inside the reach, so their median does,
+    /// and the block reads at the pilot's speed. A snag holds back a tape that ran at its
+    /// pilot's speed, and never runs it faster than the capstan the pilot measured: so the
+    /// bits' speed counts only in a block whose first bits ran at the pilot's, and only where
+    /// they run slower. A block whose bits open off it is no block a snag slowed, but another
+    /// saver's behind this pilot, which the ROM's split reads.
+    fn bits_split(&self) -> f64 {
+        let speed = self.bits_speed();
+        let pilots = self.speed.of(ONE_ABOVE);
+        if self.opened && speed > 1.0 + self.reach {
+            pilots * speed / (1.0 + self.reach)
+        } else {
+            pilots
+        }
     }
 }
 
@@ -731,6 +837,10 @@ struct Read {
     remainder: Option<(u8, u8, usize)>,
     /// The pairs read whose halves differ as no saver writes a bit's ([`UNLIKE_HALVES`]).
     unlike: usize,
+    /// Whether a bit reads otherwise at the speed of the bits before it ([`Bits::bits_split`]).
+    departs: bool,
+    /// Whether the bytes were read at the speed of the bits before each pair ([`read_bytes`]).
+    snag: bool,
 }
 
 /// Whether `data` is a whole ROM block: a flag and at least a checksum, which holds.
@@ -746,28 +856,52 @@ pub(crate) const BYTE_PULSES: usize = 16;
 
 /// Bytes from `start` until the bit loop stops ([`Bits::pair`]) or `expected` bytes are read.
 ///
+/// Every bit is read at the speed the pilot measured. Where a snag slowed the block past it
+/// ([`SPEED_BITS`]), the checksum fails, and some pair lies between the split at the pilot's
+/// speed and the split at the speed of the bits before it, the block is read again once at the
+/// bits' speed. That reading stands where it is the same bits, to the same pulse, and its
+/// checksum holds: a window lags a snag let go at once, reads the 1 bits past it as 0s, and the
+/// checksum is what refuses that reading.
+fn read_bytes(pulses: &[Pulse], start: Start, expected: Option<usize>, pilot_half: f64) -> Read {
+    let read = read_at(pulses, start, expected, pilot_half, false);
+    if read.departs && !proof::xor_ok(&read.bytes) {
+        let again = read_at(pulses, start, expected, pilot_half, true);
+        let same = again.end == read.end
+            && again.bytes.len() == read.bytes.len()
+            && again.remainder.map(|(_, n, at)| (n, at)) == read.remainder.map(|(_, n, at)| (n, at));
+        if same && complete(&again.bytes) {
+            return Read { snag: true, ..again };
+        }
+    }
+    read
+}
+
+/// [`read_bytes`] at the speed of the pilot, or `at_bits` of the bits before each pair.
+///
 /// A block whose flag reads 0x00 is a ROM header and stops at its 19 bytes, whatever was
 /// expected: the ROM asks for a header by its flag, and loading data it fails at a header's
 /// first byte, reading none of it. Where the 19 ask for nothing ([`proof::asks`]), a data
 /// block's first byte read 0x00 by chance, and the block is read again as it would be without
 /// that stop.
-fn read_bytes(pulses: &[Pulse], start: Start, expected: Option<usize>, pilot_half: f64) -> Read {
-    let read = read_gated(pulses, start, expected, pilot_half, true);
+fn read_at(pulses: &[Pulse], start: Start, expected: Option<usize>, pilot_half: f64, at_bits: bool) -> Read {
+    let read = read_gated(pulses, start, expected, pilot_half, true, at_bits);
     if read.bytes.len() == HEADER_LEN && read.bytes[0] == 0x00 && proof::asks(&read.bytes).is_none() {
-        return read_gated(pulses, start, expected, pilot_half, false);
+        return read_gated(pulses, start, expected, pilot_half, false, at_bits);
     }
     read
 }
 
-/// [`read_bytes`], with `header_gate` whether a 0x00 flag stops the block at 19 bytes.
+/// [`read_at`], with `header_gate` whether a 0x00 flag stops the block at 19 bytes.
 fn read_gated(
     pulses: &[Pulse],
     start: Start,
     expected: Option<usize>,
     pilot_half: f64,
     header_gate: bool,
+    at_bits: bool,
 ) -> Read {
     let mut bits = Bits::new(pulses, start.pulse(), pilot_half);
+    bits.at_bits = at_bits;
     let (mut bytes, mut end) = (Vec::new(), start.pulse());
     // A pilot running on inside the first byte is the pilot the sync was taken in, whose pairs
     // the bit loop would read as 1 bits ([`pilot_runs_on`]).
@@ -782,6 +916,8 @@ fn read_gated(
             stray_zero: false,
             remainder: None,
             unlike: 0,
+            departs: false,
+            snag: false,
         };
     }
     let mut byte = 0u8;
@@ -800,17 +936,13 @@ fn read_gated(
         }
         let last = gate.is_some_and(|n| bytes.len() + 1 == n) && bit % 8 == 7;
         let before_gap = bits.last_before_gap(bit);
-        let Some(one) =
-            before_gap.or_else(
-                || {
-                    if last {
-                        bits.final_bit(bit)
-                    } else {
-                        bits.pair(bit).map(|p| bits.one(p))
-                    }
-                },
-            )
-        else {
+        let Some(one) = before_gap.or_else(|| {
+            if last {
+                bits.final_bit(bit)
+            } else {
+                bits.pair(bit).map(|p| bits.whole(p))
+            }
+        }) else {
             break;
         };
         byte = byte << 1 | u8::from(one);
@@ -834,7 +966,7 @@ fn read_gated(
     if gate == Some(HEADER_LEN) && proof::asks(&bytes).is_some() {
         let mut extra = 0u8;
         let got = (bit..bit + 8).all(|b| {
-            let one = if b == bit + 7 { bits.final_bit(b) } else { bits.pair(b).map(|p| bits.one(p)) };
+            let one = if b == bit + 7 { bits.final_bit(b) } else { bits.pair(b).map(|p| bits.whole(p)) };
             one.map(|one| extra = extra << 1 | u8::from(one)).is_some()
         });
         if got && extra == 0x00 {
@@ -847,7 +979,18 @@ fn read_gated(
     let short = expected.is_some_and(|n| bytes.len() < n) && gate == expected;
     let rest = bit % 8;
     let remainder = (rest > 0).then(|| (byte << (8 - rest), rest as u8, bits.at));
-    Read { bytes, end, short, whole: rest == 0, gate, stray_zero, remainder, unlike }
+    Read {
+        bytes,
+        end,
+        short,
+        whole: rest == 0,
+        gate,
+        stray_zero,
+        remainder,
+        unlike,
+        departs: bits.departs,
+        snag: false,
+    }
 }
 
 /// Where the last whole byte ends that the bit loop reads from pulse `end` on, counting on from
