@@ -12,6 +12,7 @@ use crate::capture::{
     csw_block, csw_of_tstates, direct_recording, spacing, tzx_size, MAX_BLOCK_BYTES, MAX_CSW_RATE,
 };
 use crate::fallback::{block_shaped, raw_signal, sort, Part};
+use crate::fold::{fold, Source};
 use crate::framing::{next_block, PILOT_PULSE_MOST};
 use crate::proof::{self, Proof};
 use crate::pulses::{from_runs, from_tstates, Pulse};
@@ -277,11 +278,14 @@ pub enum Finding {
     /// Of the decodes on the zero line and on the signal's own midline, the midline's delivers
     /// most ([`edges::Axis`]).
     Midline,
-    /// The block was read from `channel`, where the channel kept read it in error or not at
-    /// all ([`crate::channels::combine`]).
+    /// The block was read from `channel`, which proves it more surely than the channel kept
+    /// ([`crate::fold::fold`]).
     FromChannel { block: usize, channel: Channel },
-    /// The block was read as the left and the right channel both read it, where the mix kept
-    /// read other bytes whose checksum held too ([`crate::channels::outvote`]).
+    /// The block was read on `axis`, which proves it more surely than the line kept
+    /// ([`crate::fold::fold`]).
+    FromAxis { block: usize, axis: edges::Axis },
+    /// The block was read as two of the mix and the two channels both read it, where the one
+    /// kept read other bytes whose checksum held too ([`crate::fold::fold`]).
     BothChannels { block: usize },
     /// The sync pair had merged into a half-wave beside it, or lay past the ROM's window, and the
     /// block was read where its bits are ([`crate::framing::DECIDE`]).
@@ -289,6 +293,9 @@ pub enum Finding {
     /// The block was read again on a band that follows the signal's level down through a
     /// dropout, where the first read stopped ([`edges::Band::Fade`]).
     FadeBand { block: usize },
+    /// The raw signal is the run-on of the block in front: the bits it reads past the length it
+    /// was asked for ([`crate::framing::RawBlock::bits_end`]).
+    RunOn { block: usize },
 }
 
 impl Finding {
@@ -308,8 +315,10 @@ impl Finding {
             | Finding::PartialFinalByte { block, .. }
             | Finding::MergedSync { block }
             | Finding::FromChannel { block, .. }
+            | Finding::FromAxis { block, .. }
             | Finding::BothChannels { block }
-            | Finding::FadeBand { block } => Some(block),
+            | Finding::FadeBand { block }
+            | Finding::RunOn { block } => Some(block),
             Finding::LeadIn { .. } | Finding::Channel { .. } | Finding::Midline => None,
         }
     }
@@ -336,15 +345,23 @@ impl Finding {
                 if kept == Channel::Left { "left" } else { "right" }
             ),
             Finding::FromChannel { channel, .. } => format!(
-                "Read from the {} channel: the channel kept did not read it whole.",
+                "Read from the {} channel, which proves it more surely than the channel kept.",
                 match channel {
                     Channel::Left => "left",
                     Channel::Right => "right",
                     Channel::Mix => "mixed",
                 }
             ),
+            Finding::FromAxis { axis, .. } => match axis {
+                edges::Axis::Zero => {
+                    "Read on the zero line, which proves it more surely than the signal's own centre line.".into()
+                }
+                edges::Axis::Midline => {
+                    "Read about the signal's own centre line, which proves it more surely than the zero line.".into()
+                }
+            },
             Finding::BothChannels { .. } => {
-                "Read as the left and right channels both read it: the mix read other bytes, whose checksum held by chance.".into()
+                "Read as two of the mix and the two channels both read it: the one kept read other bytes, whose checksum held by chance.".into()
             }
             Finding::Midline => {
                 "Read about the signal's own centre line, which wanders off zero: it reads more.".into()
@@ -361,6 +378,9 @@ impl Finding {
             }
             Finding::MergedSync { .. } => {
                 "The sync pulses are merged into the signal beside them or distorted; the bits are read where the block is.".into()
+            }
+            Finding::RunOn { .. } => {
+                "The block in front reads on past the length it was asked for; the bits behind it are kept as raw signal.".into()
             }
         }
     }
@@ -430,7 +450,7 @@ impl From<ImportError> for DecodeError {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Channels {
     /// The mix, the left and the right channel each in turn, keeping the decode that delivers
-    /// most ([`crate::channels`]).
+    /// most and folding the others into it ([`crate::fold`]).
     #[default]
     Best,
     Only(Channel),
@@ -469,8 +489,9 @@ pub fn decode_file(
     decode_channel(name, bytes, channel, filter, window, inflate, progress, cancel)
 }
 
-/// The decode `decode` makes of the mix, the left or the right channel that delivers most. A
-/// channel that cannot be decoded delivers nothing; when none can, the mix's error stands.
+/// The decode `decode` makes of the mix, the left or the right channel that delivers most, the
+/// other two folded into it ([`crate::fold::fold`]). A channel that cannot be decoded delivers
+/// nothing; when none can, the mix's error stands.
 fn best_channel(
     mut decode: impl FnMut(Channel, &mut dyn FnMut(Progress)) -> Result<Decoded, DecodeError>,
     progress: &mut dyn FnMut(Progress),
@@ -489,28 +510,28 @@ fn best_channel(
         }
         decodes.push(got);
     }
-    let (i, decodes) = best_index(decodes)?;
-    let mut decodes: Vec<Option<Decoded>> = decodes.into_iter().map(Result::ok).collect();
-    let mut kept = decodes[i].take().expect("the decode picked is one that read");
-    let donors: Vec<(Channel, &Decoded)> =
-        ORDER.iter().zip(&decodes).filter_map(|(&c, d)| d.as_ref().map(|d| (c, d))).collect();
-    if let (Channel::Mix, [_, Some(left), Some(right)]) = (ORDER[i], &decodes[..]) {
-        crate::channels::outvote(&mut kept, left, right);
-    }
-    crate::channels::faded_legs(&mut kept, &donors);
-    crate::channels::combine(&mut kept, &donors);
+    let (i, mut kept) = keep_and_fold(decodes, |k| Source::Channel(ORDER[k]))?;
     kept.findings.insert(0, Finding::Channel { kept: ORDER[i] });
     Ok(kept)
 }
 
-/// Which of `decodes` delivers most ([`crate::channels::pick`]), the earliest on a tie, and that
-/// decode. One that failed delivers nothing; when all failed, the first one's error stands.
-fn best_of(decodes: Vec<Result<Decoded, DecodeError>>) -> Result<(usize, Decoded), DecodeError> {
-    let (i, mut decodes) = best_index(decodes)?;
-    Ok((i, decodes.swap_remove(i)?))
+/// The decode of `decodes` that delivers most (`best_index`), the others folded into it
+/// ([`fold`]), each from `source` of its index; and which it is.
+fn keep_and_fold(
+    decodes: Vec<Result<Decoded, DecodeError>>,
+    source: impl Fn(usize) -> Source,
+) -> Result<(usize, Decoded), DecodeError> {
+    let (i, decodes) = best_index(decodes)?;
+    let mut decodes: Vec<Option<Decoded>> = decodes.into_iter().map(Result::ok).collect();
+    let mut kept = decodes[i].take().expect("the decode picked is one that read");
+    let donors: Vec<(Source, &Decoded)> =
+        decodes.iter().enumerate().filter_map(|(k, d)| d.as_ref().map(|d| (source(k), d))).collect();
+    fold(&mut kept, &donors);
+    Ok((i, kept))
 }
 
-/// Which of `decodes` [`best_of`] picks, with them all.
+/// Which of `decodes` delivers most ([`crate::fold::pick_reading`]), the earliest on a tie, with
+/// them all. One that failed delivers nothing; when all failed, the first one's error stands.
 #[allow(clippy::type_complexity)]
 fn best_index(
     mut decodes: Vec<Result<Decoded, DecodeError>>,
@@ -521,9 +542,8 @@ fn best_index(
     if decodes.iter().all(Result::is_err) {
         return Err(decodes.swap_remove(0).expect_err("every decode failed"));
     }
-    let views: Vec<&[Block]> =
-        decodes.iter().map(|d| d.as_ref().map_or(&[][..], |d| &d.blocks[..])).collect();
-    let i = crate::channels::pick(&views);
+    let readings: Vec<Option<&Decoded>> = decodes.iter().map(|d| d.as_ref().ok()).collect();
+    let i = crate::fold::pick_reading(&readings);
     Ok((i, decodes))
 }
 
@@ -561,15 +581,18 @@ fn decode_channel(
 }
 
 /// Decodes sampled audio, its edges found on the zero line and on the signal's own midline
-/// ([`edges::Axis`]), keeping the decode that delivers most, the zero line's on a tie, as the
-/// channels are chosen ([`crate::channels`]). `in_window` keeps the pulses asked for.
+/// ([`edges::Axis`]), keeping the decode that delivers most, the zero line's on a tie, and
+/// folding the other into it, as the channels are ([`crate::fold`]). `in_window` keeps the
+/// pulses asked for.
 ///
 /// A worn tape's centre can wander further than its shrunken short half-waves swing, so that
 /// they never cross zero and two bits merge into one; about the midline every lobe is its own
 /// excursion. No statistic says beforehand which line a recording reads best on, and on a
-/// clean one both read the same, so both are decoded and judged by what they deliver. Where
-/// the zero line's decode holds nothing but whole blocks and plain pauses, the midline is not
-/// walked: the pick leaves a decode only for one that delivers more, and there is nothing more.
+/// clean one both read the same, so both are decoded and judged by what they deliver, and a
+/// block one line proves more surely than the other is the tape's whichever is kept. Where the
+/// zero line's decode holds nothing but whole blocks and plain pauses, the midline is not
+/// walked: neither the pick nor the fold takes anything from a decode but what it proves more
+/// surely, and there is nothing more.
 /// On either line, a block a header asks for that does not read whole is read again on the fade
 /// band ([`read_faded`]).
 fn decode_sound(
@@ -640,7 +663,7 @@ fn decode_sound(
     if cancel.load(Ordering::Relaxed) {
         return Err(DecodeError::Cancelled);
     }
-    let (i, mut kept) = best_of(decodes)?;
+    let (i, mut kept) = keep_and_fold(decodes, |k| Source::Axis(AXES[k]))?;
     if AXES[i] == edges::Axis::Midline {
         kept.findings.insert(0, Finding::Midline);
     }
@@ -916,6 +939,9 @@ fn settle(out: &mut Decoded, stretch: &[Pulse], keep: usize, end: f64, grid_hz: 
                 );
                 if let Some(block) = raw_signal(&stretch[r.clone()], grid_hz) {
                     out.findings.push(Finding::RawSignal { block: out.blocks.len() });
+                    if r.start == 0 && keep > 0 {
+                        out.findings.push(Finding::RunOn { block: out.blocks.len() });
+                    }
                     out.blocks.push(block);
                     out.extents.push(Extent { start: at(r.start), end: at(r.end), signal_end: at(r.end) });
                 }

@@ -11,8 +11,8 @@ use common::Rng;
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::channels::faded_legs;
 use tapeti_decode::entry::{decode_file, decode_pulses, Channels, Decoded, Extent, Finding};
+use tapeti_decode::fold::{fold, Source};
 use tapeti_decode::readers::Channel;
 use tapeti_decode::waveform::edges::{detect_pulses_band, Axis, Band};
 use tapeti_decode::waveform::filter::Filter;
@@ -153,14 +153,17 @@ fn a_fade_band_read_gives_way_to_another_channels_ordinary_read() {
     let right = with_checksum(vec![0xFF, 0x20, 0x20, 0x41]);
     let wrong = with_checksum(vec![0xFF, 0x60, 0x60, 0x41]);
     let mut base = decoded(&wrong, vec![Finding::FadeBand { block: 0 }]);
-    faded_legs(&mut base, &[(Channel::Left, &decoded(&right, Vec::new()))]);
+    fold(&mut base, &[(Source::Channel(Channel::Left), &decoded(&right, Vec::new()))]);
     assert_eq!(datas(&base), vec![right.clone()]);
     assert_eq!(base.findings, [Finding::FromChannel { block: 0, channel: Channel::Left }]);
     // Not to another fade band read, nor where the block is the ordinary band's own.
     let mut base = decoded(&wrong, vec![Finding::FadeBand { block: 0 }]);
-    faded_legs(&mut base, &[(Channel::Left, &decoded(&right, vec![Finding::FadeBand { block: 0 }]))]);
+    fold(
+        &mut base,
+        &[(Source::Channel(Channel::Left), &decoded(&right, vec![Finding::FadeBand { block: 0 }]))],
+    );
     assert_eq!(datas(&base), vec![wrong.clone()]);
     let mut base = decoded(&wrong, Vec::new());
-    faded_legs(&mut base, &[(Channel::Left, &decoded(&right, Vec::new()))]);
+    fold(&mut base, &[(Source::Channel(Channel::Left), &decoded(&right, Vec::new()))]);
     assert_eq!(datas(&base), [wrong]);
 }

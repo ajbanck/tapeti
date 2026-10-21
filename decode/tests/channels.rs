@@ -10,9 +10,10 @@ use common::same_tape;
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::channels::{delivered, pick, shape};
-use tapeti_decode::entry::{decode_file, Channels, Decoded, Finding};
+use tapeti_decode::entry::{decode_file, Channels, Decoded, Extent, Finding};
+use tapeti_decode::fold::{delivered, fold, pick, pick_reading, shape, Source};
 use tapeti_decode::readers::Channel;
+use tapeti_decode::waveform::edges::Axis;
 use tapeti_decode::waveform::filter::Filter;
 
 fn standard(data: Vec<u8>) -> Block {
@@ -219,53 +220,139 @@ fn a_block_each_channel_loses_comes_from_the_other() {
     assert_eq!(from.len(), 1, "{:?}", best.findings);
 }
 
-#[test]
-fn a_block_is_taken_only_behind_the_same_header_read_as_often() {
-    use tapeti_decode::channels::combine;
-    use tapeti_decode::entry::Extent;
-    let decoded = |blocks: Vec<Block>| Decoded {
+/// `blocks` as a decode lays them out: block `i` from `at` plus 100,000 samples a block, its
+/// signal 90,000 of them, then its pause.
+fn laid(blocks: Vec<Block>, at: f64) -> Decoded {
+    Decoded {
         extents: (0..blocks.len())
-            .map(|i| Extent {
-                start: i as f64 * 10.0,
-                end: i as f64 * 10.0 + 9.0,
-                signal_end: i as f64 * 10.0 + 9.0,
+            .map(|i| {
+                let start = at + i as f64 * 100_000.0;
+                Extent { start, end: start + 100_000.0, signal_end: start + 90_000.0 }
             })
             .collect(),
         blocks,
         findings: Vec::new(),
         rate_hz: 44100,
         collapsed_ends: [0; 2],
-    };
-    let a = program("A", &[1, 2, 3, 4]);
-    let broken = |p: &[Block]| {
-        let mut p = p.to_vec();
-        if let Body::Standard { data, .. } = &mut p[1].body {
-            data[2] ^= 1;
-        }
-        p
-    };
-    // A failed block behind the header is replaced from the donor.
-    let mut base = decoded(broken(&a));
-    combine(&mut base, &[(Channel::Right, &decoded(a.clone()))]);
-    assert_eq!(datas(&base.blocks), datas(&a));
-    assert_eq!(base.findings, [Finding::FromChannel { block: 1, channel: Channel::Right }]);
-    // A header the base reads twice and the donor once anchors nothing.
-    let mut base = decoded([broken(&a), a.clone()].concat());
-    let before = base.blocks.clone();
-    combine(&mut base, &[(Channel::Right, &decoded(a.clone()))]);
-    assert_eq!(base.blocks, before);
-    // Nor does a donor pair that is not whole, nor a header elsewhere in the recording.
-    let mut base = decoded(broken(&a));
-    combine(&mut base, &[(Channel::Right, &decoded(broken(&a)))]);
-    assert_eq!(base.blocks, broken(&a));
-    let mut base = decoded(broken(&a));
-    let mut far = decoded(a.clone());
-    for e in &mut far.extents {
-        e.start += 1000.0;
-        e.end += 1000.0;
     }
-    combine(&mut base, &[(Channel::Right, &far)]);
-    assert_eq!(base.blocks, broken(&a));
+}
+
+/// `blocks` with the bits of `bits` flipped in each byte `at` of block `k`.
+fn flipped(blocks: &[Block], k: usize, at: &[usize], bits: u8) -> Vec<Block> {
+    let mut blocks = blocks.to_vec();
+    if let Body::Standard { data, .. } = &mut blocks[k].body {
+        for &i in at {
+            data[i] ^= bits;
+        }
+    }
+    blocks
+}
+
+fn folded(base: &Decoded, donors: &[(Source, &Decoded)]) -> Decoded {
+    let mut base = base.clone();
+    fold(&mut base, donors);
+    base
+}
+
+#[test]
+fn a_block_is_taken_where_another_reading_proves_more_at_the_same_place() {
+    let a = program("A", &[1, 2, 3, 4]);
+    let b = program("BEE", &[5, 6, 7, 8, 9, 10]);
+    let broken = flipped(&a, 1, &[2], 1);
+    let right = Source::Channel(Channel::Right);
+    // A failed block behind the header is replaced from the donor.
+    let got = folded(&laid(broken.clone(), 0.0), &[(right, &laid(a.clone(), 0.0))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromChannel { block: 1, channel: Channel::Right }]);
+    // Not from a donor whose read fails there too.
+    let got = folded(&laid(broken.clone(), 0.0), &[(right, &laid(broken.clone(), 0.0))]);
+    assert_eq!(got.blocks, broken);
+    // Nor from a donor that reads the same program elsewhere in the recording, where the base
+    // reads another one whole: a block is met where it lies, a header against a header is one
+    // rank, and one reading against one decides nothing.
+    let base = laid([broken.clone(), b.clone()].concat(), 0.0);
+    let got = folded(&base, &[(right, &laid(a.clone(), 200_000.0))]);
+    assert_eq!(got.blocks, base.blocks);
+}
+
+#[test]
+fn a_block_one_reading_reads_whole_answers_the_header_another_read() {
+    // The midline reads the header and not the block, the zero line the block and not the
+    // header: the block answers the midline's header, so it is the tape's.
+    let a = program("A", &(0..200u8).collect::<Vec<u8>>());
+    let midline = laid(flipped(&a, 1, &[7], 0x10), 0.0);
+    let zero = laid(flipped(&a, 0, &[4], 0x02), 0.0);
+    let got = folded(&midline, &[(Source::Axis(Axis::Zero), &zero)]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromAxis { block: 1, axis: Axis::Zero }]);
+}
+
+#[test]
+fn a_header_one_reading_reads_whole_goes_in_front_of_the_block_another_read() {
+    // The left channel reads the block and not the header, the mix the header and not the
+    // block: the header goes in front, and the block behind it answers it.
+    let a = program("A", &(0..200u8).collect::<Vec<u8>>());
+    let left = laid(flipped(&a, 0, &[4], 0x02), 0.0);
+    let mix = laid(flipped(&a, 1, &[7], 0x10), 0.0);
+    let got = folded(&left, &[(Source::Channel(Channel::Mix), &mix)]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromChannel { block: 0, channel: Channel::Mix }]);
+    // A header whose name is colour codes proves itself only by the block behind it, and does
+    // where it would stand.
+    let coded = program("\u{10}\u{2}MINER", &(0..200u8).collect::<Vec<u8>>());
+    let left = laid(flipped(&coded, 0, &[4], 0x02), 0.0);
+    let got = folded(&left, &[(Source::Channel(Channel::Mix), &laid(coded.clone(), 0.0))]);
+    assert_eq!(datas(&got.blocks), datas(&coded));
+}
+
+#[test]
+fn at_one_rank_a_block_read_through_the_roms_sync_outranks_one_read_out_of_step_through_a_form() {
+    // Both channels read the block through a merged sync, out of step: the same bit wrong in
+    // every byte, so the checksum holds. The mix reads it through the sync pair; all three
+    // answer the header, and the two alike are outranked by how the third was read.
+    let a = program("A", &(0..112u8).collect::<Vec<u8>>());
+    let out_of_step = flipped(&a, 1, &(1..=112).collect::<Vec<usize>>(), 0x08);
+    let merged = |blocks: &[Block]| {
+        let mut d = laid(blocks.to_vec(), 0.0);
+        d.findings.push(Finding::MergedSync { block: 1 });
+        d
+    };
+    let (left, right) = (merged(&out_of_step), merged(&out_of_step));
+    let mix = laid(a.clone(), 0.0);
+    let donors = [(Source::Channel(Channel::Mix), &mix), (Source::Channel(Channel::Right), &right)];
+    let got = folded(&left, &donors);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromChannel { block: 1, channel: Channel::Mix }]);
+    // The other way about, the reading through the sync pair stands.
+    let got = folded(&laid(a.clone(), 0.0), &[(Source::Channel(Channel::Left), &left)]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert!(got.findings.is_empty(), "{:?}", got.findings);
+}
+
+#[test]
+fn a_reading_through_the_sync_pair_with_two_bytes_wrong_does_not_outrank_one_through_a_form() {
+    // A screen read through a merged sync, whole, and through the sync pair with bit 3 wrong in
+    // two attributes, the checksum holding: the same start, so the sync decides nothing; the
+    // two readings alike stand against the one.
+    let a = program("SCREEN", &(0..6912u32).map(|k| (k * 7 + 3) as u8).collect::<Vec<u8>>());
+    let mut whole = laid(a.clone(), 0.0);
+    whole.findings.push(Finding::MergedSync { block: 1 });
+    let damaged = laid(flipped(&a, 1, &[6623, 6728], 0x08), 0.0);
+    let got = folded(&whole, &[(Source::Channel(Channel::Right), &damaged)]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    let other = whole.clone();
+    let got = folded(
+        &whole,
+        &[(Source::Channel(Channel::Left), &other), (Source::Channel(Channel::Right), &damaged)],
+    );
+    assert_eq!(datas(&got.blocks), datas(&a));
+    // Two alike against it, the damaged reading kept gives way to them.
+    let got = folded(
+        &damaged,
+        &[(Source::Channel(Channel::Left), &whole), (Source::Channel(Channel::Right), &other)],
+    );
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings[1..], [Finding::BothChannels { block: 1 }]);
 }
 
 /// A turbo block at about twice the ROM's speed: signal shaped like a block that the ROM's
@@ -326,8 +413,6 @@ fn a_stretch_one_channel_heard_as_silence_takes_the_others_raw_signal() {
 
 #[test]
 fn raw_signal_goes_only_where_the_kept_decode_heard_silence_and_read_nothing_proved() {
-    use tapeti_decode::channels::combine;
-    use tapeti_decode::entry::Extent;
     let ext = |start: f64, signal_end: f64, end: f64| Extent { start, end, signal_end };
     let raw = Block::new(Body::Csw {
         pause: 1500,
@@ -350,7 +435,7 @@ fn raw_signal_goes_only_where_the_kept_decode_heard_silence_and_read_nothing_pro
     let donor = |end: f64| tape(vec![(raw.clone(), ext(41_000.0, end, 199_000.0))], 200_000.0);
     let folded = |base: &Decoded, donor: &Decoded| {
         let mut b = base.clone();
-        combine(&mut b, &[(Channel::Right, donor)]);
+        fold(&mut b, &[(Source::Channel(Channel::Right), donor)]);
         b
     };
 
@@ -375,6 +460,22 @@ fn raw_signal_goes_only_where_the_kept_decode_heard_silence_and_read_nothing_pro
     let out = folded(&pieces, &donor(190_000.0));
     assert_eq!(out.blocks.len(), 4, "{:?}", out.blocks);
     assert_eq!(out.blocks[2], raw);
+    // A recording whose pause runs on past where the next block starts ends its pause there, so
+    // that nothing after it moves.
+    let mut late = tape(vec![(raw.clone(), ext(41_000.0, 60_000.0, 260_000.0))], 200_000.0);
+    late.blocks.pop();
+    late.extents.pop();
+    let out = folded(&silent, &late);
+    assert_eq!(out.blocks.len(), 4, "{:?}", out.blocks);
+    assert_eq!(out.extents[2], ext(41_000.0, 60_000.0, 200_000.0));
+    let Body::Csw { pause, .. } = out.blocks[2].body else { unreachable!() };
+    assert_eq!(pause, 3175, "140,000 samples at 44.1 kHz");
+
+    // A run-on is the donor's reading of the tail of the block in front, which the kept reading
+    // read to its own end: it comes only behind that block taken from the donor.
+    let mut run_on = donor(190_000.0);
+    run_on.findings.push(Finding::RunOn { block: 2 });
+    assert_eq!(folded(&silent, &run_on).blocks, silent.blocks, "a run-on");
 
     // Nothing moves for a recording past the next block's start, where the stretch held a
     // block whose checksum holds, or where it heard signal and played no pause.
@@ -394,52 +495,35 @@ fn raw_signal_goes_only_where_the_kept_decode_heard_silence_and_read_nothing_pro
 
 #[test]
 fn a_block_both_channels_read_alike_outvotes_the_mixs_other_reading() {
-    use tapeti_decode::channels::outvote;
-    use tapeti_decode::entry::Extent;
-    let decoded = |blocks: Vec<Block>, shift: f64| Decoded {
-        extents: (0..blocks.len())
-            .map(|i| Extent {
-                start: i as f64 * 10.0 + shift,
-                end: i as f64 * 10.0 + 9.0 + shift,
-                signal_end: i as f64 * 10.0 + 9.0 + shift,
-            })
-            .collect(),
-        blocks,
-        findings: Vec::new(),
-        rate_hz: 44100,
-        collapsed_ends: [0; 2],
+    let channels = |left: &Decoded, right: &Decoded| {
+        [(Source::Channel(Channel::Left), left.clone()), (Source::Channel(Channel::Right), right.clone())]
+    };
+    let vote = |base: &Decoded, left: &Decoded, right: &Decoded| {
+        let donors = channels(left, right);
+        folded(base, &donors.iter().map(|(s, d)| (*s, d)).collect::<Vec<_>>())
     };
     // The mix reads bit 6 of two spaces in the header's name as a 1: "`", the checksum holding.
     let tape = program("MACHINE", &[1, 2, 3, 4]);
-    let mut misread = tape.clone();
-    if let Body::Standard { data, .. } = &mut misread[0].body {
-        data[10] ^= 0x40;
-        data[11] ^= 0x40;
-    }
-    let mut base = decoded(misread.clone(), 0.0);
-    outvote(&mut base, &decoded(tape.clone(), 2.0), &decoded(tape.clone(), -2.0));
-    assert_eq!(datas(&base.blocks), datas(&tape));
-    assert_eq!(base.findings, [Finding::BothChannels { block: 0 }]);
+    let misread = flipped(&tape, 0, &[10, 11], 0x40);
+    let got = vote(&laid(misread.clone(), 0.0), &laid(tape.clone(), 2.0), &laid(tape.clone(), -2.0));
+    assert_eq!(datas(&got.blocks), datas(&tape));
+    assert_eq!(got.findings, [Finding::BothChannels { block: 0 }]);
     // Not where the channels differ from each other, or one reads nothing whole there.
-    let mut other = tape.clone();
-    if let Body::Standard { data, .. } = &mut other[0].body {
-        data[3] ^= 0x01;
-        data[4] ^= 0x01;
-    }
-    let mut broken = tape.clone();
-    if let Body::Standard { data, .. } = &mut broken[0].body {
-        data[3] ^= 0x01;
-    }
+    let other = flipped(&tape, 0, &[3, 4], 0x01);
+    let broken = flipped(&tape, 0, &[3], 0x01);
     for right in [other, broken] {
-        let mut base = decoded(misread.clone(), 0.0);
-        outvote(&mut base, &decoded(tape.clone(), 0.0), &decoded(right, 0.0));
-        assert_eq!(datas(&base.blocks), datas(&misread));
-        assert!(base.findings.is_empty());
+        let got = vote(&laid(misread.clone(), 0.0), &laid(tape.clone(), 0.0), &laid(right, 0.0));
+        assert_eq!(datas(&got.blocks), datas(&misread));
+        assert!(got.findings.is_empty());
     }
-    // Nor where the channels read it elsewhere in the recording.
-    let mut base = decoded(misread.clone(), 0.0);
-    outvote(&mut base, &decoded(tape.clone(), 100.0), &decoded(tape.clone(), 100.0));
-    assert_eq!(datas(&base.blocks), datas(&misread));
+    // A block is met at its own place: the pause of the block before it, running 20 samples
+    // into it in one channel, does not make that block the one to compare.
+    let leg = flipped(&tape, 1, &[2, 3], 0x04);
+    let mut right = laid(tape.clone(), 0.0);
+    right.extents[0].end += 20.0;
+    let got = vote(&laid(leg, 0.0), &laid(tape.clone(), 0.0), &right);
+    assert_eq!(datas(&got.blocks), datas(&tape));
+    assert_eq!(got.findings, [Finding::BothChannels { block: 1 }]);
 }
 
 #[test]
@@ -452,4 +536,48 @@ fn runs_of_one_byte_that_check_out_name_no_incumbent() {
     let scraps = [vec![standard(vec![0xFF; 6]); 7], vec![slipped]].concat();
     assert_eq!(chosen(&whole, &scraps, &whole), 0);
     assert!(shape(&scraps) < shape(&whole));
+}
+
+#[test]
+fn a_block_enters_over_a_failed_reading_of_it_only_where_the_checksum_tells_the_two_apart() {
+    // The zero line reads a long block in step with the midline but fails its checksum, whether
+    // they part at one byte, a burst of them, two places whose differences do not cancel, or
+    // from one byte on as the failed reading slips: the checksum holds over the midline's reading
+    // and fails over the zero line's, so the midline's is the tape's.
+    let a = program("LONG", &(0..2000u32).map(|k| (k * 13 + 1) as u8).collect::<Vec<u8>>());
+    let midline = Source::Axis(Axis::Midline);
+    for failed in [
+        flipped(&a, 1, &[700], 0x01),
+        flipped(&a, 1, &[700, 701, 702], 0x01),
+        flipped(&flipped(&a, 1, &[300], 0x20), 1, &[1200], 0x04),
+        flipped(&a, 1, &(1500..1991).collect::<Vec<usize>>(), 0x55),
+    ] {
+        let got = folded(&laid(failed, 0.0), &[(midline, &laid(a.clone(), 0.0))]);
+        assert_eq!(datas(&got.blocks), datas(&a));
+    }
+    // Where they part at two places by the same bit, the midline's checksum may hold despite being
+    // wrong twice, here at 300 and 1200, where the failed reading has them right; with the failed
+    // reading also slipping at 1900, the checksum cannot tell the two apart and the failure stands.
+    let damaged = flipped(&a, 1, &[300, 1200], 0x20);
+    let failed = laid(flipped(&a, 1, &(1900..1991).collect::<Vec<usize>>(), 0x55), 0.0);
+    let got = folded(&failed, &[(midline, &laid(damaged, 0.0))]);
+    assert_eq!(got.blocks, failed.blocks);
+}
+
+#[test]
+fn a_reading_that_checks_out_against_a_failed_one_parting_twice_is_not_kept_for_it() {
+    // As the fold above: the midline holds by bit 5 wrong at 300 and 1200, the zero line fails
+    // and slips at 1900, and both read every other block alike. Pick keeps the zero line here,
+    // and the midline only where the checksum tells the two apart.
+    let a = program("LONG", &(0..2000u32).map(|k| (k * 13 + 1) as u8).collect::<Vec<u8>>());
+    let tape = [a.clone(), program("NEXT", &[1, 2, 3])].concat();
+    let damaged = laid(flipped(&tape, 1, &[300, 1200], 0x20), 0.0);
+    let failed = laid(flipped(&tape, 1, &(1900..1991).collect::<Vec<usize>>(), 0x55), 0.0);
+    assert_eq!(pick(&[&failed.blocks[..], &damaged.blocks[..]]), 1);
+    assert_eq!(pick_reading(&[Some(&failed), Some(&damaged)]), 0);
+    let once = laid(flipped(&tape, 1, &[700], 0x01), 0.0);
+    assert_eq!(pick_reading(&[Some(&once), Some(&laid(tape.clone(), 0.0))]), 1);
+    let twice = laid(flipped(&flipped(&tape, 1, &[300], 0x20), 1, &[1200], 0x04), 0.0);
+    assert_eq!(pick_reading(&[Some(&twice), Some(&laid(tape.clone(), 0.0))]), 1);
+    assert_eq!(pick_reading(&[None, Some(&damaged)]), 1);
 }

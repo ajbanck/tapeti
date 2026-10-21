@@ -104,6 +104,13 @@ fn an_answer_is_as_long_as_the_header_asked() {
         ranks,
         [Proof::Header, Proof::None, Proof::Answer, Proof::Trivial, Proof::Verified, Proof::None]
     );
+    // A header whose name is no text (colour codes, a token) proves no more than any 19 bytes
+    // that check out, until the block behind it answers it: then the pair proves each other.
+    let coded = header(0, b"\x10\x02MINER3  ", 100);
+    assert_eq!(of(&coded), Proof::Trivial);
+    let tape = vec![standard(coded.clone()), Block::new(Body::Pause { pause: 500 }), standard(data.clone())];
+    assert_eq!(at(&tape, 0), Proof::Answer);
+    assert_eq!(at(&[standard(coded.clone()), standard(bad.clone())], 0), Proof::Trivial);
 }
 
 #[test]

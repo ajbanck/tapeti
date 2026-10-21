@@ -4,9 +4,9 @@
 //! Tape recordings to `tapeti-core` blocks. No I/O, and no dependency but `tapeti-core`.
 
 pub mod capture;
-pub mod channels;
 pub mod entry;
 pub mod fallback;
+pub mod fold;
 pub mod framing;
 pub mod proof;
 pub mod pulses;

@@ -116,15 +116,30 @@ pub fn image(b: &Block) -> Option<&[u8]> {
     }
 }
 
-/// What block `i` of `blocks` proves, the header in front counted.
+/// What `data` proves between `front` and `behind`, the nearest blocks of data either side.
 ///
-/// The header is the nearest block of data before it, where that is a ROM header ([`asks`]);
-/// pauses and raw signal between do not count. Nothing for a block that is no data.
-pub fn at(blocks: &[Block], i: usize) -> Proof {
-    let Some(data) = image(&blocks[i]) else { return Proof::None };
-    let asked = blocks[..i].iter().rev().find_map(image).and_then(asks);
-    match asked {
+/// As the answer to `front` where that is a ROM header ([`answering`]); and as a ROM header
+/// that `behind` answers, an answer at least, whatever its name: a header and the block of
+/// its length behind it prove each other, as a pair the ROM would load.
+pub fn between(front: Option<&[u8]>, data: &[u8], behind: Option<&[u8]>) -> Proof {
+    let own = match front.and_then(asks) {
         Some(n) => answering(data, n),
         None => of(data),
+    };
+    let answered = asks(data).zip(behind).is_some_and(|(n, b)| answering(b, n) == Proof::Answer);
+    if answered {
+        own.max(Proof::Answer)
+    } else {
+        own
     }
+}
+
+/// What block `i` of `blocks` proves, the header in front and the block behind counted
+/// ([`between`]).
+///
+/// Either is the nearest block of data that way; pauses and raw signal between do not count.
+/// Nothing for a block that is no data.
+pub fn at(blocks: &[Block], i: usize) -> Proof {
+    let Some(data) = image(&blocks[i]) else { return Proof::None };
+    between(blocks[..i].iter().rev().find_map(image), data, blocks[i + 1..].iter().find_map(image))
 }
