@@ -30,7 +30,7 @@ use tapeti_core::types::{Block, Body};
 use tapeti_decode::entry::{decode_file, decode_pulses, tape_band, Channels, Decoded, Finding};
 use tapeti_decode::pulses::{of_blocks, Pulse};
 use tapeti_decode::readers::Channel;
-use tapeti_decode::waveform::edges::detect_pulses;
+use tapeti_decode::waveform::edges::{detect_pulses, detect_pulses_band, Axis, Band};
 use tapeti_decode::waveform::filter::Filter;
 
 const RATE: u32 = 44_100;
@@ -1050,7 +1050,7 @@ const HUM_WHOLE: f32 = 1.4;
 const HUM_LOSS: f32 = 1.5;
 
 fn hum_lost() -> Judged {
-    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Collapsed, Said::Lost]), Vec::new())
 }
 
 #[test]
@@ -1933,10 +1933,36 @@ fn a_click_at_the_next_pilot_behind_a_block_with_no_pause_loses_that_block() {
     );
 }
 
-/// A wander over a dull tape that leaves the signal as it is no block, all of it raw signal, and
-/// the band-pass the header of three blocks, with the other two bad: the header goes in, and
-/// the raw signal either side of it, where the band-pass read a block, stays raw signal, so the
-/// two are said, with a pause behind them or none.
+/// The noise line each axis holds its pulses to is measured on the signal that axis cuts
+/// (`edges::mark_quiet_on`). Under a wander over a dull tape the zero line holds the wander
+/// itself, so half the tape's pulses on it and more are quiet; the midline follows the wander,
+/// and its own line marks next to none of the tape's pulses quiet, with or without ten seconds
+/// of dead air. Applying the zero line's own measure to the midline's pulses instead marks 57%
+/// of them quiet at a wander of 0.4 and 81% at 0.9.
+#[test]
+fn a_wander_over_a_dull_tape_leaves_the_midlines_pulses_loud() {
+    let lvl = rms(&render(&tape()));
+    for dead in [0.0, 10_000.0] {
+        for w in [0.4f32, 0.9] {
+            let mut x = vec![0.0f32; ms(dead)];
+            x.extend(render(&tape()));
+            x.extend(vec![0.0f32; ms(dead)]);
+            let x = hum(&spacing_loss(&hiss_under(&x, lvl, 40, 7), RATE, 5.0), RATE, 120.0, w);
+            let quiet = |axis| {
+                let p =
+                    detect_pulses_band(|| x.iter().copied(), RATE, Filter::None, axis, Band::Max).unwrap();
+                let tape: Vec<_> = p.iter().filter(|q| (400.0..=2600.0).contains(&q.tstates)).collect();
+                tape.iter().filter(|q| q.quiet).count() as f64 / tape.len() as f64
+            };
+            assert!(quiet(Axis::Zero) > 0.5, "{dead} ms, wander {w}");
+            assert!(quiet(Axis::Midline) < 0.001, "{dead} ms, wander {w}");
+        }
+    }
+}
+
+/// A wander over a dull tape leaves the signal as it is no block at all, raw signal throughout;
+/// the band-pass reads the header of three blocks and keeps the other two as raw signal, said
+/// lost with a pause behind them or none.
 #[test]
 fn a_wander_that_leaves_raw_signal_says_what_the_band_pass_did_not_read() {
     let wandering = |w: f32| move |x: &[f32]| hum(&spacing_loss(x, RATE, 5.0), RATE, 120.0, w);

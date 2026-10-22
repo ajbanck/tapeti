@@ -827,12 +827,11 @@ fn decode_sound(
 ) -> Result<Readings, DecodeError> {
     use std::cell::{Cell, RefCell};
     const AXES: [edges::Axis; 2] = [edges::Axis::Zero, edges::Axis::Midline];
-    // The samples run out when the flag is set, so a cancel ends the edge detector's passes over
-    // a long recording too, not just the reading of blocks after them. They are counted as they
-    // go, against the passes the detector makes at most: the statistics once, then the edges and
-    // the quiet pulses on each line.
+    // The samples run out when the flag is set, so a cancel ends the edge detector's passes too:
+    // the statistics pass, the zero line's edges and quiet pulses, and the midline's edges, which
+    // takes its quiet pulses from the zero line's pass.
     let read = Cell::new(0usize);
-    let all = ((1 + 2 * AXES.len()) * sound.len()).max(1);
+    let all = ((1 + 2 + 1) * sound.len()).max(1);
     let edges_done = || EDGES_SHARE * (read.get().min(all) as f32 / all as f32);
     // Reading the blocks of each line takes its share of what is left.
     let per_axis = (1.0 - EDGES_SHARE) / AXES.len() as f32;

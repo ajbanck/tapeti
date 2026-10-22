@@ -210,7 +210,7 @@ pub fn detect_on<I: Iterator<Item = f32>>(
     axis: Axis,
 ) -> Result<Vec<Edge>, FilterError> {
     let stats = measure(&samples, rate_hz, filter)?;
-    edges_on(&samples, rate_hz, filter, &stats, axis, Band::Max)
+    edges_on(&samples, rate_hz, filter, &stats, axis, Band::Max, None)
 }
 
 /// The pulses of a recording at `rate_hz` on the zero line, each marked quiet where it never
@@ -232,7 +232,7 @@ pub fn detect_pulses<I: Iterator<Item = f32>>(
 ///
 /// The pulses are cut as [`detect_pulses`] cuts them. The recording's statistics are measured
 /// once, and one axis's pulses are let go before the next axis is walked. `samples` is called
-/// once, and twice more for each axis walked.
+/// once, then twice more for the zero line and once more for the midline.
 pub fn detect_pulses_each<I: Iterator<Item = f32>, T>(
     samples: impl Fn() -> I,
     rate_hz: u32,
@@ -243,14 +243,11 @@ pub fn detect_pulses_each<I: Iterator<Item = f32>, T>(
     let stats = measure(&samples, rate_hz, filter)?;
     let mut out = Vec::with_capacity(axes.len());
     for &axis in axes {
-        let edges = edges_on(&samples, rate_hz, filter, &stats, axis, Band::Max)?;
+        let mut about = (axis == Axis::Midline).then(Vec::new);
+        let edges = edges_on(&samples, rate_hz, filter, &stats, axis, Band::Max, about.as_mut())?;
         let mut pulses = pulses(&edges, rate_hz, stats.samples);
         drop(edges);
-        // Measured on the zero line for either: where a pulse is quiet the midline is the
-        // noise's own midpoint, about zero.
-        if let Some(line) = stats.noise {
-            mark_quiet(&mut pulses, condition(samples(), rate_hz, filter)?, rate_hz, line);
-        }
+        mark_quiet_on(&mut pulses, &samples, rate_hz, filter, &stats, about)?;
         match each(axis, pulses) {
             ControlFlow::Continue(t) => out.push(t),
             ControlFlow::Break(t) => {
@@ -263,7 +260,7 @@ pub fn detect_pulses_each<I: Iterator<Item = f32>, T>(
 }
 
 /// The pulses of a recording at `rate_hz` on `axis`, cut at `band`, each marked quiet as
-/// [`detect_pulses`] marks them. `samples` is called three times.
+/// [`detect_pulses`] marks them. `samples` is called three times, twice for the midline.
 pub fn detect_pulses_band<I: Iterator<Item = f32>>(
     samples: impl Fn() -> I,
     rate_hz: u32,
@@ -272,12 +269,47 @@ pub fn detect_pulses_band<I: Iterator<Item = f32>>(
     band: Band,
 ) -> Result<Vec<Pulse>, FilterError> {
     let stats = measure(&samples, rate_hz, filter)?;
-    let edges = edges_on(&samples, rate_hz, filter, &stats, axis, band)?;
+    let mut about = (axis == Axis::Midline).then(Vec::new);
+    let edges = edges_on(&samples, rate_hz, filter, &stats, axis, band, about.as_mut())?;
     let mut pulses = pulses(&edges, rate_hz, stats.samples);
-    if let Some(line) = stats.noise {
-        mark_quiet(&mut pulses, condition(samples(), rate_hz, filter)?, rate_hz, line);
-    }
+    mark_quiet_on(&mut pulses, &samples, rate_hz, filter, &stats, about)?;
     Ok(pulses)
+}
+
+/// Marks quiet each of `pulses` that never rises over the noise line of the signal its axis
+/// cuts ([`mark_quiet`]): the samples about the midline the edge pass walked (`about`, kept by
+/// [`edges_on`]), or the zero line's, conditioned again, where there are none.
+///
+/// On the zero line that is the recording's noise line. The midline follows a wander the zero
+/// line keeps, and a noise line measured about zero holds the wander: a dull tape's small
+/// lobes, riding on it, fall under it, half of the midline's pulses and more under a wander of
+/// 0.4 of the tape's level. So on the midline the line is measured over the envelope of the
+/// signal about the midline instead, with the pulses held to it there; the scale and the
+/// floors stay the recording's.
+fn mark_quiet_on<I: Iterator<Item = f32>>(
+    pulses: &mut [Pulse],
+    samples: &impl Fn() -> I,
+    rate_hz: u32,
+    filter: Filter,
+    stats: &Stats,
+    about: Option<Vec<f32>>,
+) -> Result<(), FilterError> {
+    let (Some(peak), Some(zero_line)) = (stats.peak, stats.noise) else { return Ok(()) };
+    match about {
+        None => mark_quiet(pulses, condition(samples(), rate_hz, filter)?, rate_hz, zero_line),
+        Some(about) => {
+            let mut env = Vec::new();
+            walk(about.iter().copied(), stats.half_win, None, 0, |i, e, _| {
+                if i.is_multiple_of(stats.stride) {
+                    env.push(e);
+                }
+            });
+            if let Some(line) = noise_line(&env, &stats.moved, stats.per_sec, peak) {
+                mark_quiet(pulses, about.into_iter(), rate_hz, line);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What the detector measures over the whole recording before it looks for edges.
@@ -293,6 +325,11 @@ struct Stats {
     noise: Option<f32>,
     /// How many samples it holds.
     samples: usize,
+    /// Every how many samples the envelope's statistics read it, how many such reads a second
+    /// holds, and for each read whether the samples moved inside it and into it.
+    stride: usize,
+    per_sec: usize,
+    moved: Vec<(bool, bool)>,
 }
 
 fn measure<I: Iterator<Item = f32>>(
@@ -321,16 +358,37 @@ fn measure<I: Iterator<Item = f32>>(
     if peak <= 0.0 {
         let floors = FloorProfile { blk: 1, v: vec![0.0] };
         let fade_floors = FloorProfile { blk: 1, v: vec![0.0] };
-        return Ok(Stats { half_win, peak: None, floors, fade_floors, noise: None, samples: count });
+        return Ok(Stats {
+            half_win,
+            peak: None,
+            floors,
+            fade_floors,
+            noise: None,
+            samples: count,
+            stride,
+            per_sec,
+            moved,
+        });
     }
     let mark = quiet_mark(&sorted, &env, &moved, per_sec, peak);
     let floors = FloorProfile::local(&env, per_sec, stride, peak, mark, Band::Max);
     let fade_floors = FloorProfile::local(&env, per_sec, stride, peak, mark, Band::Fade);
     let noise = noise_line(&env, &moved, per_sec, peak);
-    Ok(Stats { half_win, peak: Some(peak), floors, fade_floors, noise, samples: count })
+    Ok(Stats {
+        half_win,
+        peak: Some(peak),
+        floors,
+        fade_floors,
+        noise,
+        samples: count,
+        stride,
+        per_sec,
+        moved,
+    })
 }
 
-/// The edges of the recording on `axis`, at `band`.
+/// The edges of the recording on `axis`, at `band`. On the midline `about`, if given, keeps the
+/// samples about it as they are walked, so they are not made again to be marked quiet.
 fn edges_on<I: Iterator<Item = f32>>(
     samples: &impl Fn() -> I,
     rate_hz: u32,
@@ -338,6 +396,7 @@ fn edges_on<I: Iterator<Item = f32>>(
     stats: &Stats,
     axis: Axis,
     band: Band,
+    about: Option<&mut Vec<f32>>,
 ) -> Result<Vec<Edge>, FilterError> {
     let Some(peak) = stats.peak else { return Ok(Vec::new()) };
     let conditioned = condition(samples(), rate_hz, filter)?;
@@ -348,7 +407,14 @@ fn edges_on<I: Iterator<Item = f32>>(
     Ok(match axis {
         Axis::Zero => find_edges(conditioned, rate_hz, filter, stats, band),
         Axis::Midline => {
-            find_edges(Midline::new(conditioned, rate_hz, peak, floors), rate_hz, filter, stats, band)
+            let midline = Midline::new(conditioned, rate_hz, peak, floors);
+            match about {
+                Some(kept) => {
+                    kept.reserve(stats.samples);
+                    find_edges(midline.inspect(|&x| kept.push(x)), rate_hz, filter, stats, band)
+                }
+                None => find_edges(midline, rate_hz, filter, stats, band),
+            }
         }
     })
 }
