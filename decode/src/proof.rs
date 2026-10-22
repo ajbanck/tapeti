@@ -40,7 +40,8 @@ pub enum Proof {
     /// but the header's, under which a long block that checks out is a misread of something
     /// else.
     Verified,
-    /// As long as the header in front asked, its checksum good ([`answering`]).
+    /// As long as the header in front asked, under the data flag `0xFF` the ROM asks for behind
+    /// a header, its checksum good ([`answering`]).
     Answer,
     /// A header its fields prove: flag `0x00`, a type the ROM saves, a printable name, and a
     /// checksum good over them. A reading a bit out is none: its spaces become `0x40` and its
@@ -97,11 +98,18 @@ pub fn of(data: &[u8]) -> Proof {
     }
 }
 
-/// What `data` proves as the block a header in front asked `asked` bytes for: an answer where it
-/// is that long and its checksum holds over more than one value, what it proves alone otherwise.
+/// What `data` proves as the block a header in front asked `asked` bytes for.
+///
+/// An answer where it is that long, under the flag `0xFF`, and its checksum holds over more than
+/// one value; what it proves alone otherwise.
+///
+/// `LOAD`, `VERIFY` and `MERGE` read the block behind a header with `LD-BYTES` asking for the
+/// flag `0xFF`, and fail any other at its first byte, as a header is asked for by its flag
+/// `0x00`. So a block of the length asked under another flag is no answer: it is what a reading
+/// a bit out leaves, whose flag `0xFF` shifted is `0xFE` and whose checksum holds half the time.
 pub fn answering(data: &[u8], asked: usize) -> Proof {
     let own = of(data);
-    if data.len() == asked && own >= Proof::Checksum {
+    if data.len() == asked && data[0] == 0xFF && own >= Proof::Checksum {
         Proof::Answer
     } else {
         own

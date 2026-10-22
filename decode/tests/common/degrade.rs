@@ -297,6 +297,28 @@ pub fn speed(x: &[f32], factor: f64) -> Vec<f32> {
         .collect()
 }
 
+/// A low-pass of `poles` one-pole sections, each `y[n] = y[n-1] + a·(x[n] - y[n-1])` with
+/// `a = 1 - exp(-2π·corner_hz / rate)`, run in turn from rest: the RC roll-off a deck's
+/// amplifier and a resampler stack up, each section 3 dB down at the corner.
+///
+/// In the samples: every crossing is late by the group delay, which is longer for a long lobe
+/// than for a short one, so the half-waves change their widths by what they hold; a short lobe
+/// between two long ones of the other sign shrinks towards the line. In the pulses: a 0 bit's
+/// halves and the sync's narrow, a 1's widen, and past a corner near the pilot's tone the sync
+/// pair no longer validates.
+pub fn low_pass(x: &[f32], rate: u32, corner_hz: f64, poles: usize) -> Vec<f32> {
+    let a = 1.0 - (-2.0 * std::f64::consts::PI * corner_hz / f64::from(rate)).exp();
+    let mut y: Vec<f64> = x.iter().map(|&v| f64::from(v)).collect();
+    for _ in 0..poles {
+        let mut state = 0.0;
+        for v in &mut y {
+            state += a * (*v - state);
+            *v = state;
+        }
+    }
+    y.into_iter().map(|v| v as f32).collect()
+}
+
 /// Wow and flutter: the speed swings with a triangle wave of `hz`, every stretch of the tape
 /// lasting `1 + depth · tri(hz · t)` times as long as it should at output time `t` (0.03 is ±3%),
 /// as `common::wobble` has it for pulses. A few Hz is wow, tens of Hz flutter.

@@ -1590,3 +1590,490 @@ fn dip_and_hiss_sweep() {
         |db| hissed_dip(db, DIP_DEPTH),
     );
 }
+
+// Low-pass.
+
+/// The tape through a low-pass of three one-pole sections at `hz` (`low_pass`), under hiss
+/// `db` under its level where `db` is given.
+fn low_passed(hz: f64, db: Option<u32>) -> Judged {
+    let x = low_pass(&render(&tape()), RATE, hz, 3);
+    let x = match db {
+        Some(db) => hiss_under(&x, rms(&render(&tape())), db, 0x5EED),
+        None => x,
+    };
+    judge(&x, &tape(), same(hz))
+}
+
+/// Three poles delay every crossing by their group delay, more for a long lobe than a short one,
+/// so the half-waves change width, which no midline undoes; but the pairs keep their sums to the
+/// split, and the tape reads whole down to a corner of 800 Hz. At 750 Hz both blocks come back
+/// with bad checksums, and the ROM loads neither at every phase. Under 20 dB of hiss the
+/// narrowed lobes cross nearer the band: whole to 1,400 Hz, and at 1,250 the data block's
+/// checksum fails. A deck's own roll-off lies past 10 kHz; a resampler's at 4 kHz.
+const LOW_PASS_WHOLE_HZ: f64 = 800.0;
+const LOW_PASS_LOSS_HZ: f64 = 750.0;
+const LOW_PASS_HISS_WHOLE_HZ: f64 = 1400.0;
+const LOW_PASS_HISS_LOSS_HZ: f64 = 1250.0;
+const LOW_PASS_GRID_HZ: [f64; 10] =
+    [4000.0, 3000.0, 2000.0, 1500.0, 1400.0, 1250.0, 1000.0, 900.0, 800.0, 750.0];
+
+#[test]
+fn a_three_pole_low_pass_reads_whole_down_to_800_hz() {
+    holds(
+        LOW_PASS_WHOLE_HZ,
+        LOW_PASS_LOSS_HZ,
+        (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Lost]), Vec::new()),
+        |hz| low_passed(hz, None),
+    );
+    holds(
+        LOW_PASS_HISS_WHOLE_HZ,
+        LOW_PASS_HISS_LOSS_HZ,
+        (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new()),
+        |hz| low_passed(hz, Some(20)),
+    );
+}
+
+#[test]
+#[ignore]
+fn low_pass_sweeps() {
+    let lost = (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Lost]), Vec::new());
+    sweep(&LOW_PASS_GRID_HZ, LOW_PASS_WHOLE_HZ, LOW_PASS_LOSS_HZ, lost, |hz| low_passed(hz, None));
+    let lost = (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new());
+    sweep(&LOW_PASS_GRID_HZ[..6], LOW_PASS_HISS_WHOLE_HZ, LOW_PASS_HISS_LOSS_HZ, lost, |hz| {
+        low_passed(hz, Some(20))
+    });
+}
+
+// Seams the walls' tape crosses with a pause, and the defects at them.
+
+/// A data block no header asks for, the walls' header and its data block, with `pause` ms
+/// behind the first two: 0 is a tape saved with no pause, whose blocks run into the next
+/// block's pilot.
+fn three_blocks(pause: u16) -> Vec<Block> {
+    let mut a = vec![0xFF];
+    a.extend((0..100u32).map(|i| (i * 53 + 7) as u8));
+    let mut t = tape();
+    if let Body::Standard { pause: p, .. } = &mut t[0].body {
+        *p = pause;
+    }
+    vec![Block::new(Body::Standard { pause, data: with_checksum(a) }), t[0].clone(), t[1].clone()]
+}
+
+/// `defect` on [`three_blocks`] with `pause`, judged at any speed.
+fn on_three(pause: u16, defect: impl Fn(&[f32]) -> Vec<f32>) -> Judged {
+    let t = three_blocks(pause);
+    judge(&defect(&render(&t)), &t, (0.0, f64::MAX))
+}
+
+/// A defect of the walls, on samples at [`RATE`].
+type Defect = Box<dyn Fn(&[f32]) -> Vec<f32>>;
+
+/// A headerless block with no pause behind it ends where the next block's pilot starts, and only
+/// the pilot says so: the defects of the walls, at a deck's range and well past it, leave that
+/// seam whole. Past it the seam goes first under three of them. Hiss: whole to 6 dB, and at 5
+/// the header behind the headerless block reads with a bad checksum where with a pause it reads
+/// (the tape's own wall is 5). Wow at 1 Hz: whole to 10%, and at 12% the next pilot, measured
+/// against the headerless block's own, is out of the 10% a run allows, the block reads on into
+/// it as 1 bits, and its checksum fails; the ROM, told its length, loads it. At 15% two of those
+/// bytes of pilot keep the checksum, a wrong block (the F row). Flutter at 10 Hz: whole to 8%;
+/// at 10% the blocks read and a stretch of the pilot is kept as raw signal. Hum: whole to 1.3,
+/// and at 1.4, clipped on its crests, the headerless block reads two bytes of pilot past its end
+/// whose checksum holds, where the pilot's halves are out of the sync loop's window and their
+/// pairs hold. A deck's wow is 0.3%.
+#[test]
+fn a_tape_saved_with_no_pause_reads_whole_under_the_walls_defects() {
+    let lvl = rms(&render(&tape()));
+    let whole: Vec<(&str, Defect)> = vec![
+        ("clean", Box::new(|x: &[f32]| x.to_vec())),
+        ("hiss 20", Box::new(move |x: &[f32]| hiss_under(x, lvl, 20, 0x5EED))),
+        ("hiss 6", Box::new(move |x: &[f32]| hiss_under(x, lvl, 6, 0x5EED))),
+        ("treble 3", Box::new(|x: &[f32]| spacing_loss(x, RATE, 3.0))),
+        ("treble 10", Box::new(|x: &[f32]| spacing_loss(x, RATE, 10.0))),
+        ("wow 1 Hz 0.1", Box::new(|x: &[f32]| wow(x, RATE, 0.1, 1.0))),
+        ("flutter 0.08", Box::new(|x: &[f32]| wow(x, RATE, 0.08, 10.0))),
+        ("clip", Box::new(|x: &[f32]| clip(&spacing_loss(x, RATE, 3.0), 16.0))),
+        ("invert", Box::new(|x: &[f32]| invert(x))),
+        ("ripple 0.9", Box::new(|x: &[f32]| ripple(x, RATE, 0.9, 2400.0))),
+        ("azimuth 250", Box::new(|x: &[f32]| azimuth(x, RATE, 10.0, 250.0))),
+        ("azimuth 4000", Box::new(|x: &[f32]| azimuth(x, RATE, 10.0, 4000.0))),
+        ("wander 0.9", Box::new(|x: &[f32]| hum(&spacing_loss(x, RATE, 5.0), RATE, 120.0, 0.9))),
+        ("hum 1.3", Box::new(|x: &[f32]| hum(x, RATE, 50.0, 1.3))),
+        ("low pass", Box::new(|x: &[f32]| low_pass(x, RATE, 1000.0, 3))),
+        ("fast", Box::new(|x: &[f32]| speed(x, 1.0 / 1.2))),
+        ("slow", Box::new(|x: &[f32]| speed(x, 1.0 / 0.85))),
+    ];
+    for (name, defect) in &whole {
+        assert_eq!(on_three(0, defect), WHOLE, "{name}");
+    }
+    let t = three_blocks(0);
+    for (rate, bits) in [(8000, 8), (4410, 16)] {
+        assert_eq!(
+            judge_at(&downsample(&render(&t), RATE, rate), rate, bits, &t, (0.0, f64::MAX)),
+            WHOLE,
+            "{rate} Hz"
+        );
+    }
+    assert_eq!(judge_at(&resample_sharp(&render(&t), RATE, 5000), 5000, 16, &t, (0.0, f64::MAX)), WHOLE);
+    let mut y = vec![0.0; ms(5000.0)];
+    y.extend(render(&t));
+    y.extend(vec![0.0; ms(5000.0)]);
+    assert_eq!(judge(&y, &t, (0.0, f64::MAX)), WHOLE, "in dead air");
+    for lag in [2.0, 7.0, 20.0] {
+        let (l, r) = head_skew(&render(&t), lag);
+        let got = decode(&stereo_wav(&l, &r, RATE, 16), Channels::Best);
+        assert_eq!(outcome(&got, &t, (0.0, f64::MAX)), Outcome::Whole, "head skew {lag}");
+    }
+    // One step past each.
+    let hissed = |db| move |x: &[f32]| hiss_under(x, lvl, db, 0x5EED);
+    assert_eq!(
+        on_three(0, hissed(5)),
+        (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+    );
+    assert_eq!(on_three(1000, hissed(5)), WHOLE);
+    let wowed = |d| move |x: &[f32]| wow(x, RATE, d, 1.0);
+    assert_eq!(
+        on_three(0, wowed(0.12)),
+        (Outcome::Lost(vec![0], vec![Said::BadChecksum, Said::Collapsed]), vec![0])
+    );
+    assert_eq!(on_three(1000, wowed(0.12)), WHOLE);
+    let fluttered = |x: &[f32]| wow(x, RATE, 0.1, 10.0);
+    assert_eq!(
+        on_three(0, fluttered),
+        (Outcome::Lost(Vec::new(), vec![Said::RawSignal, Said::Collapsed]), Vec::new())
+    );
+    assert_eq!(on_three(1000, fluttered), WHOLE);
+}
+
+/// The tape's level dropping or rising tenfold where one block runs into the next with no
+/// pause, a copy spliced from two sources: the band follows the level up, and down over the
+/// ±10 ms of the envelope, in which the quieter pilot's first half-waves are under it. Every
+/// byte is read; where the level drops, the quiet pilot's first milliseconds play as a pause of
+/// the block in front, which the tape does not have.
+#[test]
+fn a_level_that_jumps_where_a_block_runs_into_the_next_reads_every_byte() {
+    let t = three_blocks(0);
+    let x = render(&t);
+    let first = render(&t[..1]).len();
+    let at = |lo: f32, hi: f32| {
+        let y: Vec<f32> = x.iter().enumerate().map(|(i, &v)| v * if i < first { lo } else { hi }).collect();
+        judge(&hiss_under(&y, 0.5, 50, 1), &t, (0.0, f64::MAX))
+    };
+    for (lo, hi) in [(0.1, 1.0), (0.3, 1.0), (1.0, 0.3)] {
+        assert_eq!(at(lo, hi), WHOLE, "{lo} then {hi}");
+    }
+    assert_eq!(at(1.0, 0.1), (Outcome::Lost(Vec::new(), Vec::new()), Vec::new()));
+}
+
+/// The tape with a snag over the data block's run of 0xFF bytes, slowing it to `depth` from
+/// `back` ms before its last edge.
+fn snagged_ones(back: f64, depth: f64) -> Judged {
+    let clean = render(&tape());
+    let edges = edges_in(&clean, bits_at(&tape(), 1), clean.len());
+    let end = edges[edges.len() - 2];
+    judge(&snag(&clean, end - ms(back), ms(70.0), ms(15.0), ms(15.0), depth), &tape(), same(depth))
+}
+
+/// A run of 1 bits slowed by a snag past 1.14 of the pilot's speed pairs as the next block's
+/// pilot does (`framing::pilot_run_at`), and the block ends there, short of its header's length,
+/// where the ROM, which stops only at that length, loads it: lost from 1.2. A snag over the data
+/// block's last 0xFF bytes, from where they start or their middle, reads whole to the snag's own
+/// wall regardless, since only a pilot as long as the ROM's leader ends a block short.
+#[test]
+fn a_snag_over_a_run_of_one_bits_reads_whole() {
+    for back in [170.0, 120.0] {
+        for depth in [1.2, 1.3, 1.5] {
+            assert_eq!(snagged_ones(back, depth), WHOLE, "{back} ms, {depth}");
+        }
+    }
+}
+
+/// Eight clicks of `width` samples and `height` in the middle of half-waves of the data block
+/// from its `first` edge on, every 250th, or one where `first` is 0, the flag's first half.
+fn clicked_halves(first: usize, width: usize, height: f32) -> Judged {
+    let clean = render(&tape());
+    let edges = edges_in(&clean, bits_at(&tape(), 1), clean.len());
+    let mut x = clean.clone();
+    let (mut put, mut i) = (0, first);
+    while put < if first == 0 { 1 } else { 8 } {
+        if edges[i + 1] - edges[i] >= 20 {
+            x = spike(&x, (edges[i] + edges[i + 1]) / 2 - width / 2, width, height);
+            put += 1;
+            i += 250;
+        }
+        i += 1;
+    }
+    judge(&x, &tape(), same(width))
+}
+
+/// A click inside a half-wave splits it in three, its middle pulse as wide as the click, and
+/// past two samples no fold takes it: the ROM, back from its wait after the click's first edge,
+/// finds the level changed again and takes that for an edge, and loads the block at no phase.
+/// At the flag's first half as anywhere in the block: whole to two samples of half the level,
+/// lost at three. A click is one or two samples of a crackle or a bad splice.
+#[test]
+fn a_click_inside_a_half_wave_reads_whole_to_two_samples() {
+    for first in [0, 2000] {
+        for h in [0.2, 0.5] {
+            assert_eq!(clicked_halves(first, 2, h), WHOLE, "from {first}, {h}");
+        }
+    }
+    assert_eq!(
+        clicked_halves(0, 3, 0.5),
+        (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+    );
+    assert_eq!(
+        clicked_halves(2000, 3, 0.5),
+        (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal]), Vec::new())
+    );
+}
+
+/// A click behind an edge, as the click wall puts them in the bits, at each seam of the data
+/// block: its first half-waves out of the header's pause, the first pairs of its pilot and the
+/// last, the flag's first edges, its last bits and its pause; and the header's last bits. The
+/// ROM's wait after an edge hides it, and the fold takes it into a half-wave beside it, or
+/// the pause plays it as noise.
+#[test]
+fn a_click_behind_an_edge_reads_whole_at_every_seam() {
+    let clean = render(&tape());
+    let edges = edges_in(&clean, block_at(&tape(), 1), clean.len());
+    let header = edges_in(&clean, header_bits_at(), block_at(&tape(), 1));
+    let sync = bits_at(&tape(), 1) - ((667.0 + 735.0) * f64::from(RATE) / 3_500_000.0) as usize;
+    let n = edges.len();
+    let mut at: Vec<usize> = [0, 1, 2, 4, 40, 3000, 3215].iter().map(|&k| edges[k] + 1).collect();
+    at.extend([18, 20, 40, 60, 100].map(|d| sync + d));
+    at.extend((n - 5..n).map(|k| edges[k] + 1));
+    at.extend([10, 60, 2000].map(|d| edges[n - 1] + d));
+    at.extend((header.len() - 5..header.len()).map(|k| header[k] + 1));
+    for x in at {
+        for w in [1, 3] {
+            assert_eq!(judge(&spike(&clean, x, w, 0.5), &tape(), (1.0, 1.0)), WHOLE, "{w} samples at {x}");
+        }
+    }
+}
+
+/// The pulses of `blocks` with pulse `i` split by a bounce of two `width` T-state pulses, at
+/// its start or with `end` at its end, decoded, and what the ROM loads that framing does not.
+fn bounced_at(blocks: &[Block], i: usize, width: u64, end: bool) -> (Judged, Vec<Finding>) {
+    let mut lens: Vec<u64> = of_blocks(blocks).unwrap().iter().map(|q| q.tstates.round() as u64).collect();
+    let h = lens[i];
+    lens.splice(i..=i, if end { [h - 2 * width, width, width] } else { [width, width, h - 2 * width] });
+    let p = common::pulses(&lens);
+    let got = decode_pulses(&p, 3_500_000, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    ((outcome(&got, blocks, (0.0, f64::MAX)), rom_only(&p, 3_500_000, blocks)), got.findings)
+}
+
+/// The pulse indices of the first sync pulse of each block of `blocks`.
+fn syncs_of(blocks: &[Block]) -> Vec<usize> {
+    let lens: Vec<u64> = of_blocks(blocks).unwrap().iter().map(|q| q.tstates.round() as u64).collect();
+    (1..lens.len()).filter(|&i| lens[i] == 667 && lens[i - 1] == 2168).collect()
+}
+
+/// A comparator's bounce of a 1-bit capture in a pilot, near its start, where it breaks the
+/// leader loop, which starts again behind it on more than the ROM's 256 pairs, and near its
+/// end, inside the pilot pulses the sync loop takes one at a time, which fold it as the ROM's
+/// wait after an edge hides it (`framing::rom_pulse`); at the first edge out of a pause and in
+/// the pause, which play it as noise. Behind a headerless block saved with no pause, a bounce in
+/// the next pilot's first half-waves leaves every byte read and plays as a pause of a
+/// millisecond the tape does not have.
+#[test]
+fn a_bounce_in_a_pilot_or_a_gap_reads_whole() {
+    for blocks in [tape(), headerless()] {
+        for &s in &syncs_of(&blocks) {
+            for back in [21, 101, 301, 501, 3201] {
+                for (w, end) in [(79, false), (79, true), (200, false)] {
+                    let ((j, rom), _) = bounced_at(&blocks, s - back, w, end);
+                    assert_eq!((j, rom), WHOLE, "{back} back, {w} T, at the end {end}");
+                }
+            }
+        }
+    }
+    let lens: Vec<u64> = of_blocks(&tape()).unwrap().iter().map(|q| q.tstates.round() as u64).collect();
+    let level = lens.iter().position(|&t| t == 3500).unwrap();
+    for (i, end) in [(level + 2, false), (level, false), (level, true), (level - 1, true)] {
+        for w in [79, 200] {
+            assert_eq!(bounced_at(&tape(), i, w, end).0, WHOLE, "pulse {i}, {w} T");
+        }
+    }
+    let t = three_blocks(0);
+    let lens: Vec<u64> = of_blocks(&t).unwrap().iter().map(|q| q.tstates.round() as u64).collect();
+    let pilot = (syncs_of(&t)[0]..lens.len()).find(|&i| lens[i] == 2168).unwrap();
+    assert_eq!(bounced_at(&t, pilot, 79, false).0, WHOLE);
+    for (i, end) in [(pilot, true), (pilot + 1, false)] {
+        let (j, f) = bounced_at(&t, i, 79, end);
+        assert_eq!(j, (Outcome::Lost(Vec::new(), vec![Said::Collapsed]), Vec::new()), "{f:?}");
+    }
+}
+
+/// A click that splits one of the first half-waves of the pilot behind a headerless block saved
+/// with no pause: the bit loop looks for the next pilot at a byte's first two half-waves, finds
+/// none, and reads a byte of it, whose checksum then fails; the ROM, told the block's length,
+/// loads it. Looking for the pilot at every half-wave of the next byte reads it, and costs the
+/// flutter wall, since a run of 1 bits slowed 26% starts a pilot run inside a byte; it is left.
+#[test]
+fn a_click_at_the_next_pilot_behind_a_block_with_no_pause_loses_that_block() {
+    let t = three_blocks(0);
+    let mut lens: Vec<u64> = of_blocks(&t).unwrap().iter().map(|q| q.tstates.round() as u64).collect();
+    let pilot = (syncs_of(&t)[0]..lens.len()).find(|&i| lens[i] == 2168).unwrap();
+    let h = lens[pilot];
+    lens.splice(pilot..=pilot, [(h - 600) / 2, 600, h - 600 - (h - 600) / 2]);
+    let p = common::pulses(&lens);
+    let got = decode_pulses(&p, 3_500_000, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        (outcome(&got, &t, (0.0, f64::MAX)), rom_only(&p, 3_500_000, &t)),
+        (Outcome::Lost(vec![0], vec![Said::BadChecksum]), vec![0])
+    );
+}
+
+/// A wander over a dull tape that leaves the signal as it is no block, all of it raw signal, and
+/// the band-pass the header of three blocks, with the other two bad: the header goes in, and
+/// the raw signal either side of it, where the band-pass read a block, stays raw signal, so the
+/// two are said, with a pause behind them or none.
+#[test]
+fn a_wander_that_leaves_raw_signal_says_what_the_band_pass_did_not_read() {
+    let wandering = |w: f32| move |x: &[f32]| hum(&spacing_loss(x, RATE, 5.0), RATE, 120.0, w);
+    for pause in [0, 1000] {
+        assert_eq!(on_three(pause, wandering(0.9)), WHOLE, "{pause}");
+        assert_eq!(
+            on_three(pause, wandering(1.1)),
+            (Outcome::Lost(vec![0, 2], vec![Said::RawSignal]), Vec::new())
+        );
+    }
+}
+
+// Re-reads of a block its header asked for.
+
+/// What `blocks` read as, as pulses and as a recording at [`RATE`], and through 2 µm of
+/// spacing: whether each reading holds every one of `want`, and what the ROM's loader loads at
+/// every phase from the pulses that framing does not read.
+fn every_reading(blocks: &[Block], want: &[Vec<u8>]) -> ([bool; 3], Vec<usize>) {
+    let holds = |got: &Decoded| want.iter().all(|w| got.blocks.iter().filter_map(standard).any(|d| d == w));
+    let p = of_blocks(blocks).unwrap();
+    let pulses = decode_pulses(&p, 3_500_000, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let order = playback_order(blocks, FlowOptions::default());
+    let x = render_tape(blocks, RenderOptions { sample_rate: RATE, mic: false, amplitude: 0.5 }, &order);
+    let plain = decode(&encode_wav(&x, RATE, 16), Channels::Only(Channel::Mix));
+    let dull = decode(&encode_wav(&spacing_loss(&x, RATE, 2.0), RATE, 16), Channels::Only(Channel::Mix));
+    let stds: Vec<Block> =
+        want.iter().map(|d| Block::new(Body::Standard { pause: 1000, data: d.clone() })).collect();
+    ([holds(&pulses), holds(&plain), holds(&dull)], rom_only(&p, 3_500_000, &stds))
+}
+
+/// A CODE header asking for `len` bytes and its data block, its byte behind the flag 0x00,
+/// behind a sync pair of `sync1` and `sync2` T: the program, and the two blocks' bytes.
+fn stretched_sync(len: u16, sync1: u16, sync2: u16) -> (Vec<Block>, Vec<Vec<u8>>) {
+    let mut h = vec![0x00, 0x03];
+    h.extend(b"swallowed ");
+    h.extend(len.to_le_bytes());
+    h.extend([0x00, 0x80, 0x00, 0x80]);
+    let h = with_checksum(h);
+    let mut leg = vec![0xFF, 0x00];
+    leg.extend((1..len).map(|i| (i as u8).wrapping_mul(37).wrapping_add(11)));
+    let leg = with_checksum(leg);
+    let blocks = vec![
+        Block::new(Body::Standard { pause: 1000, data: h.clone() }),
+        Block::new(Body::Turbo {
+            pilot: 2168,
+            sync1,
+            sync2,
+            zero: 855,
+            one: 1710,
+            pilot_len: 3223,
+            used_bits: 8,
+            pause: 100,
+            data: leg.clone(),
+        }),
+    ];
+    (blocks, vec![h, leg])
+}
+
+/// A first sync pulse stretched into the pilot's window, as a 1-bit capture has them (1,617 /
+/// 616 T): the sync loop takes it for pilot, the second sync pulse for the
+/// first and the flag's first half for the second, and reads the block half a bit late, its
+/// flag's 1 bits gone into what it took for pilot; its checksum fails, and the ROM loads it at
+/// no phase. The two pulses sum to a pair under the split, and the bits read from behind them
+/// answer the header (`merged::Seam::in_front`), as pulses, as a recording and a dull one. It is
+/// read again at the header's length from before its flag.
+#[test]
+fn a_first_sync_pulse_stretched_into_the_pilot_reads_the_block_its_header_asked_for() {
+    for len in [409, 16] {
+        for (s1, s2) in [(1617, 616), (1500, 700), (1300, 700), (667, 735)] {
+            let (blocks, want) = stretched_sync(len, s1, s2);
+            assert_eq!(every_reading(&blocks, &want), ([true; 3], Vec::new()), "{len} bytes, ({s1}, {s2})");
+        }
+    }
+}
+
+/// A Program header behind a pulse standing where the pilot's last half and the sync pair were,
+/// `seam` T, with its leg behind the gap and a byte of other material run on behind that with
+/// no pause: no form's length decides it, and the sync loop takes it for
+/// pilot and the header's first 0 bit for its sync. The program and its two blocks' bytes.
+fn misframed(seam: Option<u16>) -> (Vec<Block>, Vec<Vec<u8>>) {
+    const DECLARED: u16 = 0x90;
+    let mut h = vec![0x00, 0x00];
+    h.extend(b"ARCHIVE   ");
+    h.extend(DECLARED.to_le_bytes());
+    h.extend([0x0A, 0x00, DECLARED as u8, 0x00]);
+    let header = with_checksum(h);
+    let mut leg = vec![0xFF];
+    leg.extend((0..DECLARED).map(|i| (i as u8).wrapping_mul(37).wrapping_add(11)));
+    let leg = with_checksum(leg);
+    let junk: Vec<u16> =
+        (0..8).rev().flat_map(|k| if 0x5Au8 >> k & 1 == 1 { [1710, 1710] } else { [855, 855] }).collect();
+    let blocks = vec![
+        Block::new(Body::PureTone { pulse_len: 2168, count: 8062 }),
+        Block::new(Body::PulseSeq { pulses: seam.map_or(vec![2168, 667, 735], |t| vec![t]) }),
+        Block::new(Body::PureData { zero: 855, one: 1710, used_bits: 8, pause: 0, data: header.clone() }),
+        Block::new(Body::PulseSeq { pulses: vec![855] }),
+        Block::new(Body::Pause { pause: 1000 }),
+        Block::new(Body::Standard { pause: 0, data: leg.clone() }),
+        Block::new(Body::PulseSeq { pulses: junk }),
+        Block::new(Body::Pause { pause: 1000 }),
+    ];
+    (blocks, vec![header, leg])
+}
+
+/// Read a bit late, the header comes out one bit shifted, its checksum holding as a shift often
+/// leaves it, and asks for a length shifted a bit, 32 bytes, at which its leg is cut: the ROM,
+/// asked for the true length, loads the leg. From 2,600 to 2,800 T the pulse lies off the pilot
+/// past what the hiss moves a half, and the header read from the ROM's first sync pulse stands,
+/// a header in every field (`merged::Seam::in_front`), and its leg with it. At 3,000 T the
+/// backward form decides by its length. At 2,400 T, 11% over the pilot, the pulse is a pilot
+/// half under hiss and is not asked: the header stays a bit late and its leg cut, where
+/// shifting such a header back by its own bytes would find it.
+#[test]
+fn a_header_merged_into_its_pilot_is_read_from_the_roms_sync_and_its_block_with_it() {
+    for seam in [2600, 2700, 2800, 3000] {
+        let (blocks, want) = misframed(Some(seam));
+        assert_eq!(every_reading(&blocks, &want), ([true; 3], Vec::new()), "{seam} T");
+    }
+    let (blocks, want) = misframed(Some(2400));
+    assert_eq!(every_reading(&blocks, &want), ([false; 3], vec![1]));
+    let (blocks, want) = misframed(None);
+    assert_eq!(every_reading(&blocks, &want), ([true; 3], Vec::new()));
+}
+
+/// The misframed header on one track of a stereo recording and the tape as saved on the other:
+/// whichever is kept, the reading that holds the header in every field brings in its leg at the
+/// length that header asks, where the leg is re-read: each reading
+/// reads a block at the length its own header asks.
+#[test]
+fn a_header_one_track_reads_a_bit_late_comes_with_its_block_from_the_other() {
+    for seam in [2400, 2700] {
+        let (bad, want) = misframed(Some(seam));
+        let (good, _) = misframed(None);
+        let render = |b: &[Block]| {
+            let order = playback_order(b, FlowOptions::default());
+            render_tape(b, RenderOptions { sample_rate: RATE, mic: false, amplitude: 0.5 }, &order)
+        };
+        let (l, r) = (render(&bad), render(&good));
+        let n = l.len().min(r.len());
+        for (left, right) in [(&l[..n], &r[..n]), (&r[..n], &l[..n])] {
+            let got = decode(&stereo_wav(left, right, RATE, 16), Channels::Best);
+            assert!(
+                want.iter().all(|w| got.blocks.iter().filter_map(standard).any(|d| d == w)),
+                "{seam}: {:?}",
+                got.findings
+            );
+        }
+    }
+}

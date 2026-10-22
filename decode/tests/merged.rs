@@ -266,23 +266,23 @@ fn a_sync_pair_whose_split_moved_reads_by_its_sum() {
 
 #[test]
 fn a_pilot_that_alternates_widens_the_pairs_window_by_its_skew() {
-    // A pilot alternating 1,725 / 2,659 T, its last half the short one: its last edge lies 467 T
-    // early against the other kind, and the pair behind it, 1,326 / 707 T (2,033 T), lies past
-    // the window by less than that. Behind a steady pilot of the same mean it is no sync.
+    // A pilot alternating 1,725 / 2,659 T, its last edge 467 T early against the other kind:
+    // the pair behind it, 1,326 / 707 T, lies past the window by less than that, but past it
+    // behind a steady pilot of the same mean, where the ROM takes 1,326 T for pilot, reads half a
+    // bit late and nothing proved, and the header read from behind the pair stands.
     let h = header();
     let alternating: Vec<f64> = (0..PILOT_PULSES)
         .map(|k| if (PILOT_PULSES - 1 - k).is_multiple_of(2) { 1725.0 } else { 2659.0 })
         .collect();
     assert!(reads(&behind(alternating, 1326.0, 707.0, &h), &h));
-    assert!(!reads(&behind(vec![2192.0; PILOT_PULSES], 1326.0, 707.0, &h), &h));
+    assert!(reads(&behind(vec![2192.0; PILOT_PULSES], 1326.0, 707.0, &h), &h));
 }
 
 #[test]
 fn the_pilots_last_edge_opens_the_pairs_window_and_the_block_answers() {
-    // A steady pilot whose last half is 1,768 T, its last edge 400 T early, and a pair of
-    // 1,067 / 835 T, 1,902 T, just past the window: one half-wave only asks, and the header
-    // behind answers. Behind a pilot whose last half is a pilot's, or with a header that does
-    // not check out, the pair stays no sync.
+    // A steady pilot whose last half is 1,768 T, its last edge 400 T early: a pair of
+    // 1,067 / 835 T is only just past the window, and past it outright behind a pilot of plain
+    // halves; either way the header behind answers, unless it does not check out.
     let h = header();
     let ending = |last: f64| {
         let mut pilot = vec![PILOT; PILOT_PULSES];
@@ -290,7 +290,7 @@ fn the_pilots_last_edge_opens_the_pairs_window_and_the_block_answers() {
         pilot
     };
     assert!(reads(&behind(ending(1768.0), 1067.0, 835.0, &h), &h));
-    assert!(!reads(&behind(ending(PILOT), 1067.0, 835.0, &h), &h));
+    assert!(reads(&behind(ending(PILOT), 1067.0, 835.0, &h), &h));
     let mut damaged = h.clone();
     damaged[18] ^= 0x01;
     assert!(!reads(&behind(ending(1768.0), 1067.0, 835.0, &damaged), &damaged));

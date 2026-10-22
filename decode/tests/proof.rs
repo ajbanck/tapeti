@@ -83,6 +83,12 @@ fn an_answer_is_as_long_as_the_header_asked() {
     let data = checksummed([vec![0xFF], (0..100u8).map(|k| k.wrapping_mul(3)).collect()].concat());
     assert_eq!(answering(&data, 102), Proof::Answer);
     assert_eq!(answering(&data, 103), Proof::Verified, "the wrong length proves what it does alone");
+    // Nor under a flag the ROM does not ask for behind a header: a reading a bit late, whose
+    // flag 0xFF shifted is 0xFE, can check out at the length asked.
+    let mut late = data.clone();
+    late[0] = 0xFE;
+    late[101] ^= 0x01;
+    assert_eq!(answering(&late, 102), Proof::Verified);
     // Not over a run, which checks out at every even length.
     assert_eq!(answering(&[0x00; 102], 102), Proof::Trivial);
     // Nor with a bad checksum.

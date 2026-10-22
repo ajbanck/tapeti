@@ -352,13 +352,22 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         ) if a == b => (true, s == t && u == v && o == p),
         _ => (false, false),
     };
-    let enters = there > here
+    // Where `base` read on into a run-on starting inside the donor's signal, the donor's tail
+    // replaces it whole, run-on included, when it stands higher or ties with a copier's stray
+    // zero the saver writes into the header's own block.
+    let takes_run_on = tie
+        && single.is_some_and(|b| data == Some(b))
+        && run.end < base.blocks.len()
+        && base.findings.contains(&Finding::RunOn { block: run.end })
+        && base.extents[run.end].start < span.signal_end
+        && (there > here || donor.findings.contains(&Finding::StrayZero { block: j }));
+    let enters = (there > here || takes_run_on)
         && match there {
             Standing::Unproven => {
                 here == Standing::Silence && before.is_some() && run.end < base.blocks.len()
             }
             Standing::Proven { .. } if tie => {
-                single.is_some_and(|b| data.is_some_and(|d| d.len() == b.len() && d != b))
+                takes_run_on || single.is_some_and(|b| data.is_some_and(|d| d.len() == b.len() && d != b))
             }
             Standing::Proven { proof, .. } => {
                 proof >= Proof::Verified
@@ -374,6 +383,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     if !enters {
         return;
     }
+    let tie = tie && !takes_run_on;
     // The base's run-on behind the block it replaces is that reading's own tail, read on past
     // the length where its bits slipped; where it starts inside this block's signal, it goes with
     // the block.
@@ -387,13 +397,45 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         }
         _ => run,
     };
-    let at = run.start;
+    // Raw signal the run holds beyond this block's own stretch stays raw signal where it is
+    // shaped like a block, or some other reading starts a block of bytes in it; otherwise it
+    // plays as the pause.
+    let tol = POSITION_TOL.min((span.signal_end - span.start) / 4.0);
+    let raw = |k: usize| matches!(base.blocks[k].body, Body::Csw { .. });
+    let holds = |e: &Extent| {
+        readings.iter().any(|r| {
+            (0..r.blocks.len()).any(|k| {
+                let start = r.extents[k].start;
+                image(&r.blocks[k]).is_some() && e.start <= start && start < e.signal_end
+            })
+        })
+    };
+    let signal = |piece: Option<(Block, Extent, bool)>| {
+        piece.filter(|(_, e, shaped)| *shaped || holds(e)).map(|(b, e, _)| (b, e))
+    };
+    let head = Some(run.start)
+        .filter(|&k| !tie && k < run.end && raw(k) && base.extents[k].start + tol < span.start)
+        .and_then(|k| signal(cut(&base.blocks[k], base.extents[k], base.rate_hz, ..span.start)));
+    let tail = run
+        .clone()
+        .rev()
+        .find(|&k| !is_pause(&base.blocks[k]))
+        .filter(|&k| !tie && raw(k) && base.extents[k].signal_end > span.signal_end + tol)
+        .and_then(|k| signal(cut(&base.blocks[k], base.extents[k], base.rate_hz, span.signal_end..)));
+    let at = run.start + usize::from(head.is_some());
     let (block, extent) = if tie {
         let mut block = base.blocks[at].clone();
         if let (Body::Standard { data: bytes, .. }, Some(d)) = (&mut block.body, data) {
             *bytes = d.to_vec();
         }
         (block, base.extents[at])
+    } else if tail.is_some() {
+        // The raw signal behind it starts where its signal ends.
+        let mut block = donor.blocks[j].clone();
+        if let Some(pause) = pause_mut(&mut block) {
+            *pause = 0;
+        }
+        (block, Extent { end: span.signal_end, ..span })
     } else {
         let mut block = donor.blocks[j].clone();
         match run.clone().next_back().filter(|&k| !is_pause(&base.blocks[k])) {
@@ -418,7 +460,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         }
     };
     if let (false, Some(b)) = (tie, before) {
-        end_pause_at(base, b, extent.start);
+        end_pause_at(base, b, head.as_ref().map_or(extent.start, |h| h.1.start));
     }
     if !tie && run.clone().all(|k| is_pause(&base.blocks[k])) {
         // Put into the pause behind `before`, or before the first block, it is the block whose
@@ -434,7 +476,14 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
             *f = Finding::LeadIn { ms, pulses };
         }
     }
-    splice_into(base, run, vec![(block, extent)]);
+    let pieces = (head.is_some(), tail.is_some());
+    splice_into(base, run, head.into_iter().chain([(block, extent)]).chain(tail).collect());
+    if pieces.0 {
+        base.findings.push(Finding::RawSignal { block: at - 1 });
+    }
+    if pieces.1 {
+        base.findings.push(Finding::RawSignal { block: at + 1 });
+    }
     for f in &donor.findings {
         let said = matches!(
             f,
@@ -615,6 +664,71 @@ fn run_at(base: &Decoded, span: &Extent) -> (Option<usize>, std::ops::Range<usiz
     (before, before.map_or(0, |b| b + 1)..after)
 }
 
+/// The part of raw signal `b`, a CSW block at `extent` of a recording at `rate_hz`, that lies
+/// in `within`, in the recording's samples, and whether it is shaped like a block
+/// (`fallback::block_shaped`); `None` where nothing of it does.
+///
+/// A CSW block holds the run lengths of its pulses in samples, each in a byte or, where it is 0,
+/// in the four after it. The run across either end is cut there. The part keeps the block's
+/// pause where it reaches the block's end.
+fn cut(
+    b: &Block,
+    extent: Extent,
+    rate_hz: u32,
+    within: impl std::ops::RangeBounds<f64>,
+) -> Option<(Block, Extent, bool)> {
+    use std::ops::Bound;
+    let Body::Csw { pause, compression: 1, data, .. } = &b.body else { return None };
+    let mut runs = Vec::new();
+    let mut k = 0;
+    while k < data.len() {
+        match data[k] {
+            0 => {
+                let n = data.get(k + 1..k + 5)?;
+                runs.push(u64::from(u32::from_le_bytes([n[0], n[1], n[2], n[3]])));
+                k += 5;
+            }
+            n => {
+                runs.push(u64::from(n));
+                k += 1;
+            }
+        }
+    }
+    let from = match within.start_bound() {
+        Bound::Included(&t) | Bound::Excluded(&t) => t.max(extent.start),
+        Bound::Unbounded => extent.start,
+    };
+    let to = match within.end_bound() {
+        Bound::Included(&t) | Bound::Excluded(&t) => t.min(extent.signal_end),
+        Bound::Unbounded => extent.signal_end,
+    };
+    let (mut kept, mut at) = (Vec::new(), extent.start);
+    for n in runs {
+        let (a, z) = (at.max(from), (at + n as f64).min(to));
+        if z > a {
+            kept.push((z - a).round() as u64);
+        }
+        at += n as f64;
+    }
+    let t = f64::from(TSTATES_PER_SEC) / f64::from(rate_hz);
+    let pulses: Vec<crate::pulses::Pulse> = kept
+        .iter()
+        .scan(from, |at, &n| {
+            let p = crate::pulses::Pulse { tstates: n as f64 * t, start: *at, quiet: false };
+            *at += n as f64;
+            Some(p)
+        })
+        .collect();
+    let shaped = crate::fallback::block_shaped(&pulses);
+    let mut part = crate::capture::csw_of_runs(rate_hz, &kept);
+    let reaches_end = to >= extent.signal_end;
+    if let (Body::Csw { pause: p, .. }, true) = (&mut part.body, reaches_end) {
+        *p = *pause;
+    }
+    let end = if reaches_end { extent.end } else { to };
+    Some((part, Extent { start: from, signal_end: to, end }, shaped))
+}
+
 /// Whether the signals of two extents of one recording overlap.
 fn overlap(a: &Extent, b: &Extent) -> bool {
     a.start < b.signal_end && b.start < a.signal_end
@@ -626,15 +740,17 @@ fn ms(samples: f64, rate_hz: u32) -> u16 {
 }
 
 /// Ends the pause of `base`'s block `i` where a block put in behind it starts, at `at`: `base`
-/// played that stretch as the pause while it heard nothing there.
+/// played that stretch as the pause while it heard nothing there. Where the pause ended before
+/// `at`, at what the block put in took the place of, it runs on to there: what lay between
+/// was signal that holds no block, which plays as the pause.
 fn end_pause_at(base: &mut Decoded, i: usize, at: f64) {
     let extent = base.extents[i];
-    if extent.end <= at {
+    if extent.end == at {
         return;
     }
     let held = ms(at - extent.signal_end, base.rate_hz);
     if let Some(pause) = pause_mut(&mut base.blocks[i]) {
-        *pause = (*pause).min(held);
+        *pause = if extent.end < at { (*pause).max(held) } else { (*pause).min(held) };
     }
     base.extents[i].end = at.max(extent.signal_end);
 }

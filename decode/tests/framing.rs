@@ -384,9 +384,14 @@ fn the_block_after_a_header_has_the_headers_length() {
     // Asked for 300 and holding 20: short.
     let [h, _] = code_pair(b"shorter   ", 300, 3);
     let short = standard(1000, with_checksum(0xFF, &[0xA5; 18]));
-    let got = decode(&of_blocks(&[h, short.clone()]).unwrap());
+    let got = decode(&of_blocks(&[h.clone(), short.clone()]).unwrap());
     assert_eq!(got.blocks[1], short);
     assert_eq!(got.findings, vec![Finding::Short { block: 1, expected: 302, read: 20 }]);
+    // So with no pause behind it: the next block's pilot, as long as the ROM's leader, ends it.
+    let short = standard(0, with_checksum(0xFF, &[0xA5; 18]));
+    let got = decode(&of_blocks(&[h, short.clone(), next.clone()]).unwrap());
+    assert_eq!(got.blocks[1], short);
+    assert_eq!(&got.blocks[2], &next);
 }
 
 #[test]
@@ -713,6 +718,15 @@ fn a_stray_zero_behind_a_header_is_left_out() {
     assert_eq!(datas(&got.blocks), datas(&[header.clone(), data.clone()]));
     assert_eq!(got.findings, vec![Finding::StrayZero { block: 0 }]);
 
+    // Saved with no pause behind it, the next block's pilot straight after the stray zero.
+    let mut no_pause = tape.clone();
+    if let Body::Standard { pause, .. } = &mut no_pause[0].body {
+        *pause = 0;
+    }
+    let got = decode(&of_blocks(&no_pause).unwrap());
+    assert_eq!(datas(&got.blocks), datas(&[header.clone(), data.clone()]));
+    assert_eq!(got.findings, vec![Finding::StrayZero { block: 0 }]);
+
     // Only behind a header whose checksum holds; anything else stays the block's.
     let mut broken = h.clone();
     broken[5] ^= 1;
@@ -982,6 +996,49 @@ fn a_recording_that_starts_inside_a_block_leaves_its_rest_in_the_lead_in() {
             "{bytes_in} bytes in: {:?}",
             got.findings
         );
+    }
+}
+
+#[test]
+fn a_recording_that_starts_at_a_sync_or_inside_a_byte_leaves_its_rest_in_the_lead_in() {
+    // Cut at the data block's first sync pulse, its second, its flag, or five half-waves into a
+    // byte: no leader for the ROM to lock on, and the program behind reads whole.
+    let [_, cut] = code_pair(b"first     ", 300, 1);
+    let next = code_pair(b"second    ", 100, 5);
+    let lens = lengths(&of_blocks(&[cut, next[0].clone(), next[1].clone()]).unwrap());
+    let s = sync_of(&lens, 0);
+    for from in [s, s + 1, s + 2, s + 2 + 16 * 3 + 5] {
+        let got = decode(&pulses(&lens[from..]));
+        assert_eq!(datas(&got.blocks), datas(&next), "from pulse {from}");
+        assert!(
+            matches!(got.findings[..], [Finding::LeadIn { pulses: 1.., .. }]),
+            "{from}: {:?}",
+            got.findings
+        );
+    }
+}
+
+#[test]
+fn a_recording_that_ends_inside_a_block_says_it_stops_short() {
+    // Fifty bytes into the data block, at a byte's end or five bits into the next: the block is
+    // as far as it goes, short of what its header asked, its checksum wrong, a last byte of
+    // five bits filled out with 0s.
+    let [h, d] = code_pair(b"ends      ", 300, 1);
+    let lens = lengths(&of_blocks(&[h.clone(), d]).unwrap());
+    let s = sync_of(&lens, 1);
+    for (bits, read) in [(0, 50), (5, 51)] {
+        let mut cut = lens[..s + 2 + 16 * 50 + 2 * bits].to_vec();
+        cut.push(3_500_000);
+        let got = decode(&pulses(&cut));
+        assert_eq!(datas(&got.blocks)[0], datas(std::slice::from_ref(&h))[0]);
+        assert!(
+            got.findings.contains(&Finding::Short { block: 1, expected: 302, read }),
+            "{:?}",
+            got.findings
+        );
+        assert!(got.findings.contains(&Finding::BadChecksum { block: 1 }), "{:?}", got.findings);
+        let filled = Finding::PartialFinalByte { block: 1, used_bits: 5, completes: false };
+        assert_eq!(got.findings.contains(&filled), bits == 5, "{:?}", got.findings);
     }
 }
 

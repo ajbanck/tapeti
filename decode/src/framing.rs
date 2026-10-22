@@ -143,46 +143,48 @@ pub fn bit_timeout(bit: usize) -> f64 {
 /// Whether the `TONE_RUN` pulses from `i` are a pilot tone, by pairs.
 ///
 /// Each pulse is one the sync loop takes for more pilot ([`pilot_pulse`]) at the speed
-/// `pilot_half`, the half of the block being read, measures, and pairs with a neighbour in the
-/// run into a pilot pair, two of that half within 10%.
-///
-/// A block saved with no pause behind it runs straight into the next block's pilot, and the bit
-/// loop reads on through it as 1 bits: a pilot half pairs with anything into more than
-/// [`ONE_ABOVE`] and less than the timeout. The ROM stops only at the length it was asked for,
-/// which a decoder without a header in front does not know; so a block ends at a byte boundary
-/// where such a run starts. No byte of data holds one: a 1 bit's pair is 3,420 T against a
-/// 4,336 T pilot pair, 21% under it, and a 0 bit's further still, and no half the saver writes
-/// in data is longer than a 1 bit's, so neither is a pair at either phase. One pair cannot tell,
-/// since a pilot half is a plausible 1 bit's half; a run of them can. Measured against the
-/// block's own pilot, a tape that runs fast or slow keeps that margin. The pairs, not the halves,
-/// are the measure, as they are the leader loop's: a recording that moves one kind of edge
-/// against the other moves where each pair splits, and a pilot's halves then alternate 15% or
-/// more either side of their mean while its pairs hold, past 40% behind falls slow by a
-/// millisecond and a half; so a half is held only to the sync loop's window, which takes such
-/// halves for pilot too. Two channels mixed can move the edges one way and then the other, so
-/// that two long halves follow each other, and later two short ones; each of them still pairs
-/// with its other neighbour. A data half pairs with the pilot half behind it 10.6% short, so the
-/// run cannot start a pulse early either.
-///
-/// The halves are read as the bit loop reads them, a bounce's two pulses behind one folded into
-/// it ([`BOUNCE_MOST`]): hiss cuts such pairs into a pilot, and the ROM, waiting after every
-/// edge, never sees them. Counted as pulses, one of them spoils every run of 32 around it, and a
-/// glitch in front of it that a sync pulse fits is then read as a block of 0xFF bytes.
+/// `pilot_half` measures, and pairs with a neighbour into a pilot pair, two of that half within
+/// 10%. No byte of data holds such a run: a 1 bit's pair is 3,420 T against a 4,336 T pilot
+/// pair, 21% under it, so a single pair cannot tell a pilot half from a plausible 1 bit's half,
+/// but a run of them can. The pairs, not the halves, are the measure: a data half still pairs
+/// with the pilot half behind it only 10.6% short, even on a recording that moves one kind of
+/// edge against the other. A bounce, the two pulses hiss cuts into a half-wave, is folded into
+/// it before pairing ([`BOUNCE_MOST`]), as the ROM, waiting after every edge, never sees it.
 pub fn pilot_run_at(pulses: &[Pulse], i: usize, pilot_half: f64) -> bool {
+    pilot_run_of(pulses, i, pilot_half, TONE_RUN)
+}
+
+/// Whether the `n` half-waves from pulse `i` are pilot, as [`pilot_run_at`] judges its run: each
+/// one the sync loop takes for pilot, pairing with a neighbour into a pilot pair. Read a half at
+/// a time, so that data, whose halves fail at once, costs a pulse or two.
+fn pilot_run_of(pulses: &[Pulse], i: usize, pilot_half: f64, n: usize) -> bool {
     let speed = Speed::of_pilot(pilot_half);
     let mut halves = Bits::new(pulses, i, pilot_half);
-    let mut run = [0.0; TONE_RUN];
-    for t in &mut run {
-        match halves.half(f64::INFINITY) {
-            Some(h) => *t = h,
-            None => return false,
-        }
-    }
     let pair = |a: f64, b: f64| (a + b - 2.0 * pilot_half).abs() <= 0.2 * pilot_half;
-    (0..run.len()).all(|k| {
-        pilot_pulse(run[k] / speed.0)
-            && (k > 0 && pair(run[k - 1], run[k]) || k + 1 < run.len() && pair(run[k], run[k + 1]))
-    })
+    // The half before the last read, and whether it paired with the one before it.
+    let (mut prev, mut paired_back) = (None, false);
+    for _ in 0..n {
+        let Some(t) = halves.half(f64::INFINITY) else { return false };
+        if !pilot_pulse(t / speed.0) {
+            return false;
+        }
+        if let Some(p) = prev {
+            let forward = pair(p, t);
+            if !paired_back && !forward {
+                return false;
+            }
+            paired_back = forward;
+        }
+        prev = Some(t);
+    }
+    paired_back
+}
+
+/// Whether a pilot as long as the ROM's leader, [`LEADER_PAIRS`] pairs, starts at pulse `i`: the
+/// tone a Spectrum locks on the next block from, which a run of 1 bits slowed to a pilot's pace
+/// is not.
+fn leader_run_at(pulses: &[Pulse], i: usize, pilot_half: f64) -> bool {
+    pilot_run_of(pulses, i, pilot_half, 2 * LEADER_PAIRS)
 }
 
 /// Whether a pilot run ([`pilot_run_at`]) starts at any of the half-waves of a byte from pulse
@@ -662,15 +664,33 @@ impl<'a> Bits<'a> {
 
     /// The pair of bit `bit` (counted from the flag's first), or `None` where the bit loop
     /// stops: the pair times out, the pulses run out, or at a byte boundary the next block's
-    /// pilot starts, there or behind one pulse. The cursor is left where it was then.
+    /// pilot starts, there or behind one pulse. The cursor is left where it was then. `asked`
+    /// where a length the block has not reached yet was asked for.
     ///
     /// A pilot run cannot be data ([`pilot_run_at`]), so neither can a byte whose first
     /// half-wave is followed by one: that pulse is what the gap left, such as a pause level cut
-    /// in two.
-    fn pair(&mut self, bit: usize) -> Option<f64> {
-        let pilot = |at: usize| pilot_run_at(self.pulses, at, self.pilot_half);
-        if bit > 0 && bit.is_multiple_of(8) && (pilot(self.at) || pilot(self.at + 1)) {
-            return None;
+    /// in two. But a run of 1 bits that a snag or the wow slows to a pilot's pace is pilot to
+    /// [`pilot_run_at`] for as long as it lasts; where a length was asked for, the ROM stops
+    /// only there, reads such a run as bits and loads the block. So in a block that opened at
+    /// the pilot's speed and whose bits before the boundary now run slower than it past the
+    /// noise reach ([`Bits::bits_split`]), only a pilot as long as the ROM's leader ends it short
+    /// of that length ([`leader_run_at`]): the next block, saved with no pause behind one
+    /// shorter than its header asked. Anywhere else a run ends it: a reading begun inside a
+    /// pilot reads the rest of it as 1 bits at the pilot's pace, and hiss breaks a pilot short
+    /// of a leader's length.
+    fn pair(&mut self, bit: usize, asked: bool) -> Option<f64> {
+        if bit > 0 && bit.is_multiple_of(8) {
+            let slowed = self.opened && self.bits_speed() > 1.0 + self.reach;
+            let pilot = if asked && slowed {
+                let leader = |at: usize| leader_run_at(self.pulses, at, self.pilot_half);
+                leader(self.at) || leader(self.at + 1)
+            } else {
+                let run = |at: usize| pilot_run_at(self.pulses, at, self.pilot_half);
+                run(self.at) || run(self.at + 1)
+            };
+            if pilot {
+                return None;
+            }
         }
         let start = self.at;
         let timeout = self.speed.of(bit_timeout(bit));
@@ -940,7 +960,7 @@ fn read_gated(
             if last {
                 bits.final_bit(bit)
             } else {
-                bits.pair(bit).map(|p| bits.whole(p))
+                bits.pair(bit, gate.is_some()).map(|p| bits.whole(p))
             }
         }) else {
             break;
@@ -966,7 +986,8 @@ fn read_gated(
     if gate == Some(HEADER_LEN) && proof::asks(&bytes).is_some() {
         let mut extra = 0u8;
         let got = (bit..bit + 8).all(|b| {
-            let one = if b == bit + 7 { bits.final_bit(b) } else { bits.pair(b).map(|p| bits.whole(p)) };
+            let one =
+                if b == bit + 7 { bits.final_bit(b) } else { bits.pair(b, false).map(|p| bits.whole(p)) };
             one.map(|one| extra = extra << 1 | u8::from(one)).is_some()
         });
         if got && extra == 0x00 {
@@ -1001,7 +1022,7 @@ fn read_gated(
 fn bits_end(pulses: &[Pulse], end: usize, read: usize, pilot_half: f64) -> usize {
     let mut bits = Bits::new(pulses, end, pilot_half);
     let (mut bit, mut whole) = (read, end);
-    while bits.pair(bit).is_some() {
+    while bits.pair(bit, false).is_some() {
         bit += 1;
         if bit.is_multiple_of(8) {
             whole = bits.at;

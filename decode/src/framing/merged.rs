@@ -4,36 +4,18 @@
 //! A sync pair the recording merged into a neighbouring half-wave, or moved past the ROM's
 //! window, read where the block's bits are.
 //!
-//! The sync pair is the highest tone a ROM block carries (2.6 and 2.4 kHz, against a 0 bit's 2
-//! kHz and the pilot's 807 Hz), so it is the first thing a recording that has lost its treble
-//! loses. When a lobe loses its edges, the half-waves either side of it become one pulse with
-//! it, and which three they are sets where every later bit begins:
-//! - backward: the pilot's last half-wave and the pair, about 3,570 T. The ROM takes it for
-//!   more pilot (or, a little slower, times out on it), then the first 0 bit for the sync pair,
-//!   and the block reads a bit late, with a checksum that often still holds;
-//! - forward: the pair and the first data half-wave. The bit's other half survives, and the
-//!   bits begin there, half a bit on: every pair after it straddles two bits;
-//! - forward and hidden: the same with a 0 bit's half, 2,257 T, which passes for a pilot
-//!   half-wave; the half that survives is then where the ROM finds its sync.
-//!
-//! Each form predicts the merged pulse from what has been measured: the leader's pilot half,
-//! the saver's pair at the tape's speed, and for the forward forms the surviving half, which is
-//! as long as the half it lost. Within [`DECIDE`] the length decides, unless the other form is
-//! within [`ASK`] and its reading proves more ([`crate::proof`]); within [`ASK`] the length
-//! only asks, and the readings answer, the one that proves most standing (`Seam::rank`).
-//!
-//! A pair can also be whole and still miss the ROM's window. A recording that moves one kind of
-//! edge against the other moves where the pair splits, not its sum, and the ROM, which judges
-//! the first pulse alone, takes a first pulse past 1,048 T for more pilot and the second for
-//! its sync. So a pair is a sync pair by its sum too, within [`WIDTH`] of the saver's, widened
-//! by the skew the pilot's own halves measure (`Seam::skew`). The ROM's reading then lies half
-//! a bit out, and can still be a block, its checksum holding by chance; where the pair whole
-//! reads a block that proves as much, the phase decides (`Seam::half_a_bit_out`).
-//!
-//! The ROM's own reading stays wherever a block stands behind it that no reading proves more
-//! than, or displaces at the right phase, and wherever nothing answers.
+//! The sync pair carries a block's highest tone (2.6/2.4 kHz against a 0 bit's 2 kHz and the
+//! pilot's 807 Hz), so a recording that loses its treble loses it first. A lost lobe merges
+//! with a neighbouring half-wave: backward into the pilot (about 3,570 T), forward into the
+//! first data half (the bits begin half a bit on), or forward into a half that itself passes
+//! for pilot (2,257 T). Each form's length predicts the merged pulse and decides within
+//! [`DECIDE`]; within [`ASK`] only the readings decide, the one that proves most standing. A
+//! pair whose split a skewed recording moved can miss the ROM's window and still be a sync pair
+//! by its sum, within [`WIDTH`] widened by the pilot's own skew (`Seam::skew`). The ROM's own
+//! reading stands wherever no reading proves more than it or displaces it at the right phase
+//! (`Seam::half_a_bit_out`), and wherever nothing answers.
 
-use super::{read_bytes, Speed, Start, BOUNCE_MOST};
+use super::{read_bytes, Speed, Start, BOUNCE_MOST, HALF_CREST, ONE_ABOVE};
 use crate::fallback::TONE_RUN;
 use crate::proof::{self, Proof};
 use crate::pulses::Pulse;
@@ -132,7 +114,7 @@ pub(super) fn bits_start(
             return Some(start);
         }
         if rom == Some(b + 2) {
-            return None;
+            return seam.in_front(b);
         }
     }
     None
@@ -226,6 +208,46 @@ impl Seam<'_> {
             (Some((f, (fp, _))), _) if fp == top => Some(f),
             _ => Some(back),
         }
+    }
+
+    /// The bits where the pulse in front of the ROM's first sync pulse at `anchor`, which the
+    /// sync loop took for pilot, held the sync pair or part of it, where the ROM's reading proves
+    /// nothing and one from there proves a header in every field or answers the header in front.
+    ///
+    /// The sync loop takes any pulse up to 3,644 T for pilot, and judges only the first sync
+    /// pulse, so two seams pass it whole. A first sync pulse the recording stretched into the
+    /// pilot's window leaves the second for the ROM's first and the block's first half-wave for
+    /// its second: it reads the block half a bit late, and a data block's flag of 1 bits, whose
+    /// halves are pilot to it, is gone. The two sync pulses then sum to a sync pair, under the
+    /// split as no pilot pair is, and the bits start at the ROM's second sync pulse. And the
+    /// pilot's last half merged with the sync pair, a backward merge shorter than [`ASK`] allows
+    /// (one can come 24% short), leaves the ROM a header's first 0 bit for its sync: it
+    /// reads the header a bit late, its spaces as `0x40`, and asks for a length shifted a bit,
+    /// at which the block behind it is cut. The merged pulse is longer than the pilot, and the
+    /// bits start at the ROM's first sync pulse.
+    ///
+    /// Either pulse lies off the pilot past what the hiss moves a half ([`HALF_CREST`]), and off
+    /// the leader's halves of its parity ([`KIND_WIDTH`]), or it is the pilot's own last half.
+    /// Only a reading that proves itself stands: a header, or the block a header asked for,
+    /// that long under the data flag with its checksum good; one by chance stands rarely, where
+    /// the ROM's own reading has failed. Such a block is read again at its header's length.
+    fn in_front(&self, anchor: usize) -> Option<Start> {
+        if self.rom_rank() != Proof::None {
+            return None;
+        }
+        let b = anchor.checked_sub(1)?;
+        let (t, first) = (self.pulses[b].tstates, self.pulses.get(anchor)?.tstates);
+        if (t - self.pilot_half).abs() <= HALF_CREST * self.pilot_half
+            || (t - self.kinds[b % 2]).abs() <= KIND_WIDTH * self.pilot_half
+        {
+            return None;
+        }
+        let stretched = (t + first <= self.speed.of(ONE_ABOVE)).then_some(Start::At(anchor + 1));
+        let merged = (t > self.pilot_half).then_some(Start::At(anchor));
+        [stretched, merged].into_iter().flatten().find(|&start| match self.rank(start) {
+            Proof::Header => true,
+            p => self.expected.is_some() && p >= Proof::Verified,
+        })
     }
 
     /// What the ROM's own reading proves ([`rank`]): nothing where it read no sync pair.

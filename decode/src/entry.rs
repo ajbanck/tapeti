@@ -947,9 +947,14 @@ fn read_faded(
             let (from, to) = (start_at(b.tone), start_at(b.bits_end));
             let zeros_behind =
                 b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
+            // A header owed by its flag answers as a header in every field; a block behind one, as
+            // the block it asks for.
             let answers_it = b.used_bits == 8
                 && match behind {
                     Some(_) => proof::between(None, &b.data, behind) >= Proof::Answer && to <= until,
+                    None if had.first() == Some(&0x00) && want == proof::HEADER_LEN => {
+                        proof::of(&b.data) == Proof::Header
+                    }
                     None => proof::answering(&b.data, want) == Proof::Answer,
                 };
             let free = |a: &(Vec<u8>, f64, f64)| a.2 <= from || to <= a.1;

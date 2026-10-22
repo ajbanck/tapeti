@@ -300,6 +300,59 @@ fn a_block_taken_over_a_reading_that_slipped_takes_the_place_of_its_run_on_too()
     assert_eq!(got.findings, [Finding::BandPass { block: 1 }]);
 }
 
+/// A raw signal block of `runs` pulses of 10 samples, and where it lies.
+fn raw_signal(runs: u32, start: f64, pause: u16) -> (Block, Extent) {
+    let data = vec![10; runs as usize];
+    let block = Block::new(Body::Csw { pause, sample_rate: 44100, compression: 1, pulse_count: runs, data });
+    let signal_end = start + 10.0 * f64::from(runs);
+    (block, Extent { start, signal_end, end: signal_end + 441.0 * f64::from(pause) / 10.0 })
+}
+
+#[test]
+fn a_block_read_inside_raw_signal_leaves_the_rest_of_it_raw_signal_where_a_reading_read_a_block() {
+    // The signal as it is kept the whole tape as raw signal; the band-pass reads the header
+    // and fails the blocks either side. The header goes in, and the raw signal in front of it
+    // and behind, where the band-pass read a block, stays as it was, cut at the header.
+    let a = program("A", &(0..64u8).collect::<Vec<u8>>());
+    let lone = lone_block(40);
+    let mut base = laid(Vec::new(), 0.0);
+    let (raw, extent) = raw_signal(29_000, 0.0, 227);
+    base.blocks.push(raw);
+    base.extents.push(extent);
+    base.findings.push(Finding::RawSignal { block: 0 });
+    let band = laid(
+        [flipped(std::slice::from_ref(&lone), 0, &[3], 1), vec![a[0].clone()], flipped(&a[1..], 0, &[5], 1)]
+            .concat(),
+        0.0,
+    );
+    let got = folded(&base, &[(Source::Band, &band)]);
+    assert_eq!(got.blocks.len(), 3, "{:?}", got.blocks);
+    assert_eq!(got.blocks[1], Block::new(Body::Standard { pause: 0, data: datas(&a)[0].clone() }));
+    assert!(matches!(got.blocks[0].body, Body::Csw { .. }) && matches!(got.blocks[2].body, Body::Csw { .. }));
+    assert_eq!(
+        got.extents,
+        [
+            Extent { start: 0.0, signal_end: 100_000.0, end: 100_000.0 },
+            Extent { start: 100_000.0, signal_end: 190_000.0, end: 190_000.0 },
+            Extent { start: 190_000.0, signal_end: 290_000.0, end: extent.end },
+        ]
+    );
+    assert!(matches!(got.blocks[2].body, Body::Csw { pause: 227, .. }), "{:?}", got.blocks[2]);
+    let mut said = got.findings.clone();
+    said.sort_by_key(|f| f.block());
+    assert_eq!(
+        said,
+        [Finding::RawSignal { block: 0 }, Finding::BandPass { block: 1 }, Finding::RawSignal { block: 2 }]
+    );
+
+    // Where no reading read a block there, and nothing is shaped like one, it plays as the
+    // header's pause, and what lay in front as the lead-in.
+    let band = laid(vec![a[0].clone()], 100_000.0);
+    let got = folded(&base, &[(Source::Band, &band)]);
+    assert_eq!(got.blocks.len(), 1, "{:?}", got.blocks);
+    assert_eq!(got.extents[0], Extent { start: 100_000.0, signal_end: 190_000.0, end: extent.end });
+}
+
 #[test]
 fn a_block_one_reading_reads_whole_answers_the_header_another_read() {
     // The midline reads the header and not the block, the zero line the block and not the
@@ -785,4 +838,91 @@ fn a_block_whose_last_byte_was_filled_out_proves_nothing_where_the_0s_complete_i
     vote(&mut base, &[&filled, &wrong_at(&[60]), &wrong_at(&[90]), &wrong_at(&[120])]);
     assert_eq!(datas(&base.blocks), datas(&tape));
     assert_eq!(base.findings, [Finding::Voted { block: 1, readings: 4 }]);
+}
+
+#[test]
+fn a_header_another_reading_proves_brings_in_the_block_at_the_length_it_asks() {
+    // The kept reading read the header a bit late, its checksum holding, and cut the block
+    // behind at the length the shifted header asks; another reads both right. The header enters
+    // as one in every field, and the block answering it goes in over the cut one, read again at
+    // the header's length.
+    let a = program("ARCHIVE", &(0..144u8).map(|k| k.wrapping_mul(37).wrapping_add(11)).collect::<Vec<u8>>());
+    let header = datas(&a)[0].clone();
+    let shifted: Vec<u8> =
+        (0..header.len()).map(|i| header[i] << 1 | header.get(i + 1).map_or(0, |n| n >> 7)).collect();
+    let cut = datas(&a)[1][..34].to_vec();
+    let late = laid(vec![standard(shifted.clone()), standard(cut)], 0.0);
+    assert_eq!(tapeti_decode::proof::of(&shifted), tapeti_decode::proof::Proof::Trivial);
+    let got = folded(&late, &[(Source::Axis(Axis::Midline), &laid(a.clone(), 0.0))]);
+    assert_eq!(datas(&got.blocks), datas(&a), "{:?}", got.findings);
+}
+
+#[test]
+fn a_header_read_with_its_stray_zero_takes_the_place_of_one_whose_zero_ran_on() {
+    // The zero line reads a copier's header through a bit whose halves no saver writes, with its
+    // stray 0x00 behind as a run-on kept as raw signal; the midline reads the same header with no
+    // such bit, the zero inside its block, and stands higher, so it comes with the zero, leaving no raw stub.
+    let a = program("COPIED", &(0..64u8).collect::<Vec<u8>>());
+    let mut zero = laid(a.clone(), 0.0);
+    zero.extents[0] = Extent { start: 0.0, signal_end: 89_000.0, end: 89_100.0 };
+    zero.blocks.insert(
+        1,
+        Block::new(Body::Csw {
+            pause: 0,
+            sample_rate: 44100,
+            compression: 1,
+            pulse_count: 26,
+            data: vec![9; 26],
+        }),
+    );
+    zero.extents.insert(1, Extent { start: 89_100.0, signal_end: 89_400.0, end: 100_000.0 });
+    zero.findings = vec![
+        Finding::UnlikeHalves { block: 0, bits: 1 },
+        Finding::RawSignal { block: 1 },
+        Finding::RunOn { block: 1 },
+    ];
+    let mut midline = laid(a.clone(), 0.0);
+    midline.findings = vec![Finding::StrayZero { block: 0 }];
+    let got = folded(&zero, &[(Source::Axis(Axis::Midline), &midline)]);
+    assert_eq!(datas(&got.blocks), datas(&a), "{:?}", got.blocks);
+    assert_eq!(got.blocks.len(), 2, "{:?}", got.blocks);
+    assert!(got.findings.contains(&Finding::StrayZero { block: 0 }), "{:?}", got.findings);
+    assert!(
+        !got.findings.iter().any(|f| matches!(f, Finding::RunOn { .. } | Finding::RawSignal { .. })),
+        "{:?}",
+        got.findings
+    );
+    // As high, the zero line reading through no unlike bit: the midline read the stray zero
+    // into the header's block, and its read takes the run-on's place.
+    zero.findings.remove(0);
+    let got = folded(&zero, &[(Source::Axis(Axis::Midline), &midline)]);
+    assert_eq!(got.blocks.len(), 2, "{:?}", got.blocks);
+    assert!(got.findings.contains(&Finding::StrayZero { block: 0 }), "{:?}", got.findings);
+    // With no run-on to take, the same bytes stay the kept reading's.
+    let mut plain = laid(a.clone(), 0.0);
+    plain.findings = vec![Finding::UnlikeHalves { block: 0, bits: 1 }];
+    let got = folded(&plain, &[(Source::Axis(Axis::Midline), &midline)]);
+    assert_eq!(got.findings, plain.findings);
+}
+
+#[test]
+fn a_block_read_a_bit_late_gives_way_to_the_read_its_header_answers() {
+    // The kept reading read the data block a bit late, its flag 0xFF shifted to 0xFE and checksum
+    // holding as a slip does half the time; another reads it right. The ROM loads the block
+    // behind a header only under flag 0xFF, so the late read answers nothing and the right one
+    // takes its place at its pause, whichever reading is kept.
+    let a = program("A", &(0..64u8).collect::<Vec<u8>>());
+    let right = datas(&a)[1].clone();
+    let mut late = right.clone();
+    late[0] = 0xFE;
+    let n = late.len();
+    late[n - 1] = late[..n - 1].iter().fold(0, |x, &d| x ^ d);
+    let late_tape = vec![a[0].clone(), standard(late)];
+    let left = Source::Channel(Channel::Left);
+    let got = folded(&laid(late_tape.clone(), 0.0), &[(left, &laid(a.clone(), 0.0))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.findings, [Finding::FromChannel { block: 1, channel: Channel::Left }]);
+    let got = folded(&laid(a.clone(), 0.0), &[(left, &laid(late_tape, 0.0))]);
+    assert_eq!(got.blocks, a);
+    assert!(got.findings.is_empty(), "{:?}", got.findings);
 }
