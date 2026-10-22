@@ -180,6 +180,59 @@ fn pilot_run_of(pulses: &[Pulse], i: usize, pilot_half: f64, n: usize) -> bool {
     paired_back
 }
 
+/// Whether the `TONE_RUN` half-waves from pulse `i` are a pilot tone by the bytes the bit loop
+/// would read from them: each half one the sync loop takes for pilot, and each byte's 16 halves
+/// together as long as that many pilot halves within 10%.
+///
+/// Summing a byte at a time survives a crossing moved within it, such as hum clipped on a
+/// pilot's crests, which [`pilot_run_at`]'s pairing test would miss. No byte of data is that
+/// long: 16 data halves lie 21% under 16 pilot halves, so the run is looked for at a byte
+/// boundary or one pulse behind it (`Bits::pair`), holding a byte of data, or 15 of its halves
+/// 20% under, if it starts a byte early. A sum tells a pilot from bits only at the speed the
+/// bits were read at: a snag slows bits until bytes of them sum to a pilot's against the speed
+/// of the pilot before them.
+fn tone_at(pulses: &[Pulse], i: usize, pilot_half: f64) -> bool {
+    let speed = Speed::of_pilot(pilot_half);
+    let mut halves = Bits::new(pulses, i, pilot_half);
+    let want = BYTE_PULSES as f64 * pilot_half;
+    (0..TONE_RUN / BYTE_PULSES).all(|_| {
+        let mut sum = 0.0;
+        for _ in 0..BYTE_PULSES {
+            match halves.half(f64::INFINITY) {
+                Some(t) if pilot_pulse(t / speed.0) => sum += t,
+                _ => return false,
+            }
+        }
+        (sum - want).abs() <= 0.1 * want
+    })
+}
+
+/// Whether the next block's lead-in starts at pulse `i`, behind a block read at `pilot_half`
+/// whose bits so far run at `bit1_half` a 1 bit's half.
+///
+/// The pulse is longer than any 1 bit's half ([`SECOND_HALF_MOST`] at the block's speed), and
+/// the [`TONE_RUN`] pulses from it are each inside the pilot window ([`WIDTH`]) and over the 1
+/// bit's top at the larger of the block's speed and its bits', none quiet, and a tone: the
+/// largest at most 1.1 / 0.9 times the smallest, as [`pilot_run_at`] pairs a tone. The saver
+/// writes no half in data longer than a 1 bit's, so such a run holds no bit of this block's, at
+/// whatever pace against its leader: a lead-in that wow or flutter has carried off it. A run
+/// whose mean lies within 10% of the block's pilot is left out on purpose: asked at every bit,
+/// the mean takes the pilot behind a sync that hiss made inside a pilot, stopping the reading
+/// after a byte or two read as 1s, with two 0xFF bytes keeping the checksum.
+fn lead_in_at(pulses: &[Pulse], i: usize, pilot_half: f64, bit1_half: f64) -> bool {
+    let speed = Speed::of_pilot(pilot_half);
+    let Some(run) = pulses.get(i..i + TONE_RUN) else { return false };
+    let pilot = |t: f64| (t - pilot_half).abs() <= WIDTH * pilot_half;
+    if run[0].tstates <= speed.of(SECOND_HALF_MOST) || !run.iter().all(|p| pilot(p.tstates)) {
+        return false;
+    }
+    let top =
+        SECOND_HALF_MOST / f64::from(RomTimings::ONE) * bit1_half.max(speed.of(f64::from(RomTimings::ONE)));
+    let (lo, hi) =
+        run.iter().fold((f64::INFINITY, 0.0f64), |(lo, hi), p| (lo.min(p.tstates), hi.max(p.tstates)));
+    run.iter().all(|p| p.tstates > top && !p.quiet) && hi <= lo * 1.1 / 0.9
+}
+
 /// Whether a pilot as long as the ROM's leader, [`LEADER_PAIRS`] pairs, starts at pulse `i`: the
 /// tone a Spectrum locks on the next block from, which a run of 1 bits slowed to a pilot's pace
 /// is not.
@@ -334,7 +387,7 @@ pub fn next_block(
 /// The block `locked` reads, the search having begun at `from`; `None` where it reads no byte.
 fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<usize>) -> Option<RawBlock> {
     let Locked { first_checked, bits, pilot_half, merged_sync } = locked;
-    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, unlike, snag, .. } =
+    let Read { mut bytes, mut end, short, gate, stray_zero, remainder, unlike, snag, pace, .. } =
         read_bytes(pulses, bits, expected, pilot_half);
     let mut used_bits = 8;
     // Bits past the last whole byte. Behind bytes that make a whole ROM block, whose checksum
@@ -354,7 +407,7 @@ fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<us
     // Only a length can stop the ROM short of the bits; the bytes run out where they do
     // otherwise.
     let stopped = gate.is_some_and(|n| bytes.len() >= n);
-    let bits_end = if stopped { bits_end(pulses, end, 8 * bytes.len(), pilot_half) } else { end };
+    let bits_end = if stopped { bits_end(pulses, end, 8 * bytes.len(), pilot_half, pace) } else { end };
     Some(RawBlock {
         data: bytes,
         tone,
@@ -601,6 +654,12 @@ struct Bits<'a> {
     reach: f64,
     /// Whether a bit read so far reads otherwise at the speed of the bits before it.
     departs: bool,
+    /// The T-states of every whole pair read so far, and what the saver's timing gives the same
+    /// bits: the block's speed as read ([`Bits::bit1_half`]).
+    read: [f64; 2],
+    /// Whether the block ended between a bit's halves at the next block's lead-in
+    /// ([`lead_in_at`]): the bit was read from its first half, and no other follows.
+    ended: bool,
 }
 
 impl<'a> Bits<'a> {
@@ -624,6 +683,8 @@ impl<'a> Bits<'a> {
             opened: false,
             reach: HALF_CREST / 2.0 + WOW_PEAK + grid / speed.of(f64::from(2 * RomTimings::ZERO)),
             departs: false,
+            read: [0.0; 2],
+            ended: false,
         }
     }
 
@@ -678,14 +739,40 @@ impl<'a> Bits<'a> {
     /// shorter than its header asked. Anywhere else a run ends it: a reading begun inside a
     /// pilot reads the rest of it as 1 bits at the pilot's pace, and hiss breaks a pilot short
     /// of a leader's length.
+    ///
+    /// The next block's lead-in ([`lead_in_at`]) is also looked for at every bit and between a
+    /// bit's halves, wherever a run is: a lead-in that wow or flutter has carried off the
+    /// block's leader starts inside a byte, and the bit loop would read on into it as 1 bits.
+    /// Where it starts between a bit's halves, the bit is read from its first half.
+    ///
+    /// Where no length was asked for, nothing but the next pilot says where the block ends, and
+    /// once [`SPEED_BITS`] bits are read it is also looked for byte by byte at the speed of the
+    /// bits before the boundary ([`tone_at`]). Against the block's own pilot, measured before its
+    /// bits, wow can carry the next pilot out of the 10% a run allows, and hum clipped on its
+    /// crests leaves one half of each crest paired with neither neighbour; the bit loop then
+    /// reads on through that pilot as 1 bits, and an even number of its bytes, each 0xFF, keeps
+    /// the checksum.
     fn pair(&mut self, bit: usize, asked: bool) -> Option<f64> {
+        if self.ended {
+            return None;
+        }
+        let slowed = self.opened && self.bits_speed() > 1.0 + self.reach;
+        let lead_in = |bits: &Self| {
+            !(asked && slowed) && lead_in_at(bits.pulses, bits.at, bits.pilot_half, bits.bit1_half())
+        };
+        if bit > 0 && lead_in(self) {
+            return None;
+        }
         if bit > 0 && bit.is_multiple_of(8) {
-            let slowed = self.opened && self.bits_speed() > 1.0 + self.reach;
             let pilot = if asked && slowed {
                 let leader = |at: usize| leader_run_at(self.pulses, at, self.pilot_half);
                 leader(self.at) || leader(self.at + 1)
             } else {
-                let run = |at: usize| pilot_run_at(self.pulses, at, self.pilot_half);
+                let bits = (!asked && self.taken >= SPEED_BITS).then(|| self.pilot_half * self.bits_speed());
+                let run = |at: usize| {
+                    pilot_run_at(self.pulses, at, self.pilot_half)
+                        || bits.is_some_and(|half| tone_at(self.pulses, at, half))
+                };
                 run(self.at) || run(self.at + 1)
             };
             if pilot {
@@ -694,12 +781,28 @@ impl<'a> Bits<'a> {
         }
         let start = self.at;
         let timeout = self.speed.of(bit_timeout(bit));
-        match self.half(timeout).zip(self.half(timeout)) {
+        let first = self.half(timeout);
+        if let Some(a) = first.filter(|&a| a <= timeout && lead_in(self)) {
+            self.ended = true;
+            return Some(2.0 * a);
+        }
+        match first.zip(self.half(timeout)) {
             Some((a, b)) if a + b <= timeout => Some(self.cell(a, b)),
             _ => {
                 self.at = start;
                 None
             }
+        }
+    }
+
+    /// A 1 bit's half at the speed this block's bits have been read at: every pair read so far
+    /// against what the saver's timing gives the same bits; at the pilot's speed before any.
+    fn bit1_half(&self) -> f64 {
+        let [read, nominal] = self.read;
+        if nominal > 0.0 {
+            f64::from(RomTimings::ONE) * read / nominal
+        } else {
+            self.speed.of(f64::from(RomTimings::ONE))
         }
     }
 
@@ -791,6 +894,8 @@ impl<'a> Bits<'a> {
     /// window of the bits before the next.
     fn whole(&mut self, pair: f64) -> bool {
         let one = self.one(pair);
+        self.read[0] += pair;
+        self.read[1] += f64::from(2 * if one { RomTimings::ONE } else { RomTimings::ZERO });
         if !std::mem::take(&mut self.disturbed) {
             self.window.rotate_left(1);
             self.window[SPEED_BITS - 1] = if one { pair / 2.0 } else { pair };
@@ -861,7 +966,14 @@ struct Read {
     departs: bool,
     /// Whether the bytes were read at the speed of the bits before each pair ([`read_bytes`]).
     snag: bool,
+    /// The last [`SPEED_BITS`] whole bits read and how many were taken, and the block's pairs
+    /// against the saver's timing, as `Bits` keeps them: the speed the block ended at.
+    pace: Pace,
 }
+
+/// How fast a block's bits ran, as [`Bits`] keeps it: its window of the last [`SPEED_BITS`]
+/// whole bits, how many were taken, and its pairs against the saver's timing.
+type Pace = ([f64; SPEED_BITS], usize, [f64; 2]);
 
 /// Whether `data` is a whole ROM block: a flag and at least a checksum, which holds.
 fn complete(data: &[u8]) -> bool {
@@ -938,6 +1050,7 @@ fn read_gated(
             unlike: 0,
             departs: false,
             snag: false,
+            pace: ([0.0; SPEED_BITS], 0, [0.0; 2]),
         };
     }
     let mut byte = 0u8;
@@ -981,9 +1094,12 @@ fn read_gated(
     // the 19 bytes, and the byte behind them is read here so that its pulses stay in the
     // block that owns them and the pause is measured from the true gap.
     // Its last bit is the block's last, behind which the saver's closing half-wave lies
-    // ([`Bits::final_bit`]).
+    // ([`Bits::final_bit`]). A byte that is no stray zero is not the header's: what the probe
+    // read of it, the speed window above all (`pace`, which [`bits_end`] reads on from), is
+    // put back as the 19 bytes left it.
     let (mut stray_zero, mut unlike) = (false, bits.unlike);
     if gate == Some(HEADER_LEN) && proof::asks(&bytes).is_some() {
+        let kept = (bits.window, bits.taken, bits.read, bits.departs, bits.at, bits.ended);
         let mut extra = 0u8;
         let got = (bit..bit + 8).all(|b| {
             let one =
@@ -994,6 +1110,8 @@ fn read_gated(
             end = bits.at;
             stray_zero = true;
             unlike = bits.unlike;
+        } else {
+            (bits.window, bits.taken, bits.read, bits.departs, bits.at, bits.ended) = kept;
         }
     }
     // Short of a length a header asked for; a header's own 19 are no request.
@@ -1011,6 +1129,7 @@ fn read_gated(
         unlike,
         departs: bits.departs,
         snag: false,
+        pace: (bits.window, bits.taken, bits.read),
     }
 }
 
@@ -1019,8 +1138,15 @@ fn read_gated(
 ///
 /// Whole bytes only, as a block with no length ends: 1 to 7 bits behind the last are the seam,
 /// such as a recording's decay behind the saver's last edge, whose pulses pair into a bit.
-fn bits_end(pulses: &[Pulse], end: usize, read: usize, pilot_half: f64) -> usize {
+///
+/// They end, as such a block does, where the next block's pilot starts, at the speed of the
+/// block's own last bits, `pace` ([`Read::pace`]), too: a header saved with no pause runs into
+/// its block's pilot, and flutter can carry that pilot out of a run measured against the
+/// header's leader, seconds before. The pairs read past the end move no speed: the pilot, read
+/// as bits, would move it to its own.
+fn bits_end(pulses: &[Pulse], end: usize, read: usize, pilot_half: f64, pace: Pace) -> usize {
     let mut bits = Bits::new(pulses, end, pilot_half);
+    (bits.window, bits.taken, bits.read) = pace;
     let (mut bit, mut whole) = (read, end);
     while bits.pair(bit, false).is_some() {
         bit += 1;

@@ -120,6 +120,72 @@ fn a_block_with_no_pause_behind_it_ends_at_the_next_blocks_pilot() {
     assert_eq!(same_tape(&got.blocks, &header_first, 1.0..=1.0), Ok(()));
 }
 
+/// A headerless block with no pause abuts a pilot the bit loop would read as 1 bits. The pilot is
+/// told from the speed of the block's own last-read bits, not only from its earlier pilot: wow
+/// playing the bits and the pilot behind them 12% fast puts the next pilot's pairs outside the
+/// 10% run window, and hum clipping its crests shifts crossings two at a time every 16
+/// half-waves, leaving one half of each crest unpaired with either neighbour. A byte is as long
+/// as a pilot's 16 half-waves. A header saved with no pause ends the same way.
+#[test]
+fn a_block_with_no_pause_ends_at_a_pilot_by_the_speed_of_its_bits() {
+    let mut first = vec![0xFF];
+    first.extend((0..100u32).map(|i| (i * 53 + 7) as u8));
+    let [header, data] = code_pair(b"behind    ", 100, 3);
+    let blocks = vec![standard(0, with_checksum(first[0], &first[1..])), header, data];
+    let clean = of_blocks(&blocks).unwrap();
+    let mut t: Vec<f64> = clean.iter().map(|p| p.tstates).collect();
+    // Block 0's pilot and sync, then its bits; the next pilot from there.
+    let (bits, next) = (3223 + 2, 3223 + 2 + 16 * 102);
+    assert!((t[next] - 2168.0).abs() < 1.0 && (t[next - 1] - 2168.0).abs() > 400.0);
+    let fast: Vec<f64> = t.iter().enumerate().map(|(i, &x)| if i >= bits { 0.88 * x } else { x }).collect();
+    let got = decode(&pulses(&fast.iter().map(|x| x.round() as u64).collect::<Vec<_>>()));
+    assert_eq!(same_tape(&got.blocks, &blocks, 0.88..=1.0), Ok(()), "fast: {:?}", got.findings);
+    for i in (next + 4..next + 2000).step_by(16) {
+        t[i] -= 473.0;
+        t[i + 1] += 473.0 - 916.0;
+        t[i + 2] += 916.0;
+    }
+    let got = decode(&pulses(&t.iter().map(|x| x.round() as u64).collect::<Vec<_>>()));
+    assert_eq!(same_tape(&got.blocks, &blocks, 1.0..=1.0), Ok(()), "crests: {:?}", got.findings);
+    // A header, whose length is known, runs into its block's pilot too: where its bits stop is
+    // found at the speed of its last bits, and no run-on is left between.
+    let [mut header, data] = code_pair(b"no pause  ", 100, 3);
+    if let Body::Standard { pause, .. } = &mut header.body {
+        *pause = 0;
+    }
+    let blocks = vec![header, data];
+    let bits = 8063 + 2;
+    let fast: Vec<u64> = of_blocks(&blocks)
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (if i >= bits { 0.88 * p.tstates } else { p.tstates }).round() as u64)
+        .collect();
+    let got = decode(&pulses(&fast));
+    assert_eq!(same_tape(&got.blocks, &blocks, 0.88..=1.0), Ok(()), "header: {:?}", got.findings);
+}
+
+/// A headerless block saved with no pause, whose next block's pilot plays 12% slower than its
+/// own leader, as wow can. Against the leader, and against the speed of the block's bits, that
+/// pilot is outside the 10% run window; but each of its halves is longer than any 1 bit's, a
+/// tone no bit of this saver's makes, so the block ends where it starts.
+#[test]
+fn a_lead_in_slower_than_any_bit_ends_a_block_with_no_pause() {
+    let mut first = vec![0xFF];
+    first.extend((0..100u32).map(|i| (i * 53 + 7) as u8));
+    let [header, data] = code_pair(b"slow pilot", 100, 3);
+    let blocks = vec![standard(0, with_checksum(first[0], &first[1..])), header, data];
+    let next = 3223 + 2 + 16 * 102;
+    let slow: Vec<u64> = of_blocks(&blocks)
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (if i >= next { 1.12 * p.tstates } else { p.tstates }).round() as u64)
+        .collect();
+    let got = decode(&pulses(&slow));
+    assert_eq!(same_tape(&got.blocks, &blocks, 1.0..=1.12), Ok(()), "{:?}", got.findings);
+}
+
 /// The run's walls: `TONE_RUN` (32) pulses, each one the sync loop takes for pilot and pairing
 /// with a neighbour within 10% of a pair of the block's pilot halves. A 1 bit's pair, 3,420 T,
 /// lies 21% under a 4,336 T pilot pair.

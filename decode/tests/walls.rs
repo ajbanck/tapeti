@@ -1669,17 +1669,19 @@ fn on_three(pause: u16, defect: impl Fn(&[f32]) -> Vec<f32>) -> Judged {
 type Defect = Box<dyn Fn(&[f32]) -> Vec<f32>>;
 
 /// A headerless block with no pause behind it ends where the next block's pilot starts, and only
-/// the pilot says so: the defects of the walls, at a deck's range and well past it, leave that
-/// seam whole. Past it the seam goes first under three of them. Hiss: whole to 6 dB, and at 5
-/// the header behind the headerless block reads with a bad checksum where with a pause it reads
-/// (the tape's own wall is 5). Wow at 1 Hz: whole to 10%, and at 12% the next pilot, measured
-/// against the headerless block's own, is out of the 10% a run allows, the block reads on into
-/// it as 1 bits, and its checksum fails; the ROM, told its length, loads it. At 15% two of those
-/// bytes of pilot keep the checksum, a wrong block (the F row). Flutter at 10 Hz: whole to 8%;
-/// at 10% the blocks read and a stretch of the pilot is kept as raw signal. Hum: whole to 1.3,
-/// and at 1.4, clipped on its crests, the headerless block reads two bytes of pilot past its end
-/// whose checksum holds, where the pilot's halves are out of the sync loop's window and their
-/// pairs hold. A deck's wow is 0.3%.
+/// the pilot says so; the defects of the walls, at a deck's range and well past it, leave that
+/// seam whole. Under wow and hum it holds to the tape's own walls, whole to 16% of wow at 1 Hz
+/// and to hum at 1.4: measured against the block's own pilot, seconds earlier, the next pilot
+/// under wow lies out of the 10% a run allows, and under clipped hum one half of every crest
+/// pairs with neither neighbour, so byte by byte at the speed of the bits just read both are the
+/// pilot (`framing::tone_at`), and so is the data block's pilot the header runs into, at the
+/// header's own last bits (`framing::bits_end`). Flutter at 10 Hz reads every block to 22%, the
+/// tape's own wall with a pause: a lead-in each of whose halves is longer than any 1 bit's ends
+/// the block at any bit (`framing::lead_in_at`). At 18% and 20% the header's bits run on into its
+/// block's pilot and the stub is kept as raw signal; at 24% the headerless block is lost, as the
+/// paused tape loses a block. Past the seam it goes first under hiss: whole to 6 dB, and at 5 the
+/// header behind the headerless block reads with a bad checksum where with a pause it reads (the
+/// tape's own wall is 5). A deck's wow is 0.3%.
 #[test]
 fn a_tape_saved_with_no_pause_reads_whole_under_the_walls_defects() {
     let lvl = rms(&render(&tape()));
@@ -1690,14 +1692,17 @@ fn a_tape_saved_with_no_pause_reads_whole_under_the_walls_defects() {
         ("treble 3", Box::new(|x: &[f32]| spacing_loss(x, RATE, 3.0))),
         ("treble 10", Box::new(|x: &[f32]| spacing_loss(x, RATE, 10.0))),
         ("wow 1 Hz 0.1", Box::new(|x: &[f32]| wow(x, RATE, 0.1, 1.0))),
+        ("wow 1 Hz 0.16", Box::new(|x: &[f32]| wow(x, RATE, 0.16, 1.0))),
         ("flutter 0.08", Box::new(|x: &[f32]| wow(x, RATE, 0.08, 10.0))),
+        ("flutter 0.16", Box::new(|x: &[f32]| wow(x, RATE, 0.16, 10.0))),
+        ("flutter 0.22", Box::new(|x: &[f32]| wow(x, RATE, 0.22, 10.0))),
         ("clip", Box::new(|x: &[f32]| clip(&spacing_loss(x, RATE, 3.0), 16.0))),
         ("invert", Box::new(|x: &[f32]| invert(x))),
         ("ripple 0.9", Box::new(|x: &[f32]| ripple(x, RATE, 0.9, 2400.0))),
         ("azimuth 250", Box::new(|x: &[f32]| azimuth(x, RATE, 10.0, 250.0))),
         ("azimuth 4000", Box::new(|x: &[f32]| azimuth(x, RATE, 10.0, 4000.0))),
         ("wander 0.9", Box::new(|x: &[f32]| hum(&spacing_loss(x, RATE, 5.0), RATE, 120.0, 0.9))),
-        ("hum 1.3", Box::new(|x: &[f32]| hum(x, RATE, 50.0, 1.3))),
+        ("hum 1.4", Box::new(|x: &[f32]| hum(x, RATE, 50.0, 1.4))),
         ("low pass", Box::new(|x: &[f32]| low_pass(x, RATE, 1000.0, 3))),
         ("fast", Box::new(|x: &[f32]| speed(x, 1.0 / 1.2))),
         ("slow", Box::new(|x: &[f32]| speed(x, 1.0 / 0.85))),
@@ -1731,17 +1736,21 @@ fn a_tape_saved_with_no_pause_reads_whole_under_the_walls_defects() {
     );
     assert_eq!(on_three(1000, hissed(5)), WHOLE);
     let wowed = |d| move |x: &[f32]| wow(x, RATE, d, 1.0);
+    let cut = (Outcome::Lost(vec![2], vec![Said::BadChecksum, Said::Short, Said::Lost]), vec![2]);
+    assert_eq!(on_three(0, wowed(0.17)), cut);
+    assert_eq!(on_three(1000, wowed(0.16)), cut);
+    let fluttered = |d| move |x: &[f32]| wow(x, RATE, d, 10.0);
     assert_eq!(
-        on_three(0, wowed(0.12)),
-        (Outcome::Lost(vec![0], vec![Said::BadChecksum, Said::Collapsed]), vec![0])
-    );
-    assert_eq!(on_three(1000, wowed(0.12)), WHOLE);
-    let fluttered = |x: &[f32]| wow(x, RATE, 0.1, 10.0);
-    assert_eq!(
-        on_three(0, fluttered),
+        on_three(0, fluttered(0.18)),
         (Outcome::Lost(Vec::new(), vec![Said::RawSignal, Said::Collapsed]), Vec::new())
     );
-    assert_eq!(on_three(1000, fluttered), WHOLE);
+    assert_eq!(on_three(1000, fluttered(0.18)), WHOLE);
+    assert_eq!(on_three(0, fluttered(0.2)), (Outcome::Lost(Vec::new(), vec![Said::RawSignal]), Vec::new()));
+    assert_eq!(
+        on_three(0, fluttered(0.24)),
+        (Outcome::Lost(vec![0], vec![Said::RawSignal, Said::Collapsed]), Vec::new())
+    );
+    assert_eq!(on_three(1000, fluttered(0.24)), (Outcome::Lost(vec![0], vec![Said::RawSignal]), Vec::new()));
 }
 
 /// The tape's level dropping or rising tenfold where one block runs into the next with no
