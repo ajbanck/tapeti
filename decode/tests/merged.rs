@@ -259,8 +259,12 @@ fn a_sync_pair_whose_split_moved_reads_by_its_sum() {
     let t = behind(vec![PILOT; PILOT_PULSES], SYNC1 + 441.0, SYNC2 - 441.0, HEADER_ISH);
     assert_eq!(read(&t), HEADER_ISH);
     // At the saver's split, a first pulse the ROM refuses, 1,049 T, sums to 2,205 T: no sync.
+    let t = behind(vec![PILOT; PILOT_PULSES], 1049.0, 1049.0 * SYNC2 / SYNC1, HEADER_ISH);
+    assert!(!reads(&t, HEADER_ISH));
+    // A header there is read a bit late from the flag's first 0 bit, which the ROM takes for its
+    // sync, and from that bit it is a header in every field.
     let t = behind(vec![PILOT; PILOT_PULSES], 1049.0, 1049.0 * SYNC2 / SYNC1, &h);
-    assert!(!reads(&t, &h));
+    assert_eq!(read(&t), h);
     const { assert!((1.0 + WIDTH) * (SYNC1 + SYNC2) < 2205.0 && (1.0 + WIDTH) * (SYNC1 + SYNC2) > 1048.0 + SYNC2) };
 }
 

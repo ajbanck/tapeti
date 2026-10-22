@@ -210,43 +210,40 @@ impl Seam<'_> {
         }
     }
 
-    /// The bits where the pulse in front of the ROM's first sync pulse at `anchor`, which the
-    /// sync loop took for pilot, held the sync pair or part of it, where the ROM's reading proves
-    /// nothing and one from there proves a header in every field or answers the header in front.
+    /// The bits where the pulse in front of the ROM's anchor, which the sync loop took for
+    /// pilot, held the sync pair or part of it: where the ROM's own reading proves nothing and
+    /// a reading from there proves a header in every field or answers the header in front.
     ///
-    /// The sync loop takes any pulse up to 3,644 T for pilot, and judges only the first sync
-    /// pulse, so two seams pass it whole. A first sync pulse the recording stretched into the
-    /// pilot's window leaves the second for the ROM's first and the block's first half-wave for
-    /// its second: it reads the block half a bit late, and a data block's flag of 1 bits, whose
-    /// halves are pilot to it, is gone. The two sync pulses then sum to a sync pair, under the
-    /// split as no pilot pair is, and the bits start at the ROM's second sync pulse. And the
-    /// pilot's last half merged with the sync pair, a backward merge shorter than [`ASK`] allows
-    /// (one can come 24% short), leaves the ROM a header's first 0 bit for its sync: it
-    /// reads the header a bit late, its spaces as `0x40`, and asks for a length shifted a bit,
-    /// at which the block behind it is cut. The merged pulse is longer than the pilot, and the
-    /// bits start at the ROM's first sync pulse.
-    ///
-    /// Either pulse lies off the pilot past what the hiss moves a half ([`HALF_CREST`]), and off
-    /// the leader's halves of its parity ([`KIND_WIDTH`]), or it is the pilot's own last half.
-    /// Only a reading that proves itself stands: a header, or the block a header asked for,
-    /// that long under the data flag with its checksum good; one by chance stands rarely, where
-    /// the ROM's own reading has failed. Such a block is read again at its header's length.
+    /// The sync loop takes any pulse up to 3,644 T for pilot and judges only the first sync
+    /// pulse, so two such seams pass it whole. A first sync pulse stretched into the pilot's
+    /// window leaves the second for the ROM's first and the block's first half-wave for its
+    /// second: the block reads half a bit late, losing a data block's flag of 1 bits, and the
+    /// bits start at the ROM's second sync pulse. A backward merge of the pilot's last half
+    /// with the sync pair, up to 24% short of its prediction and still within [`ASK`], leaves
+    /// the ROM a header's first 0 bit for its sync, read a bit late with its spaces as `0x40`;
+    /// the bits start at the ROM's first sync pulse. A header read a bit late is found by its
+    /// bytes: the bit the ROM took for its sync pair is the flag's top bit, a header's flag
+    /// `0x00` makes it a 0, and shifting back from there finds a header in every field, which a
+    /// reading a bit out is not. Any other block proves itself only by its checksum, which such
+    /// a reading often keeps, so it stands only behind a pulse that cannot be pilot (off the
+    /// pilot past [`HALF_CREST`] and off the leader's halves of its parity, [`KIND_WIDTH`]), and
+    /// for the merged form longer than the pilot; it stands as the block a header asked for,
+    /// with its checksum good, rarely by chance where the ROM's own reading has failed. Such a
+    /// block is read again at its header's length.
     fn in_front(&self, anchor: usize) -> Option<Start> {
         if self.rom_rank() != Proof::None {
             return None;
         }
         let b = anchor.checked_sub(1)?;
         let (t, first) = (self.pulses[b].tstates, self.pulses.get(anchor)?.tstates);
-        if (t - self.pilot_half).abs() <= HALF_CREST * self.pilot_half
-            || (t - self.kinds[b % 2]).abs() <= KIND_WIDTH * self.pilot_half
-        {
-            return None;
-        }
-        let stretched = (t + first <= self.speed.of(ONE_ABOVE)).then_some(Start::At(anchor + 1));
-        let merged = (t > self.pilot_half).then_some(Start::At(anchor));
-        [stretched, merged].into_iter().flatten().find(|&start| match self.rank(start) {
-            Proof::Header => true,
-            p => self.expected.is_some() && p >= Proof::Verified,
+        let off_pilot = (t - self.pilot_half).abs() > HALF_CREST * self.pilot_half
+            && (t - self.kinds[b % 2]).abs() > KIND_WIDTH * self.pilot_half;
+        let stretched = (t + first <= self.speed.of(ONE_ABOVE)).then_some((Start::At(anchor + 1), off_pilot));
+        let merged = (Start::At(anchor), off_pilot && t > self.pilot_half);
+        stretched.into_iter().chain([merged]).find_map(|(start, seam)| match self.rank(start) {
+            Proof::Header => Some(start),
+            p if seam && self.expected.is_some() && p >= Proof::Verified => Some(start),
+            _ => None,
         })
     }
 

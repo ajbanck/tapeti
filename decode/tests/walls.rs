@@ -2034,20 +2034,17 @@ fn misframed(seam: Option<u16>) -> (Vec<Block>, Vec<Vec<u8>>) {
 
 /// Read a bit late, the header comes out one bit shifted, its checksum holding as a shift often
 /// leaves it, and asks for a length shifted a bit, 32 bytes, at which its leg is cut: the ROM,
-/// asked for the true length, loads the leg. From 2,600 to 2,800 T the pulse lies off the pilot
-/// past what the hiss moves a half, and the header read from the ROM's first sync pulse stands,
-/// a header in every field (`merged::Seam::in_front`), and its leg with it. At 3,000 T the
-/// backward form decides by its length. At 2,400 T, 11% over the pilot, the pulse is a pilot
-/// half under hiss and is not asked: the header stays a bit late and its leg cut, where
-/// shifting such a header back by its own bytes would find it.
+/// asked for the true length, loads the leg. Read from the ROM's first sync pulse, the flag's
+/// first 0 bit, the header is one in every field and stands, and its leg with it
+/// (`merged::Seam::in_front`), wherever the pulse in front lies: from 1,900 T, under the pilot,
+/// through 2,400 T, a pilot half under hiss, to 2,800 T, where the header is read shifted back by
+/// its own bytes. At 3,000 T the backward form decides by its length.
 #[test]
 fn a_header_merged_into_its_pilot_is_read_from_the_roms_sync_and_its_block_with_it() {
-    for seam in [2600, 2700, 2800, 3000] {
+    for seam in [1900, 2100, 2200, 2400, 2600, 2700, 2800, 3000] {
         let (blocks, want) = misframed(Some(seam));
         assert_eq!(every_reading(&blocks, &want), ([true; 3], Vec::new()), "{seam} T");
     }
-    let (blocks, want) = misframed(Some(2400));
-    assert_eq!(every_reading(&blocks, &want), ([false; 3], vec![1]));
     let (blocks, want) = misframed(None);
     assert_eq!(every_reading(&blocks, &want), ([true; 3], Vec::new()));
 }
