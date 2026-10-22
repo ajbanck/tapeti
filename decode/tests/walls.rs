@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 AJ Banck
 
-//! The decoder's walls: for each defect of the cassette chain (`common::degrade`), the worst it
-//! reads a tape whole through, and what it makes of the tape one step past that.
+//! The decoder's walls: for each defect of the cassette chain (`common::degrade`), the last step
+//! a fast test reads a tape whole through, and the loss one step past that (which blocks are
+//! missing and how the decode says so). A block whose checksum holds over bytes the tape does
+//! not have is wrong unless the decode flags a problem of it (a block cut short can check out
+//! with its last byte filled to 0).
 //!
-//! Each wall is two constants, the last step of its sweep read whole and the first not, asserted
-//! by a fast test together with what the loss is: which blocks are missing and how the decode
-//! says so. Never a block whose checksum holds over bytes the tape does not have, unless the
-//! decode says a problem of it: a block cut short, its last byte filled out with 0s, can check
-//! out over the 0s. Beside each
-//! fast test, ignored because it takes minutes unoptimised, is the sweep that found the wall: it
-//! checks every step, whole up to the wall and no wrong bytes anywhere
-//! (`cargo test --release -p tapeti-decode --test walls -- --ignored`). At every step of either
-//! the ROM's loader runs over the same pulses, and a block it loads at every phase that framing
-//! does not read is named beside the outcome. There is none up to any wall; past the 1 Hz wow and
-//! the flutter on a slow tape, the ROM still loads what framing loses.
+//! Each fast test has an `#[ignore]`d sweep that checks every step up to the wall and no wrong
+//! bytes past it, run with `cargo test --release -p tapeti-decode --test walls -- --ignored`; it
+//! also runs the ROM's loader over the same pulses at every step and names any block the ROM
+//! loads that framing does not. There is none up to any wall; past the 1 Hz wow and the flutter
+//! on a slow tape, the ROM still loads what framing loses.
+//!
+//! Where the signal as it is loses something, the band-pass decode is folded in
+//! (`entry::decode_file`); several walls stand where it carries them, as their comments say. A
+//! wall measured through the band-pass alone, as a user who picks that filter gets it, is only
+//! the treble one.
 
 mod common;
 
@@ -116,6 +118,10 @@ enum Said {
     Lost,
     /// A last byte filled out with 0s past the bits read, which make its checksum hold.
     FilledOut,
+    /// No block read in the whole recording, and no pilot the ROM locks on heard in it.
+    NoBlock,
+    /// No block read in the whole recording, where a reading heard a pilot the ROM locks on.
+    NoBlockPilot,
 }
 
 /// A decode against the tape.
@@ -172,6 +178,8 @@ fn outcome(got: &Decoded, want: &[Block], speed: (f64, f64)) -> Outcome {
             Finding::Collapsed { pilot: true, .. } => Some(Said::CollapsedPilot),
             Finding::Lost { .. } => Some(Said::Lost),
             Finding::PartialFinalByte { completes: true, .. } => Some(Said::FilledOut),
+            Finding::NoBlock { pilot: false, .. } => Some(Said::NoBlock),
+            Finding::NoBlock { pilot: true, .. } => Some(Said::NoBlockPilot),
             _ => None,
         })
         .collect();
@@ -326,19 +334,35 @@ fn hissed(db: u32) -> Judged {
 
 /// Hiss moves every crossing and cuts false edges into weak lobes; the band rides over it down to
 /// 10 dB under the signal (the tape's level over its pauses and all), the false edges in a pilot
-/// passed over as glitches. At 9 dB the data block comes back with a bad checksum. Dead air
-/// either side leaves the wall within a dB (`dead_air_takes_the_noise_line_out_of_the_signal`).
-/// A clean recording lies 34 dB or more over its hiss; a noisy one 14 to 26.
-const HISS_WHOLE_DB: u32 = 10;
-const HISS_LOSS_DB: u32 = 9;
+/// passed over as glitches. At 9 dB the data block comes back with a bad checksum, and the
+/// band-pass, which takes out the hiss above the tape's tones, reads it. From 7 dB the signal as
+/// it is reads no block at all, the noise line taking the whole recording for dead air, and the
+/// band-pass decode is kept whole; it reads to 5 dB. At 4 the data block's checksum fails through
+/// it too, the rest of the block said lost. At 1 no block is read, and the decode says so, with
+/// no pilot a Spectrum locks on among the pulses. A clean recording lies 34 dB or more over its
+/// hiss; a noisy one 14 to 26.
+const HISS_WHOLE_DB: u32 = 5;
+const HISS_LOSS_DB: u32 = 4;
 
 fn hiss_lost() -> Judged {
-    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+    (
+        Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal, Said::Collapsed, Said::Lost]),
+        Vec::new(),
+    )
 }
 
 #[test]
-fn hiss_reads_whole_to_ten_db() {
+fn hiss_reads_whole_to_five_db() {
     holds(HISS_WHOLE_DB, HISS_LOSS_DB, hiss_lost(), hissed);
+}
+
+#[test]
+fn hiss_that_leaves_the_signal_no_block_is_read_through_the_band_pass_and_none_at_all_is_said() {
+    let at =
+        |db| decode(&encode_wav(&hiss(&render(&tape()), db, 0x5EED), RATE, 16), Channels::Only(Channel::Mix));
+    assert_eq!(at(7).findings[0], Finding::BandPassOnly);
+    let none = at(1);
+    assert!(matches!(none.findings[..], [Finding::NoBlock { pilot: false, .. }]), "{:?}", none.findings);
 }
 
 #[test]
@@ -363,9 +387,10 @@ fn dropped(blocks: &[Block], len: f64) -> Judged {
 /// speck of oxide or a crease takes away.
 const DROPOUT_WHOLE_MS: f64 = 1.25;
 const DROPOUT_LOSS_MS: f64 = 1.5;
-/// Without a header to say how long the block is, a hole of 1 ms already ends it.
-const HEADERLESS_DROPOUT_WHOLE_MS: f64 = 0.75;
-const HEADERLESS_DROPOUT_LOSS_MS: f64 = 1.0;
+/// Without a header to say how long the block is, a hole of 1 ms ends it as the signal is; the
+/// band-pass, whose ringing carries an edge over the hole, reads it to 1 ms, and 1.25 ends it.
+const HEADERLESS_DROPOUT_WHOLE_MS: f64 = 1.0;
+const HEADERLESS_DROPOUT_LOSS_MS: f64 = 1.25;
 const DROPOUT_GRID_MS: [f64; 12] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0, 40.0];
 
 fn dropout_lost() -> Judged {
@@ -382,7 +407,7 @@ fn a_dropout_behind_a_header_reads_whole_to_a_millisecond_and_a_quarter() {
 }
 
 #[test]
-fn a_dropout_in_a_headerless_block_reads_whole_to_three_quarters_of_a_millisecond() {
+fn a_dropout_in_a_headerless_block_reads_whole_to_a_millisecond() {
     holds(HEADERLESS_DROPOUT_WHOLE_MS, HEADERLESS_DROPOUT_LOSS_MS, headerless_dropout_lost(), |len| {
         dropped(&headerless(), len)
     });
@@ -593,13 +618,13 @@ fn clicked_at_edges(width: usize) -> Judged {
     judge(&x, &tape(), same(width))
 }
 
-/// A click a sample behind an edge leaves two short pulses between two half-waves, which fold
-/// into a half-wave beside them, as the ROM, waiting 468 to 653 T after an edge before its first
-/// read, never sees them, while the sample before the click and the click last together under
-/// 485 T: to 5 samples, 476 T. At 6, 555 T, the block is lost, and the ROM loses it at some
-/// phases too. A click is one or two samples of a crackle or a bad splice.
-const CLICK_WHOLE_SAMPLES: usize = 5;
-const CLICK_LOSS_SAMPLES: usize = 6;
+/// A click a sample behind an edge leaves two short pulses that fold into a half-wave beside
+/// them, which the ROM's wait of 468 to 653 T after an edge never sees, while the sample before
+/// the click and the click together last under 485 T. The signal as it is, and the ROM at some
+/// phases, lose the block from 6 samples; the band-pass, which rounds the click off, reads it to
+/// 7, and 8 lose it too. A click is one or two samples of a crackle or a bad splice.
+const CLICK_WHOLE_SAMPLES: usize = 7;
+const CLICK_LOSS_SAMPLES: usize = 8;
 
 fn click_lost() -> Judged {
     (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal]), Vec::new())
@@ -620,23 +645,21 @@ fn clicked_inside(height: f32) -> Judged {
 }
 
 /// Inside a half-wave a click splits it in three wherever it crosses zero, one sample wide or
-/// more, and no fold can tell its pulses from a bit's: the block is lost. One that does not reach
-/// the other side, up to 0.2 on a level of 0.5, is nothing.
-const CLICK_INSIDE_WHOLE: f32 = 0.2;
-const CLICK_INSIDE_LOSS: f32 = 0.3;
-
-fn click_inside_lost() -> Judged {
-    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal]), Vec::new())
-}
+/// more, and no fold can tell its pulses from a bit's: on the signal as it is the block is lost
+/// from 0.3 on a level of 0.5. Through the band-pass a click of one sample is rounded off under
+/// the band at any height (tried to ten times the level), and the block reads from there.
+const CLICK_INSIDE_HEIGHTS: [f32; 6] = [0.05, 0.2, 0.3, 0.5, 1.0, 5.0];
 
 #[test]
-fn a_click_behind_an_edge_reads_whole_to_five_samples() {
+fn a_click_behind_an_edge_reads_whole_to_seven_samples() {
     holds(CLICK_WHOLE_SAMPLES, CLICK_LOSS_SAMPLES, click_lost(), clicked_at_edges);
 }
 
 #[test]
-fn a_click_inside_a_half_wave_reads_whole_while_it_stays_on_its_side() {
-    holds(CLICK_INSIDE_WHOLE, CLICK_INSIDE_LOSS, click_inside_lost(), clicked_inside);
+fn a_click_of_one_sample_inside_a_half_wave_reads_whole_at_any_height() {
+    for h in [0.3, 5.0] {
+        assert_eq!(clicked_inside(h), WHOLE, "at {h}");
+    }
 }
 
 #[test]
@@ -644,8 +667,9 @@ fn a_click_inside_a_half_wave_reads_whole_while_it_stays_on_its_side() {
 fn click_sweeps() {
     let grid: Vec<usize> = (1..=10).collect();
     sweep(&grid, CLICK_WHOLE_SAMPLES, CLICK_LOSS_SAMPLES, click_lost(), clicked_at_edges);
-    let grid = [0.05, 0.1, 0.15, CLICK_INSIDE_WHOLE, CLICK_INSIDE_LOSS, 0.5];
-    sweep(&grid, CLICK_INSIDE_WHOLE, CLICK_INSIDE_LOSS, click_inside_lost(), clicked_inside);
+    for h in CLICK_INSIDE_HEIGHTS {
+        assert_eq!(clicked_inside(h), WHOLE, "at {h}");
+    }
 }
 
 // Sample rate and depth.
@@ -669,9 +693,9 @@ fn eight_kilohertz_and_eight_bits_read_whole() {
 #[test]
 fn eight_bits_under_hiss_read_as_sixteen_do() {
     // The 8-bit grid's noise, 0.0023, lies 46 dB under the tape's level: the hiss wall is the
-    // same, whole at 10 dB and the data block bad at 9.
+    // same, whole at 5 dB and the data block lost at 4.
     let at = |db: u32| judge_at(&hiss(&render(&tape()), db, 0x5EED), RATE, 8, &tape(), (1.0, 1.0));
-    holds(HISS_WHOLE_DB, HISS_WHOLE_DB - 1, hiss_lost(), at);
+    holds(HISS_WHOLE_DB, HISS_LOSS_DB, hiss_lost(), at);
 }
 
 /// Under a sample to a sync 1 and two to a 0 bit's half the half-waves still read down to
@@ -878,26 +902,23 @@ fn off_speed_skewed(factor: f64, fall_us: f64) -> Judged {
     judge(&x, &tape(), (factor, factor))
 }
 
-/// A fall slowed by a time constant `τ` crosses zero late, and every pair keeps its sum but the
-/// sync's first pulse and a block's last bit, which are read alone. The pilot's halves part with
-/// it, 42% either way at 1.5 ms on the midline, which the sync loop and the leader loop take for
-/// pilot as they are; so does the decoder, by their pairs (`pilot_run_at`) and each against the
-/// others of its kind (`a_pilot_whose_halves_part_by_more_than_a_third_reads_whole`). From 3.5 ms
-/// a run of 0 bits, the header's spaces, loses its short lobes: the header reads on the fade
-/// band, and so does the data block it then asks for. At 4 ms the data block stops three bytes
-/// in with a bad checksum on either band, the rest of it played as its pause. Played 17.6% slow,
-/// every half-wave is longer against the same delay, and from 2 ms the pilot's long halves pass
-/// 3,644 T, where the ROM's sync loop runs out: the header stops a byte short, and the fade band
-/// reads it and then the data block. At 5 ms both read so, but the data block's pilot rises out
-/// of the header's pause late, which runs 3.5% long. A rise and a fall that differ by a quarter
+/// A fall slowed by a time constant `τ` crosses zero late; every pair keeps its sum but the
+/// sync's first pulse and a block's last bit, which are read alone. From 3.5 ms a run of 0 bits
+/// loses its short lobes and the fade band carries the wall, from 4 ms the band-pass, from 5 ms
+/// the midline, and further on the band-pass decode kept whole: the tape reads whole to a fall
+/// of 45 ms, two hundred times what a worn head gives; at 47.5 the header comes back with a bad
+/// checksum, the rest of it said lost, and the data block is not read. Played 17.6% slow, from
+/// 2 ms the pilot's long halves pass 3,644 T, where the ROM's sync loop runs out, and the fade
+/// band reads the header; it reads whole to a fall of 4,750 µs, and at 5,000 the data block's
+/// pilot rises out of the header's pause 3.5% late. A rise and a fall that differ by a quarter
 /// of a millisecond are what one track of a worn head gives.
-const AZIMUTH_WHOLE_US: f64 = 3750.0;
-const AZIMUTH_LOSS_US: f64 = 4000.0;
+const AZIMUTH_WHOLE_US: f64 = 45_000.0;
+const AZIMUTH_LOSS_US: f64 = 47_500.0;
 const SLOW_AZIMUTH_WHOLE_US: f64 = 4750.0;
 const SLOW_AZIMUTH_LOSS_US: f64 = 5000.0;
 
 fn azimuth_lost() -> Judged {
-    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Short, Said::Collapsed]), Vec::new())
+    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Lost]), Vec::new())
 }
 
 fn slow_azimuth_lost() -> Judged {
@@ -905,7 +926,7 @@ fn slow_azimuth_lost() -> Judged {
 }
 
 #[test]
-fn a_late_kind_of_edge_reads_whole_to_three_and_three_quarter_milliseconds() {
+fn a_late_kind_of_edge_reads_whole_to_45_ms() {
     holds(AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, azimuth_lost(), |t| off_speed_skewed(1.0, t));
 }
 
@@ -917,7 +938,25 @@ fn a_late_kind_of_edge_on_a_slow_tape_reads_whole_to_4750_us() {
 #[test]
 #[ignore]
 fn azimuth_sweeps() {
-    let grid = [100.0, 500.0, 1000.0, 2000.0, 3000.0, 3500.0, AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, 5000.0];
+    let grid = [
+        100.0,
+        500.0,
+        1000.0,
+        2000.0,
+        3000.0,
+        4000.0,
+        5000.0,
+        6000.0,
+        8000.0,
+        10_000.0,
+        15_000.0,
+        20_000.0,
+        30_000.0,
+        40_000.0,
+        AZIMUTH_WHOLE_US,
+        AZIMUTH_LOSS_US,
+        100_000.0,
+    ];
     sweep(&grid, AZIMUTH_WHOLE_US, AZIMUTH_LOSS_US, azimuth_lost(), |t| off_speed_skewed(1.0, t));
     let grid =
         [25.0, 250.0, 1000.0, 2000.0, 3000.0, 4000.0, SLOW_AZIMUTH_WHOLE_US, SLOW_AZIMUTH_LOSS_US, 8000.0];
@@ -931,21 +970,29 @@ fn fast_hissed(db: u32) -> Judged {
     judge(&hiss(&speed(&render(&tape()), f), db, 0x5EED), &tape(), (f, f))
 }
 
-/// Played 10% fast, every half-wave is shorter against the same hiss, and the wall stays where
-/// it is without the speed: whole at 10 dB, the data block's checksum bad at 9.
+/// Played 10% fast, every half-wave is shorter against the same hiss, and the band-pass reads
+/// it a step less far than at the tape's speed: whole at 6 dB, and at 5 every block read but a
+/// stretch of the data block's pause kept as raw signal, a run of hiss shaped like a block.
+const FAST_HISS_WHOLE_DB: u32 = 6;
+const FAST_HISS_LOSS_DB: u32 = 5;
+
+fn fast_hiss_lost() -> Judged {
+    (Outcome::Lost(Vec::new(), vec![Said::RawSignal, Said::Collapsed]), Vec::new())
+}
+
 #[test]
-fn hiss_on_a_tape_ten_percent_fast_reads_whole_to_ten_db() {
-    holds(HISS_WHOLE_DB, HISS_LOSS_DB, hiss_lost(), fast_hissed);
+fn hiss_on_a_tape_ten_percent_fast_reads_whole_to_six_db() {
+    holds(FAST_HISS_WHOLE_DB, FAST_HISS_LOSS_DB, fast_hiss_lost(), fast_hissed);
 }
 
 #[test]
 #[ignore]
 fn speed_and_hiss_sweep() {
     sweep(
-        &[14, 13, 12, 11, HISS_WHOLE_DB, HISS_LOSS_DB, 8, 7],
-        HISS_WHOLE_DB,
-        HISS_LOSS_DB,
-        hiss_lost(),
+        &[14, 12, 10, 9, 8, 7, FAST_HISS_WHOLE_DB, FAST_HISS_LOSS_DB, 4, 2, 0],
+        FAST_HISS_WHOLE_DB,
+        FAST_HISS_LOSS_DB,
+        fast_hiss_lost(),
         fast_hissed,
     );
 }
@@ -957,30 +1004,25 @@ fn dull_wandering(microns: f64, wander: f32) -> Judged {
 }
 
 /// Treble loss shrinks the short lobes and a wander lifts them off the zero line; the midline
-/// reads them about the signal's own centre. A wander of 0.025, a twentieth of the level, leaves
-/// the treble wall where it is; past it both blocks are lost, said here of the lead-in, where
-/// the header's pilot with bits behind it lies. At 5 µm the midline follows
-/// a wander up to 0.9, nearly twice the level, where the zero line, on which the short lobes no
-/// longer cross, has read no block since 0.4. At 1.0 the midline's data block stops five bits
-/// into its last byte but one, short, and the 0s that fill that byte out complete its checksum,
-/// which the decode says proves nothing. The treble wall is this tape's, which has little
-/// dead air (`dead_air_takes_the_noise_line_out_of_the_signal`). A worn deck's low end carries
-/// 10% of the level under 300 Hz on a tape that reads, 23% on one that does not.
+/// reads them about the signal's own centre. A wander of 0.025 leaves the treble wall where it
+/// is (`dead_air_takes_the_noise_line_out_of_the_signal`); past it both blocks come back from the
+/// midline with bad checksums, where the zero line reads no block at all. At 5 µm of treble loss
+/// the midline reads whole to a wander of 0.9, where the zero line has read no block since 0.4;
+/// at 1.0 the midline's data block stops short, its filled-out checksum proving nothing, and the
+/// band-pass, which takes the 120 Hz wander out, reads whole to 1.1; at 1.2 neither block is
+/// read, the header's stretch kept as raw signal. A worn deck's low end carries 10% of the level
+/// under 300 Hz on a tape that reads, 23% on one that does not.
 const WANDER: f32 = 0.025;
 const WANDER_AT_UM: f64 = 5.0;
-const WANDER_WHOLE: f32 = 0.9;
-const WANDER_LOSS: f32 = 1.0;
+const WANDER_WHOLE: f32 = 1.1;
+const WANDER_LOSS: f32 = 1.2;
 
 fn wander_lost() -> Judged {
-    (Outcome::Lost(vec![1], vec![Said::Short, Said::Collapsed, Said::FilledOut]), Vec::new())
-}
-
-fn nothing_left() -> Judged {
-    (Outcome::Lost(vec![0, 1], Vec::new()), Vec::new())
+    (Outcome::Lost(vec![0, 1], vec![Said::RawSignal]), Vec::new())
 }
 
 fn treble_wander_lost() -> Judged {
-    (Outcome::Lost(vec![0, 1], vec![Said::Lost]), Vec::new())
+    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum]), Vec::new())
 }
 
 #[test]
@@ -989,7 +1031,7 @@ fn treble_loss_with_a_wandering_centre_line_reads_whole_to_eleven_and_a_half_mic
 }
 
 #[test]
-fn a_wandering_centre_line_on_a_dull_tape_reads_whole_to_nine_tenths() {
+fn a_wandering_centre_line_on_a_dull_tape_reads_whole_to_eleven_tenths() {
     holds(WANDER_WHOLE, WANDER_LOSS, wander_lost(), |w| dull_wandering(WANDER_AT_UM, w));
 }
 
@@ -998,25 +1040,32 @@ fn hummed(amplitude: f32) -> Judged {
     judge(&hum(&render(&tape()), RATE, 50.0, amplitude), &tape(), (1.0, 1.0))
 }
 
-/// The DC blocker passes 50 Hz at 0.98, and the midline follows hum up to 1.3, over twice the
-/// tape's level, where the zero line has read no block since 0.6; at 1.4 neither reads one, and
-/// nothing is left. Mains hum on a deck is a few percent of the level.
-const HUM_WHOLE: f32 = 1.3;
-const HUM_LOSS: f32 = 1.4;
+/// The DC blocker passes 50 Hz at 0.98; past 0.5 the hum and the tape together pass full scale
+/// and the recording clips on its crests, where at 1.4 the tape stands a tenth of its height. It
+/// reads whole to a hum of 1.4, the midline reading the header and the band-pass the data block
+/// where the zero line has read none since 0.6; at 1.5 every block comes back with a bad
+/// checksum, and from 1.6 none is read, as the decode says. Mains hum on a deck is a few percent
+/// of the level.
+const HUM_WHOLE: f32 = 1.4;
+const HUM_LOSS: f32 = 1.5;
+
+fn hum_lost() -> Judged {
+    (Outcome::Lost(vec![0, 1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+}
 
 #[test]
-fn hum_at_mains_rate_reads_whole_to_over_twice_the_tapes_level() {
-    holds(HUM_WHOLE, HUM_LOSS, nothing_left(), hummed);
+fn hum_at_mains_rate_reads_whole_to_nearly_three_times_the_tapes_level() {
+    holds(HUM_WHOLE, HUM_LOSS, hum_lost(), hummed);
 }
 
 #[test]
 #[ignore]
 fn hum_sweep() {
     sweep(
-        &[0.05, 0.1, 0.3, 0.5, 0.8, 1.0, HUM_WHOLE, HUM_LOSS, 2.0],
+        &[0.05, 0.1, 0.3, 0.5, 0.8, 1.0, 1.3, HUM_WHOLE, HUM_LOSS, 2.0],
         HUM_WHOLE,
         HUM_LOSS,
-        nothing_left(),
+        hum_lost(),
         hummed,
     );
 }
@@ -1035,17 +1084,16 @@ fn in_dead_air(secs: f64, defect: impl Fn(&[f32]) -> Vec<f32>) -> Judged {
     judge(&defect(&padded(secs).0), &tape(), (1.0, 1.0))
 }
 
-/// Every wall's tape holds 2.25 s of silence in 10.8 s, and the edge detector measures the
-/// recording's noise and its floor over the quietest seconds, the fifth of ten (`QUIET_SECONDS`):
-/// on these tapes those seconds are mostly signal. Treble loss, alone and with a wander, keeps its
-/// wall in any dead air: whole at 11.5 µm with two seconds of it or ten, lost at 12. (It once
-/// read whole a step past its wall with ten seconds and not with two or five, before a block a
-/// header read on the fade band asks for was read there too.) The hiss wall does not move out: measured against the tape, not over
-/// the dead air too (which would lower it 4.6 dB), the hiss reads whole to 11 dB and the data
-/// block is lost at 10, a dB short of the bare tape. A wander on a dull tape keeps its wall, 0.9,
-/// since it lies over the dead air too. Nothing is changed here, and the walls keep their
-/// tape. Whole, the last block's pause holds the dead air behind
-/// it.
+/// Every wall's tape holds 2.25 s of silence in 10.8 s; the edge detector measures the noise and
+/// its floor over the quietest seconds, the fifth of ten (`QUIET_SECONDS`), mostly signal on
+/// these tapes. Treble loss, alone and with a wander, keeps its wall in any dead air: whole at
+/// 11.5 µm with two or ten seconds of it, lost at 12. Hiss, measured against the tape and not
+/// the dead air too, reads whole to 8 dB; at 7 the data block's checksum fails on every line and
+/// through the band-pass. On the bare tape the band-pass decode, kept whole where the plain one
+/// reads no block from 7 dB, reads to 5; over dead air the noise line stands on the hiss alone,
+/// the plain decode reads the header, and the band-pass loses the data block. A wander on a dull
+/// tape keeps its wall, 1.1, since it too lies over the dead air.
+/// Whole, the last block's pause holds the dead air behind it.
 #[test]
 fn dead_air_takes_the_noise_line_out_of_the_signal() {
     let treble_wander = |x: &[f32]| hum(&spacing_loss(x, RATE, TREBLE_WHOLE_UM), RATE, 120.0, WANDER);
@@ -1055,23 +1103,14 @@ fn dead_air_takes_the_noise_line_out_of_the_signal() {
         in_dead_air(10.0, |x| spacing_loss(x, RATE, TREBLE_LOSS_UM)),
         (Outcome::Lost(vec![0, 1], vec![Said::RawSignal, Said::Collapsed, Said::Lost]), Vec::new())
     );
-    assert_eq!(in_dead_air(10.0, |x| hiss_as_bare(x, 11)), (Outcome::Pause, Vec::new()));
+    assert_eq!(in_dead_air(10.0, |x| hiss_as_bare(x, 8)), (Outcome::Pause, Vec::new()));
     assert_eq!(
-        in_dead_air(10.0, |x| hiss_as_bare(x, 10)),
-        (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+        in_dead_air(10.0, |x| hiss_as_bare(x, 7)),
+        (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal, Said::Collapsed]), Vec::new())
     );
     let wandering = |w: f32| move |x: &[f32]| hum(&spacing_loss(x, RATE, WANDER_AT_UM), RATE, 120.0, w);
     assert_eq!(in_dead_air(10.0, wandering(WANDER_WHOLE)), (Outcome::Pause, Vec::new()));
-    assert_eq!(
-        in_dead_air(10.0, wandering(WANDER_LOSS)),
-        (
-            Outcome::Lost(
-                vec![1],
-                vec![Said::Short, Said::RawSignal, Said::Collapsed, Said::Lost, Said::FilledOut]
-            ),
-            Vec::new()
-        )
-    );
+    assert_eq!(in_dead_air(10.0, wandering(WANDER_LOSS)), wander_lost());
 }
 
 /// A defect of the walls applied to the padded tape: the samples, where the tape starts in them
@@ -1158,16 +1197,26 @@ fn padded_walls() -> Vec<(&'static str, Vec<f64>, Padded)> {
 
 /// The steps of [`dead_air_sweeps`] that read a wrong block: each a misread past its wall whose
 /// checksum holds by chance, one in 256 (`proof`). Of the sweep's 750 steps, 106 hold a block
-/// read wrong, each read on two lines or more, so about one such step is to be expected. No
-/// reading of either, on either line or band, holds the tape's bytes, so no rule could read it
-/// right. The second's block runs on past the length its header asked, which the saver never
-/// writes; no recording has shown a header's block running on to judge a rule against, and
-/// its two run-ons are pulses in the pause of a header read right.
-const DEAD_AIR_CHANCE: [&str; 2] = [
+/// read wrong, each read on two lines or more and on four where the band-pass is walked, so one
+/// or two such steps are to be expected; no reading of any of them holds the tape's bytes, so no
+/// rule could read them right. The second's block runs on
+/// past the length its header asked, which the saver never writes; no recording has shown a
+/// header's block running on to judge a rule against, and its two run-ons are pulses in the
+/// pause of a header read right.
+const DEAD_AIR_CHANCE: [&str; 5] = [
     // A 245-byte headerless misread behind a header read wrong.
     "treble 12 in 5 s",
     // Both lines slip in the dip by two and four bytes, and the midline's checks out.
     "dip, hiss 17 in 2 s",
+    // Four points past the wall, every line slips two bits out near byte 96, and the band-pass
+    // zero line's slipped reading checks out.
+    "wow 1 Hz 0.26 in 5 s",
+    // In front of the tape, which the band-pass reads whole, a byte of hiss read as a block
+    // whose checksum is that byte again.
+    "fast hiss 3 in 2 s",
+    // The data block read through the band-pass behind a short leader and seven unlike halves,
+    // its checksum holding over bytes it does not have.
+    "hiss over all 1 in 2 s",
 ];
 
 /// A recording has dead air around its tape, which moves the edge detector's noise line
@@ -1225,7 +1274,7 @@ fn treble_and_wander_sweeps() {
     sweep(&TREBLE_GRID_UM[..14], TREBLE_WHOLE_UM, TREBLE_LOSS_UM, treble_wander_lost(), |d| {
         dull_wandering(d, WANDER)
     });
-    let grid = [0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, WANDER_WHOLE, WANDER_LOSS, 1.25, 1.5];
+    let grid = [0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, WANDER_WHOLE, WANDER_LOSS, 1.5];
     sweep(&grid, WANDER_WHOLE, WANDER_LOSS, wander_lost(), |w| dull_wandering(WANDER_AT_UM, w));
 }
 
@@ -1513,18 +1562,20 @@ fn hissed_dip(db: u32, depth: f32) -> Judged {
 }
 
 /// Material in a dip to a quarter of the level stands 12 dB nearer the hiss, and the wall moves
-/// out by about as much: whole at 20 dB, a bad checksum at 19. A recording at
-/// 11.5 dB with two such dips loses a byte in each, and no channel of it reads whole.
-const DIP_HISS_WHOLE_DB: u32 = 20;
-const DIP_HISS_LOSS_DB: u32 = 19;
+/// out by about as much on the signal as it is: whole at 20 dB, a bad checksum at 19. The
+/// band-pass takes out the hiss above the tape's tones and reads it to 14 dB; at 13 the data
+/// block's checksum is bad. At 11.5 dB with two such dips in a row, each loses a byte, and no
+/// channel reads whole.
+const DIP_HISS_WHOLE_DB: u32 = 14;
+const DIP_HISS_LOSS_DB: u32 = 13;
 const DIP_DEPTH: f32 = 0.25;
 
 fn dip_hiss_lost() -> Judged {
-    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::Collapsed]), Vec::new())
+    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal, Said::Collapsed]), Vec::new())
 }
 
 #[test]
-fn a_dip_to_a_quarter_under_hiss_reads_whole_to_twenty_db() {
+fn a_dip_to_a_quarter_under_hiss_reads_whole_to_fourteen_db() {
     holds(DIP_HISS_WHOLE_DB, DIP_HISS_LOSS_DB, dip_hiss_lost(), |db| hissed_dip(db, DIP_DEPTH));
 }
 
@@ -1532,7 +1583,7 @@ fn a_dip_to_a_quarter_under_hiss_reads_whole_to_twenty_db() {
 #[ignore]
 fn dip_and_hiss_sweep() {
     sweep(
-        &[30, 25, DIP_HISS_WHOLE_DB, DIP_HISS_LOSS_DB, 17, 14, 11],
+        &[30, 25, 20, 17, DIP_HISS_WHOLE_DB, DIP_HISS_LOSS_DB, 11],
         DIP_HISS_WHOLE_DB,
         DIP_HISS_LOSS_DB,
         dip_hiss_lost(),

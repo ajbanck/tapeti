@@ -283,6 +283,11 @@ pub enum Finding {
     /// What lies before the first block, `ms` long, left out: a tape starts with its first
     /// block. `pulses` it holds that are not a plain pause, none where it is silence.
     LeadIn { ms: u64, pulses: usize },
+    /// No block read in the whole recording, `ms` long, said in place of [`Finding::LeadIn`];
+    /// `pulses` it holds that are not a plain pause, none where it is silence, and `pilot` where
+    /// a reading of it holds a pilot the ROM locks on (`fallback::rom_pilot`), a tape that did
+    /// not read.
+    NoBlock { ms: u64, pulses: usize, pilot: bool },
     /// Of a stereo recording's mix and its two channels, the decode of `kept` delivers most.
     Channel { kept: Channel },
     /// The block's last byte holds only `used_bits` bits read from the tape, from its top bit;
@@ -330,6 +335,12 @@ pub enum Finding {
     /// transport holds it back, and the block was read again at the speed of the bits before
     /// each pair, where its checksum holds ([`crate::framing::SPEED_BITS`]).
     Snag { block: usize },
+    /// The block was read through the band-pass filter the apps offer, which proves it more
+    /// surely than the signal as it is ([`tape_band`]).
+    BandPass { block: usize },
+    /// The signal as it is reads no block, and the decode through the band-pass filter, which
+    /// does, is kept whole ([`tape_band`]).
+    BandPassOnly,
 }
 
 impl Finding {
@@ -357,11 +368,14 @@ impl Finding {
             | Finding::Voted { block, .. }
             | Finding::UnlikeHalves { block, .. }
             | Finding::Snag { block }
+            | Finding::BandPass { block }
             | Finding::Lost { block: Some(block), .. } => Some(block),
             Finding::Lost { block: None, .. }
             | Finding::LeadIn { .. }
+            | Finding::NoBlock { .. }
             | Finding::Channel { .. }
-            | Finding::Midline => None,
+            | Finding::Midline
+            | Finding::BandPassOnly => None,
         }
     }
 
@@ -372,6 +386,7 @@ impl Finding {
             | Finding::Short { .. }
             | Finding::PartialFinalByte { .. }
             | Finding::Lost { .. } => true,
+            Finding::NoBlock { pilot, .. } => *pilot,
             Finding::RawSignal { .. }
             | Finding::Collapsed { .. }
             | Finding::LeadIn { .. }
@@ -387,7 +402,9 @@ impl Finding {
             | Finding::MergedSync { .. }
             | Finding::Voted { .. }
             | Finding::UnlikeHalves { .. }
-            | Finding::Snag { .. } => false,
+            | Finding::Snag { .. }
+            | Finding::BandPass { .. }
+            | Finding::BandPassOnly => false,
         }
     }
 
@@ -421,6 +438,18 @@ impl Finding {
             Finding::LeadIn { ms, pulses } => format!(
                 "lead-in: {:.1} s before the first block, left out, with {pulses} pulses that read as no block",
                 ms as f64 / 1000.0
+            ),
+            Finding::NoBlock { ms, pulses: 0, .. } => {
+                format!("No block: the recording is {:.1} s of silence.", ms as f64 / 1000.0)
+            }
+            Finding::NoBlock { ms, pulses, pilot } => format!(
+                "No block reads in the recording: {pulses} pulses over {:.1} s, {}",
+                ms as f64 / 1000.0,
+                if pilot {
+                    "a pilot tone a Spectrum locks on among them, of a tape that did not read."
+                } else {
+                    "and no pilot tone a Spectrum locks on among them."
+                }
             ),
             Finding::Channel { kept: Channel::Mix } => {
                 "Read from both channels mixed: neither alone reads more.".into()
@@ -475,6 +504,10 @@ impl Finding {
                 "{bits} of its bits {} read from two half-waves that differ as no saver writes them: the signal lost a lobe there, or one kind of edge runs late. Read as a Spectrum reads them.",
                 if bits == 1 { "is" } else { "are" }
             ),
+            Finding::BandPass { .. } => {
+                "Read through a band-pass filter, which proves it more surely than the signal as it is.".into()
+            }
+            Finding::BandPassOnly => "Read through a band-pass filter: the signal as it is reads no block.".into(),
             Finding::Snag { .. } => {
                 "The tape slows inside the block, as a snag in the transport holds it back; its bits were read at the speed of the bits before each one, and the checksum holds.".into()
             }
@@ -575,9 +608,18 @@ pub enum Channels {
 
 /// Decodes a recording file.
 ///
-/// CSW and OUT go by their pulses, sampled audio by the edges the edge detector finds in it,
-/// after `filter`. `window` keeps only the pulses that start inside it, in the source's samples
-/// as [`Pulse::start`] counts them; positions stay those of the whole file. A stereo recording
+/// CSW and OUT go by their pulses, sampled audio by the edges the edge detector finds in it after
+/// `filter`. Where no filter was asked for and the decode of sampled audio still loses something
+/// (no block at all, a problem, raw signal, or a header whose block it has the time for and does
+/// not hold), it is decoded again through the band the apps offer ([`tape_band`]) and folded in
+/// ([`Finding::BandPass`]): the band takes out the hum, hiss and wander outside the tape's tones
+/// but rings, reading some defects further and others less far than the unfiltered signal, so a
+/// block enters from it only where it proves more than what stands there; only where the
+/// unfiltered decode reads no block at all is the band's kept whole instead
+/// ([`Finding::BandPassOnly`]). A recording that reads whole, or a stereo one whose channels make
+/// up for each other, pays nothing for the second pass. `window` keeps only the pulses that start
+/// inside it, in the source's samples as [`Pulse::start`] counts them; positions stay those of the
+/// whole file. A stereo recording
 /// read for [`Channels::Best`] is decoded three times, each a third of [`Progress::done`].
 #[allow(clippy::too_many_arguments)]
 pub fn decode_file(
@@ -590,7 +632,61 @@ pub fn decode_file(
     progress: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<Decoded, DecodeError> {
-    let stereo = matches!(read(name, bytes, Channel::Mix), Ok(Recording::Sound(s)) if s.channels == 2);
+    let (sound, stereo) = match read(name, bytes, Channel::Mix) {
+        Ok(Recording::Sound(s)) => (Some(s.rate_hz), s.channels == 2),
+        _ => (None, false),
+    };
+    let Some(band) = sound.filter(|_| filter == Filter::None).map(tape_band) else {
+        return decode_through(name, bytes, channels, filter, window, inflate, stereo, progress, cancel);
+    };
+    let mut most = 0;
+    let mut first = |p: Progress| {
+        most = most.max(p.blocks);
+        progress(Progress { done: PLAIN_SHARE * p.done, ..p });
+    };
+    let mut kept =
+        decode_through(name, bytes, channels, filter, window.clone(), inflate, stereo, &mut first, cancel)?;
+    let loses = kept.blocks.is_empty()
+        || kept.findings.iter().any(|f| f.is_problem() || matches!(f, Finding::RawSignal { .. }))
+        || crate::fold::owes_a_block(&kept);
+    if loses {
+        let mut second = |p: Progress| {
+            let done = PLAIN_SHARE + (1.0 - PLAIN_SHARE) * p.done;
+            progress(Progress { blocks: most.max(p.blocks), done, ..p });
+        };
+        // A band the rate cannot hold is no reading.
+        match decode_through(name, bytes, channels, band, window, inflate, stereo, &mut second, cancel) {
+            // A decode of no block read nothing, and has no tie to keep.
+            Ok(mut filtered) if kept.blocks.is_empty() && !filtered.blocks.is_empty() => {
+                filtered.findings.insert(0, Finding::BandPassOnly);
+                kept = filtered;
+            }
+            Ok(filtered) => fold(&mut kept, &[(Source::Band, &filtered)]),
+            Err(DecodeError::Cancelled) => return Err(DecodeError::Cancelled),
+            Err(_) => {}
+        }
+    }
+    progress(Progress { pulses_read: 0, pulses: 0, blocks: most, done: 1.0 });
+    Ok(kept)
+}
+
+/// The share of a decode of sampled audio [`decode_file`] gives the signal as it is, where the
+/// band-pass may follow: about as much work again, and done only where something is lost.
+const PLAIN_SHARE: f32 = 0.5;
+
+/// [`decode_file`] through `filter` alone; `stereo` whether the recording has two channels.
+#[allow(clippy::too_many_arguments)]
+fn decode_through(
+    name: &str,
+    bytes: &[u8],
+    channels: Channels,
+    filter: Filter,
+    window: Option<std::ops::Range<f64>>,
+    inflate: Inflate,
+    stereo: bool,
+    progress: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<Decoded, DecodeError> {
     let channel = match channels {
         Channels::Only(channel) => channel,
         Channels::Best if stereo => {
@@ -1124,6 +1220,15 @@ fn decode_pulses_from(
         bits_end = b.bits_end;
         let done = from + (to - from) * (pos as f32 / pulses.len() as f32);
         progress(Progress { pulses_read: pos, pulses: pulses.len(), blocks: out.blocks.len(), done });
+    }
+    if out.blocks.is_empty() {
+        // The whole recording is the lead-in, and there is no first block for it to lead into.
+        let lead_in = out.findings.iter().position(|f| matches!(f, Finding::LeadIn { .. }));
+        let (ms, held) = match lead_in.map(|k| out.findings.remove(k)) {
+            Some(Finding::LeadIn { ms, pulses }) => (ms, pulses),
+            _ => (0, 0),
+        };
+        out.findings.push(Finding::NoBlock { ms, pulses: held, pilot: rom_pilot(pulses).is_some() });
     }
     progress(Progress {
         pulses_read: pulses.len(),

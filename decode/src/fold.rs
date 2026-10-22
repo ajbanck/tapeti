@@ -25,7 +25,8 @@ use crate::proof::{self, asks, header_shaped, image, Proof};
 use crate::readers::Channel;
 use crate::waveform::edges::Axis;
 use std::collections::BTreeSet;
-use tapeti_core::types::{Block, Body};
+use tapeti_core::audio::TSTATES_PER_SEC;
+use tapeti_core::types::{Block, Body, RomTimings};
 
 /// The block that answers the ROM header at `i` ([`Proof::Answer`]): its next block of bytes,
 /// pauses and raw signal between the two not counting.
@@ -33,6 +34,31 @@ fn answered(blocks: &[Block], i: usize) -> Option<&Block> {
     let len = image(&blocks[i]).and_then(asks)?;
     let leg = blocks[i + 1..].iter().find(|b| image(b).is_some())?;
     (proof::answering(image(leg)?, len) == Proof::Answer).then_some(leg)
+}
+
+/// Whether a ROM header in `d` asks for a block no block answers, where the recording holds the
+/// time for that block behind it.
+///
+/// A recording that ends just behind the next program's header, cut there, holds no block for
+/// it, and nothing read again finds one. The time asked is the least the saver's block can take:
+/// its pilot, its sync pair and every bit a 0, on a tape at the fastest speed the leader loop
+/// takes (`framing::Speed`, 0.78).
+pub(crate) fn owes_a_block(d: &Decoded) -> bool {
+    const FASTEST: f64 = 0.78;
+    (0..d.blocks.len()).any(|i| {
+        let Some(len) = image(&d.blocks[i]).and_then(asks) else { return false };
+        if answered(&d.blocks, i).is_some() {
+            return false;
+        }
+        let next = (i + 1..d.blocks.len()).find(|&j| image(&d.blocks[j]).is_some());
+        let until = next.map_or_else(|| d.extents.last().map_or(0.0, |e| e.end), |j| d.extents[j].start);
+        let held = (until - d.extents[i].signal_end) * f64::from(TSTATES_PER_SEC) / f64::from(d.rate_hz);
+        let least = f64::from(RomTimings::PILOT_DATA) * f64::from(RomTimings::PILOT)
+            + f64::from(RomTimings::SYNC1)
+            + f64::from(RomTimings::SYNC2)
+            + (len * 8) as f64 * 2.0 * f64::from(RomTimings::ZERO);
+        held >= FASTEST * least
+    })
 }
 
 /// A block whose bytes alone prove themselves as loaded material ([`Proof::Verified`]). A
@@ -118,26 +144,28 @@ pub fn pick(decodes: &[&[Block]]) -> usize {
         .expect("the incumbent delivers all of itself")
 }
 
-/// Which of `readings` to keep, in the order they were read, `None` for one that read nothing:
-/// [`pick`], with each block weighed as the fold would let it climb.
+/// Which of `readings` to keep, in the order they were read, `None` for one that failed.
 ///
-/// Keeping a reading puts each of its blocks over what the others read at that place, so a
-/// block is weighed by the rule a block folded in is held to (`told_apart`): one that checks
-/// out, where another reading reads it at the same place and fails, and the checksum cannot
-/// tell the two apart, weighs as that failed reading.
+/// [`pick`] among those that read a block, each weighed by `told_apart` against what the
+/// others read at its place, and otherwise the first that did not fail: a reading of no block
+/// at all read nothing, so keeping it on a tie would drop every block the others read (a worn
+/// tape whose short lobes no longer cross zero reads nothing on the zero line, where the midline
+/// reads the header with its checksum wrong).
 pub fn pick_reading(readings: &[Option<&Decoded>]) -> usize {
-    let views: Vec<std::borrow::Cow<'_, [Block]>> = readings
+    let read: Vec<usize> =
+        (0..readings.len()).filter(|&i| readings[i].is_some_and(|d| !d.blocks.is_empty())).collect();
+    if read.is_empty() {
+        return readings.iter().position(Option::is_some).unwrap_or(0);
+    }
+    let views: Vec<std::borrow::Cow<'_, [Block]>> = read
         .iter()
-        .enumerate()
-        .map(|(i, r)| match r {
-            Some(d) => {
-                witnessed(d, readings.iter().enumerate().filter(|&(k, _)| k != i).filter_map(|(_, r)| *r))
-            }
-            None => std::borrow::Cow::Borrowed(&[][..]),
+        .map(|&i| {
+            let others = readings.iter().enumerate().filter(move |&(k, _)| k != i).filter_map(|(_, r)| *r);
+            witnessed(readings[i].expect("a reading that read"), others)
         })
         .collect();
     let views: Vec<&[Block]> = views.iter().map(|v| &v[..]).collect();
-    pick(&views)
+    read[pick(&views)]
 }
 
 /// The blocks of `d`, each block that checks out weighed as a failed reading of it in one of
@@ -191,6 +219,8 @@ pub enum Source {
     Channel(Channel),
     /// One channel's reading on the zero line or on its midline.
     Axis(Axis),
+    /// The decode through the band-pass ([`crate::entry::tape_band`]).
+    Band,
 }
 
 /// What a stretch of a reading holds, from nothing up: the one ladder every fold climbs.
@@ -219,43 +249,18 @@ const POSITION_TOL: f64 = 1000.0;
 /// Folds into `base`, the reading kept, each block of `donors` that stands higher on the
 /// `Standing` ladder than what `base` holds at its place.
 ///
-/// The place is the recording's. A donor's block stands against the run of `base`'s blocks
-/// after the last whose signal ends before the block's starts and before the first that starts
-/// where its signal ends, either within `POSITION_TOL` (a quarter of the block's signal where
-/// that is less). It is ranked as it would stand there, between `base`'s blocks of data either
-/// side ([`proof::between`]): a block one reading reads whole answers the header another
-/// reading read, and a header the block behind it answers is as good as that answer. The run
-/// stands at its best block, at silence where it holds nothing proved and no raw signal and
-/// `base` played a pause there.
-///
-/// What enters:
-/// - a block past chance ([`Proof::Verified`] or more) that stands higher than the run, and
-///   that the checksum tells from a read of it that proves nothing opening the run
-///   (`told_apart`). It takes the run's place with its own start and signal; where the run
-///   ends in a read, the rest of a failed read or the raw signal it left, it ends where the run
-///   did, its pause to there, and where `base` heard silence it comes as the donor has it,
-///   its pause ending where `base`'s next block starts;
-/// - at one rank, the same block read otherwise, where the run is one block of data as long:
-///   its bytes, at `base`'s place and pause;
-/// - raw signal where `base` heard silence and read nothing proved. A stereo recording can hold
-///   a stretch on one track alone, a custom loader's data on one head and a dropout on the
-///   other; it proves nothing a ROM block proves, but `base` played it as a pause, its claim
-///   that it heard nothing there, and the donor kept it as signal. It comes as the donor has it,
-///   its pause likewise ending where `base`'s next block starts, from another channel and
-///   between two of `base`'s blocks. Two heads hear a stretch apart, but the two lines of one
-///   channel read the same samples, and that one cuts its noise into pulses shaped like a block
-///   where the other calls it a pause is no second hearing. At the recording's edges `base`'s
-///   silence is its lead-in or its tail, where a recording that starts or ends inside a
-///   neighbour holds a cut piece of it on either track. A run-on ([`Finding::RunOn`]) is the
-///   donor's reading of the tail of the block in front, which `base` read to its own end: it
-///   comes only behind that block taken from the donor.
-///
-/// Nothing a donor failed to read enters. The block before a block put in plays its pause up
-/// to where that block starts, and what a donor said of the block (its sync, its band, its
-/// leader, a stray zero, a partial last byte, unlike halves, a snag, that it is raw signal)
-/// comes with it. Donors are asked in order, each block by block against `base` as folded so
-/// far; each block placed is reported ([`Finding::FromChannel`], [`Finding::FromAxis`], or [`Finding::BothChannels`] where
-/// readings alike decided).
+/// A donor's block stands against the run of `base`'s blocks it falls between, within
+/// `POSITION_TOL` (or a quarter of its own signal where that is less), ranked there between
+/// `base`'s neighbouring blocks of data ([`proof::between`]). What enters: a block past chance
+/// ([`Proof::Verified`] or more) that the checksum tells apart from a read of the run that
+/// proves nothing (`told_apart`); at the same rank, the same block read otherwise, where the run
+/// is one block of data as long; or raw signal where `base` heard silence and read nothing
+/// proved, from another channel only, since a stereo recording can hold a stretch, such as a
+/// custom loader's data, on one track alone, while the two lines of one channel read the same
+/// samples and are no second hearing. Nothing a donor failed to read enters; donors are asked in
+/// order, block by block, against `base` as folded so far, and each block placed is reported
+/// ([`Finding::FromChannel`], [`Finding::FromAxis`], or [`Finding::BothChannels`] where readings
+/// alike decided).
 pub fn fold(base: &mut Decoded, donors: &[(Source, &Decoded)]) {
     if donors.is_empty() {
         return;
@@ -265,6 +270,15 @@ pub fn fold(base: &mut Decoded, donors: &[(Source, &Decoded)]) {
     for &(source, donor) in donors {
         for j in 0..donor.blocks.len() {
             fold_block(base, source, donor, j, &readings);
+        }
+    }
+    // Where no reading read a block, a pilot one of them heard is the tape's.
+    let heard = donors
+        .iter()
+        .any(|(_, d)| d.findings.iter().any(|f| matches!(f, Finding::NoBlock { pilot: true, .. })));
+    for f in &mut base.findings {
+        if let Finding::NoBlock { pilot, .. } = f {
+            *pilot |= heard;
         }
     }
 }
@@ -284,6 +298,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         base.findings.iter().any(|f| match (f, source) {
             (Finding::FromChannel { block, channel }, Source::Channel(c)) => *block == b && *channel == c,
             (Finding::FromAxis { block, axis }, Source::Axis(a)) => *block == b && *axis == a,
+            (Finding::BandPass { block }, Source::Band) => *block == b,
             _ => false,
         })
     };
@@ -359,6 +374,19 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
     if !enters {
         return;
     }
+    // The base's run-on behind the block it replaces is that reading's own tail, read on past
+    // the length where its bits slipped; where it starts inside this block's signal, it goes with
+    // the block.
+    let run = match run.end {
+        k if !tie
+            && k < base.blocks.len()
+            && base.findings.contains(&Finding::RunOn { block: k })
+            && base.extents[k].start < span.signal_end =>
+        {
+            run.start..k + 1
+        }
+        _ => run,
+    };
     let at = run.start;
     let (block, extent) = if tie {
         let mut block = base.blocks[at].clone();
@@ -398,6 +426,14 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         base.findings
             .retain(|f| !matches!(f, Finding::Lost { block, what: Loss::Pilot, .. } if *block == before));
     }
+    // The first block of a recording `base` read none of leaves it a lead-in again, up to that
+    // block, its pulses those `base` heard in the whole of it.
+    for f in &mut base.findings {
+        if let Finding::NoBlock { pulses, .. } = *f {
+            let ms = (extent.start.max(0.0) / f64::from(base.rate_hz) * 1000.0).round() as u64;
+            *f = Finding::LeadIn { ms, pulses };
+        }
+    }
     splice_into(base, run, vec![(block, extent)]);
     for f in &donor.findings {
         let said = matches!(
@@ -422,6 +458,7 @@ fn fold_block(base: &mut Decoded, source: Source, donor: &Decoded, j: usize, rea
         _ if by_votes => Finding::BothChannels { block: at },
         Source::Channel(channel) => Finding::FromChannel { block: at, channel },
         Source::Axis(axis) => Finding::FromAxis { block: at, axis },
+        Source::Band => Finding::BandPass { block: at },
     });
 }
 

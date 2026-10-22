@@ -276,6 +276,31 @@ fn a_block_is_taken_where_another_reading_proves_more_at_the_same_place() {
 }
 
 #[test]
+fn a_block_taken_over_a_reading_that_slipped_takes_the_place_of_its_run_on_too() {
+    // The base read the data block to its length with its bits slipped and read on past it,
+    // a run-on that starts inside the block's own signal: it goes with the failed read.
+    let a = program("A", &(0..64u8).collect::<Vec<u8>>());
+    let raw = Block::new(Body::Csw {
+        pause: 0,
+        sample_rate: 44100,
+        compression: 1,
+        pulse_count: 3,
+        data: vec![1, 2, 3],
+    });
+    let mut base = laid(flipped(&a, 1, &[9], 0x40), 0.0);
+    base.extents[1] = Extent { start: 100_000.0, signal_end: 189_500.0, end: 189_500.0 };
+    base.blocks.push(raw);
+    base.extents.push(Extent { start: 189_500.0, signal_end: 190_200.0, end: 200_000.0 });
+    base.findings.push(Finding::RunOn { block: 2 });
+    let band = Source::Band;
+    let got = folded(&base, &[(band, &laid(a.clone(), 0.0))]);
+    assert_eq!(got.blocks.len(), 2, "{:?}", got.blocks);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert_eq!(got.extents[1].end, 200_000.0);
+    assert_eq!(got.findings, [Finding::BandPass { block: 1 }]);
+}
+
+#[test]
 fn a_block_one_reading_reads_whole_answers_the_header_another_read() {
     // The midline reads the header and not the block, the zero line the block and not the
     // header: the block answers the midline's header, so it is the tape's.
@@ -700,6 +725,35 @@ fn a_reading_that_checks_out_against_a_failed_one_parting_twice_is_not_kept_for_
     let twice = laid(flipped(&flipped(&tape, 1, &[300], 0x20), 1, &[1200], 0x04), 0.0);
     assert_eq!(pick_reading(&[Some(&twice), Some(&laid(tape.clone(), 0.0))]), 1);
     assert_eq!(pick_reading(&[None, Some(&damaged)]), 1);
+}
+
+/// A reading of no block at all, `pilot` where it heard a pilot the ROM locks on.
+fn nothing_read(pilot: bool) -> Decoded {
+    Decoded { findings: vec![Finding::NoBlock { ms: 9000, pulses: 9000, pilot }], ..laid(Vec::new(), 0.0) }
+}
+
+#[test]
+fn a_reading_of_no_block_at_all_is_not_kept_over_one_that_read_a_block_however_it_failed() {
+    // A worn tape: the zero line, whose short lobes no longer cross, reads no block at all, and
+    // the midline reads the header with its checksum wrong. Kept, the zero line would drop the
+    // header and all that is said of it, since the fold takes nothing a donor failed to read.
+    let failed = laid(flipped(&program("A", &[1, 2, 3, 4]), 0, &[3], 0x01)[..1].to_vec(), 0.0);
+    assert_eq!(pick_reading(&[Some(&nothing_read(true)), Some(&failed)]), 1);
+    // Where none read one, the first that did not fail.
+    assert_eq!(pick_reading(&[None, Some(&nothing_read(false)), Some(&nothing_read(true))]), 1);
+    assert_eq!(pick_reading(&[None, None]), 0);
+}
+
+#[test]
+fn a_recording_no_reading_reads_a_block_of_holds_a_pilot_any_of_them_heard() {
+    let got = folded(&nothing_read(false), &[(Source::Axis(Axis::Midline), &nothing_read(true))]);
+    assert_eq!(got.findings, [Finding::NoBlock { ms: 9000, pulses: 9000, pilot: true }]);
+    // A block put in leaves the stretch before it a lead-in.
+    let a = program("A", &[1, 2, 3, 4]);
+    let got = folded(&nothing_read(false), &[(Source::Band, &laid(a.clone(), 44_100.0))]);
+    assert_eq!(datas(&got.blocks), datas(&a));
+    assert!(got.findings.contains(&Finding::LeadIn { ms: 1000, pulses: 9000 }), "{:?}", got.findings);
+    assert!(!got.findings.iter().any(|f| matches!(f, Finding::NoBlock { .. })), "{:?}", got.findings);
 }
 
 #[test]

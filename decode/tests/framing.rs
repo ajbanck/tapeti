@@ -516,7 +516,8 @@ fn progress_comes_after_every_block_and_at_the_end() {
 }
 
 /// Sampled audio reports how far the edge detector has come before any block is read, and a
-/// stereo recording read for the best channel counts its three decodes as one.
+/// stereo recording read for the best channel counts its three decodes as one, in the half of
+/// the bar the signal as it is takes.
 #[test]
 fn progress_counts_the_edge_detector_and_every_channel() {
     use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
@@ -553,9 +554,13 @@ fn progress_counts_the_edge_detector_and_every_channel() {
     wav[32] = 4;
     let seen = run(&wav);
     assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1 && w[0].0 <= w[1].0), "never goes back: {seen:?}");
-    // The count is the most any decode has read so far, which a decode not kept can pass.
-    let third = seen.iter().position(|s| s.1 > 2.0 / 3.0).expect("the third decode reports");
-    assert!(seen[third - 1].0 >= 6 && seen[third - 1].1 == 2.0 / 3.0, "each decode is a third: {seen:?}");
+    // The count is the most any decode has read so far, which a decode not kept can pass. The
+    // signal as it is takes the first half, where a band-pass decode may follow.
+    let third = seen.iter().position(|s| s.1 > 2.0 / 3.0 * 0.5).expect("the third decode reports");
+    assert!(
+        seen[third - 1].0 >= 6 && seen[third - 1].1 == 2.0 / 3.0 * 0.5,
+        "each decode is a third of the first half: {seen:?}"
+    );
     assert!(seen.last().is_some_and(|&(blocks, done)| blocks >= 6 && done == 1.0), "{seen:?}");
 }
 
@@ -978,6 +983,32 @@ fn a_recording_that_starts_inside_a_block_leaves_its_rest_in_the_lead_in() {
             got.findings
         );
     }
+}
+
+#[test]
+fn a_recording_no_block_reads_in_says_so_and_a_pilot_in_it_is_a_tape_that_did_not_read() {
+    // Silence: no first block for a lead-in to lead into.
+    let got = decode(&pulses(&[3_500_000]));
+    assert_eq!(got.findings, [Finding::NoBlock { ms: 1000, pulses: 0, pilot: false }]);
+    assert!(!got.findings[0].is_problem());
+    // Pulses that are no pilot and no block: said, no problem.
+    let noise: Vec<u64> = (0..4000).map(|k| [300, 900, 5000, 1300][k % 4]).collect();
+    let got = decode(&pulses(&noise));
+    assert!(
+        matches!(got.findings[..], [Finding::NoBlock { pulses: 4000, pilot: false, .. }]),
+        "{:?}",
+        got.findings
+    );
+    assert!(!got.findings[0].is_problem());
+    // A header's pilot with nothing a Spectrum reads behind it: a tape that did not read.
+    let got = decode(&pulses(&[vec![2168; 8063], noise].concat()));
+    assert!(got.blocks.is_empty());
+    assert!(
+        matches!(got.findings[..], [Finding::NoBlock { pulses: 12_063, pilot: true, .. }]),
+        "{:?}",
+        got.findings
+    );
+    assert!(got.findings[0].is_problem());
 }
 
 /// A CODE header whose checksum's lowest bit, the block's last bit, is `last`, and its pulses with
