@@ -183,7 +183,7 @@ pub fn keep_as_raw_signal(
         }
         Recording::Csw(c) => {
             csw_rate(&c)?;
-            // Run lengths as they are are checked against the count here; Z-RLE data was checked
+            // Uncompressed run lengths are checked against the count here; Z-RLE data was checked
             // when it was described, and is kept without inflating it.
             if c.compression == 1 {
                 csw_runs(&c, inflate)?;

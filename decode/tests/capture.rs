@@ -103,9 +103,9 @@ fn the_filter_keeps_the_signals_pulses_close_to_their_length() {
     let blocks =
         keep_as_raw_signal("t.wav", &wav_of(&tape, rate), Channel::Mix, tape_band(rate), &no_zlib).unwrap();
     let (got, want) = (pulse_lengths(&blocks), pulse_lengths(&tape));
-    // The filter rings after each step, and sliced at the average with no margin, the silence
-    // around the block becomes slow crossings, one of which joins the first pilot pulse. So the
-    // pulses are lined up on the first sync pulse: the first short one after a stretch of pilot.
+    // The filter rings after each step; sliced at the average with no margin, the silence around
+    // the block becomes slow crossings, one of which joins the first pilot pulse. The pulses
+    // below are lined up on the first sync pulse: the first short one after a stretch of pilot.
     let sample = 3_500_000.0 / f64::from(rate);
     let pilot_like = |t: f64| (t - 2168.0).abs() <= sample + 0.03 * 2168.0;
     let pilot = (0..got.len()).find(|&i| got[i..i + 50].iter().all(|&t| pilot_like(t))).expect("a pilot");

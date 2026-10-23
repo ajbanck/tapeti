@@ -197,7 +197,7 @@ export type Block =
 
 export type DataBlock = StandardBlock | TurboBlock | PureDataBlock | GeneralizedBlock | DirectBlock;
 
-/** A standard ROM header, as `describe.ts` decodes one. */
+/** A standard ROM header, as `decodeHeader` in `core.ts` decodes one. */
 export interface HeaderInfo {
   type: number; // 0 program, 1 number array, 2 char array, 3 bytes
   typeName: string;
@@ -209,7 +209,7 @@ export interface HeaderInfo {
 
 export type ContentKind = 'header' | 'basic' | 'screen' | 'code' | 'array' | 'data' | 'empty';
 
-/** What a data block holds, as `content.ts` detects it. */
+/** What a data block holds, as `detectContent` in `core.ts` detects it. */
 export interface ContentInfo {
   kind: ContentKind;
   /** Short label for the block list, e.g. "BASIC", "SCREEN", "CODE 32768". */
@@ -239,14 +239,14 @@ export interface AsLoaded {
   crypt: { xor: number; add: number } | null;
 }
 
-/** A complaint from `consistency.ts`. */
+/** A complaint from `checkConsistency` in `core.ts`. */
 export interface Issue {
   block: number; // 0-based index, -1 for tape-wide
   severity: 'error' | 'warning' | 'info';
   message: string;
 }
 
-/** A program (a game) on a collection tape, as `programs.ts` finds them. */
+/** A program (a game) on a collection tape, as `detectPrograms` in `core.ts` finds them. */
 export interface Program {
   name: string;
   start: number; // first block index
