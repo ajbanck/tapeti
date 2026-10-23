@@ -3,24 +3,17 @@
 
 //! The readings of one recording: one kept, the others folded into it.
 //!
-//! A recording is read more than once where one reading can lose what another holds. A real
-//! stereo capture's channels are not copies of one another: the two heads sit a few samples
-//! apart, and the gap drifts along the tape. A sync half-wave lasts about eight samples at
-//! 44.1 kHz, so mixed, the channels can cancel the short half-waves at places and lose blocks
-//! that either channel alone reads; the mix, the left and the right channel are each read.
-//! Sampled audio is read on the zero line and on the signal's own midline ([`Axis`]), for a worn
-//! tape whose centre wanders. No statistic of the signal tells beforehand which reading is best,
-//! so each is decoded, one is kept ([`pick`]) and the others are folded into it ([`fold`]).
-//! A block none of them reads whole is read again from all of them, byte by byte ([`vote`]).
-//!
-//! A Spectrum loads a block by its checksum, and nothing else on a tape is proved, so a decode
-//! is judged by its verified bytes, never by how many blocks it counts. The shape score of the
-//! decodes names the incumbent, ties going to the first (the mix, the zero line), so a recording
-//! whose readings agree decodes exactly as its first. The pick moves off the incumbent only to a
-//! decode that delivers every verified image the incumbent does and more verified bytes; a
-//! program's header adds a name, which is no loaded material.
+//! A stereo capture's two heads sit a few samples apart, drifting along the tape, so a sync
+//! half-wave of about eight samples at 44.1 kHz can cancel in the mix where either channel
+//! alone reads it; sampled audio is also read on the zero line and on the signal's own midline
+//! ([`Axis`]) for a worn tape whose centre wanders. No statistic says beforehand which reading
+//! is best, so each is decoded, one kept ([`pick`]) and the rest folded in ([`fold`]); a block
+//! none of them reads whole is voted on byte by byte ([`vote`]). A decode is judged by its
+//! verified bytes, not its block count: the shape score names the incumbent, ties going to the
+//! first, and the pick moves off it only to a decode that delivers every image the incumbent
+//! does plus more verified bytes (a header adds a name, which is no loaded material).
 
-use crate::entry::{Decoded, Extent, Finding, Loss};
+use crate::entry::{Decoded, Extent, Finding, Loss, PilotHeard};
 use crate::proof::{self, asks, header_shaped, image, Proof};
 use crate::readers::Channel;
 use crate::waveform::edges::Axis;
@@ -272,13 +265,19 @@ pub fn fold(base: &mut Decoded, donors: &[(Source, &Decoded)]) {
             fold_block(base, source, donor, j, &readings);
         }
     }
-    // Where no reading read a block, a pilot one of them heard is the tape's.
+    // Where no reading read a block, a pilot one of them heard is the tape's, as whole as any
+    // heard it.
     let heard = donors
         .iter()
-        .any(|(_, d)| d.findings.iter().any(|f| matches!(f, Finding::NoBlock { pilot: true, .. })));
+        .flat_map(|(_, d)| &d.findings)
+        .filter_map(|f| match f {
+            Finding::NoBlock { pilot, .. } => Some(*pilot),
+            _ => None,
+        })
+        .max();
     for f in &mut base.findings {
         if let Finding::NoBlock { pilot, .. } = f {
-            *pilot |= heard;
+            *pilot = (*pilot).max(heard.unwrap_or(PilotHeard::None));
         }
     }
 }

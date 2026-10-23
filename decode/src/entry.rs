@@ -11,7 +11,9 @@
 use crate::capture::{
     csw_block, csw_of_tstates, direct_recording, spacing, tzx_size, MAX_BLOCK_BYTES, MAX_CSW_RATE,
 };
-use crate::fallback::{block_shaped, burst_behind, raw_signal, rom_pilot, signal, sort, Part};
+use crate::fallback::{
+    block_shaped, burst_behind, pilot_in_pieces, raw_signal, rom_pilot, signal, sort, Part,
+};
 use crate::fold::{fold, vote, Source};
 use crate::framing::{next_block, PILOT_PULSE_MOST};
 use crate::proof::{self, Proof};
@@ -264,6 +266,18 @@ pub enum Loss {
     Rest,
 }
 
+/// What a recording that reads no block holds of a pilot tone ([`Finding::NoBlock`]), from
+/// nothing up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PilotHeard {
+    /// No pilot tone.
+    None,
+    /// A pilot tone broken into pieces the ROM never locks on (`fallback::pilot_in_pieces`).
+    Pieces,
+    /// A pilot tone the ROM locks on (`fallback::rom_pilot`).
+    Whole,
+}
+
 /// Something a decode found, about the block at the index it names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Finding {
@@ -284,10 +298,9 @@ pub enum Finding {
     /// block. `pulses` it holds that are not a plain pause, none where it is silence.
     LeadIn { ms: u64, pulses: usize },
     /// No block read in the whole recording, `ms` long, said in place of [`Finding::LeadIn`];
-    /// `pulses` it holds that are not a plain pause, none where it is silence, and `pilot` where
-    /// a reading of it holds a pilot the ROM locks on (`fallback::rom_pilot`), a tape that did
-    /// not read.
-    NoBlock { ms: u64, pulses: usize, pilot: bool },
+    /// `pulses` it holds that are not a plain pause, none where it is silence, and `pilot` what
+    /// a reading of it holds of a pilot tone: any is a tape that did not read.
+    NoBlock { ms: u64, pulses: usize, pilot: PilotHeard },
     /// Of a stereo recording's mix and its two channels, the decode of `kept` delivers most.
     Channel { kept: Channel },
     /// The block's last byte holds only `used_bits` bits read from the tape, from its top bit;
@@ -386,7 +399,7 @@ impl Finding {
             | Finding::Short { .. }
             | Finding::PartialFinalByte { .. }
             | Finding::Lost { .. } => true,
-            Finding::NoBlock { pilot, .. } => *pilot,
+            Finding::NoBlock { pilot, .. } => *pilot != PilotHeard::None,
             Finding::RawSignal { .. }
             | Finding::Collapsed { .. }
             | Finding::LeadIn { .. }
@@ -445,10 +458,12 @@ impl Finding {
             Finding::NoBlock { ms, pulses, pilot } => format!(
                 "No block reads in the recording: {pulses} pulses over {:.1} s, {}",
                 ms as f64 / 1000.0,
-                if pilot {
-                    "a pilot tone a Spectrum locks on among them, of a tape that did not read."
-                } else {
-                    "and no pilot tone a Spectrum locks on among them."
+                match pilot {
+                    PilotHeard::Whole => "a pilot tone a Spectrum locks on among them, of a tape that did not read.",
+                    PilotHeard::Pieces => {
+                        "a pilot tone among them in pieces too short for a Spectrum to lock on, of a tape that did not read."
+                    }
+                    PilotHeard::None => "and no pilot tone among them.",
                 }
             ),
             Finding::Channel { kept: Channel::Mix } => {
@@ -943,7 +958,9 @@ fn read_faded(
             asked.push((look.to_bits(), want));
             let Some(at) = band.iter().position(|p| p.start >= look) else { continue };
             let Some(b) = next_block(&band, at, Some(want), cancel) else { continue };
-            let (from, to) = (start_at(b.tone), start_at(b.bits_end));
+            // From the run the leader locked on: a pilot's front before a break in it is the
+            // ordinary band's to read, the fade band only where the block was lost.
+            let (from, to) = (start_at(b.lock), start_at(b.bits_end));
             let zeros_behind =
                 b.data.starts_with(had) && b.data[had.len().min(b.data.len())..].iter().all(|&d| d == 0);
             // A header owed by its flag answers as a header in every field; a block behind one, as
@@ -1232,7 +1249,14 @@ fn decode_pulses_from(
             Some(Finding::LeadIn { ms, pulses }) => (ms, pulses),
             _ => (0, 0),
         };
-        out.findings.push(Finding::NoBlock { ms, pulses: held, pilot: rom_pilot(pulses).is_some() });
+        let pilot = if rom_pilot(pulses).is_some() {
+            PilotHeard::Whole
+        } else if pilot_in_pieces(pulses) {
+            PilotHeard::Pieces
+        } else {
+            PilotHeard::None
+        };
+        out.findings.push(Finding::NoBlock { ms, pulses: held, pilot });
     }
     progress(Progress {
         pulses_read: pulses.len(),

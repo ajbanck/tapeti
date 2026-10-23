@@ -10,7 +10,7 @@ use common::same_tape;
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, Channels, Decoded, Extent, Finding, Loss};
+use tapeti_decode::entry::{decode_file, Channels, Decoded, Extent, Finding, Loss, PilotHeard};
 use tapeti_decode::fold::{delivered, fold, pick, pick_reading, shape, vote, Source};
 use tapeti_decode::readers::Channel;
 use tapeti_decode::waveform::edges::Axis;
@@ -782,6 +782,7 @@ fn a_reading_that_checks_out_against_a_failed_one_parting_twice_is_not_kept_for_
 
 /// A reading of no block at all, `pilot` where it heard a pilot the ROM locks on.
 fn nothing_read(pilot: bool) -> Decoded {
+    let pilot = if pilot { PilotHeard::Whole } else { PilotHeard::None };
     Decoded { findings: vec![Finding::NoBlock { ms: 9000, pulses: 9000, pilot }], ..laid(Vec::new(), 0.0) }
 }
 
@@ -800,7 +801,7 @@ fn a_reading_of_no_block_at_all_is_not_kept_over_one_that_read_a_block_however_i
 #[test]
 fn a_recording_no_reading_reads_a_block_of_holds_a_pilot_any_of_them_heard() {
     let got = folded(&nothing_read(false), &[(Source::Axis(Axis::Midline), &nothing_read(true))]);
-    assert_eq!(got.findings, [Finding::NoBlock { ms: 9000, pulses: 9000, pilot: true }]);
+    assert_eq!(got.findings, [Finding::NoBlock { ms: 9000, pulses: 9000, pilot: PilotHeard::Whole }]);
     // A block put in leaves the stretch before it a lead-in.
     let a = program("A", &[1, 2, 3, 4]);
     let got = folded(&nothing_read(false), &[(Source::Band, &laid(a.clone(), 44_100.0))]);

@@ -12,11 +12,13 @@
 //! pause it lasts.
 
 use crate::capture::csw_of_runs;
-use crate::framing::{bit_timeout, leader_pair, Speed, BOUNCE_MOST, BYTE_PULSES, LEADER_PAIRS};
+use crate::framing::{
+    bit_timeout, leader_pair, Speed, BOUNCE_MOST, BYTE_PULSES, LEADER_PAIRS, SHORT_LEADER_PAIRS,
+};
 use crate::pulses::Pulse;
 use std::ops::Range;
 use tapeti_core::audio::TSTATES_PER_SEC;
-use tapeti_core::types::Block;
+use tapeti_core::types::{Block, RomTimings};
 
 /// A pulse longer than this is a gap, whatever it holds: 18.7 ms, the longest pulse a TZX block
 /// stores. From below, the longest stretch without an edge inside a block the ROM loads is a
@@ -115,6 +117,63 @@ pub(crate) fn rom_pilot(gap: &[Pulse]) -> Option<Range<usize>> {
             }
         }
         None
+    })
+}
+
+/// Whether `gap` holds a pilot tone broken into pieces the ROM's leader loop never locks on: runs
+/// of [`SHORT_LEADER_PAIRS`] leader pairs or more in a row, at one pace ([`PILOT_PACE`]), that
+/// between them hold its [`LEADER_PAIRS`] pairs inside the time of the shortest pilot the saver
+/// writes, a data block's; a run reaching past that time counts the part inside it. A run of
+/// [`rom_pilot`]'s is one.
+///
+/// Hiss as loud as the tape breaks a pilot every few dozen pairs, splitting a half into two or
+/// merging two, and the leader loop starts again at each break: the tape's pilot is heard, and
+/// no Spectrum locks on it. A run is counted once over both phases of the pairs, since a break of
+/// an odd number of pulses carries the pilot to the other phase. Hiss alone makes no such run:
+/// its crossings come far closer than a pilot's, and the leader loop's window, 43 reads and
+/// more a pair, holds none of its pairs sixteen times in a row.
+pub(crate) fn pilot_in_pieces(gap: &[Pulse]) -> bool {
+    let pair = |k: usize| gap[k].tstates + gap[k + 1].tstates;
+    // Each run at either phase, its pulses and its mean pair.
+    let mut runs: Vec<(Range<usize>, f64)> = Vec::new();
+    for phase in 0..2 {
+        let mut k = phase;
+        while k + 1 < gap.len() {
+            let from = k;
+            while k + 1 < gap.len() && leader_pair(pair(k), false) {
+                k += 2;
+            }
+            if k - from >= 2 * SHORT_LEADER_PAIRS {
+                let pace = gap[from..k].iter().map(|p| p.tstates).sum::<f64>() / (k - from) as f64 * 2.0;
+                runs.push((from..k, pace));
+            }
+            k = k.max(from + 2);
+        }
+    }
+    runs.sort_by_key(|(r, _)| r.start);
+    // The T-states from the gap's start to each pulse.
+    let at: Vec<f64> = std::iter::once(0.0)
+        .chain(gap.iter().scan(0.0, |t, p| {
+            *t += p.tstates;
+            Some(*t)
+        }))
+        .collect();
+    runs.iter().enumerate().any(|(i, (first, pace))| {
+        let span = f64::from(RomTimings::PILOT_DATA) * pace / 2.0;
+        // The first pulse that starts past the span.
+        let limit = at.partition_point(|&t| t - at[first.start] <= span);
+        let (mut covered, mut reach) = (0, first.start);
+        for (r, p) in &runs[i..] {
+            if r.start >= limit {
+                break;
+            }
+            if (p - pace).abs() > PILOT_PACE * pace {
+                continue;
+            }
+            covered += r.end.min(limit).saturating_sub(r.start.max(reach));
+            reach = reach.max(r.end);
+        }
+        covered >= 2 * LEADER_PAIRS
     })
 }
 

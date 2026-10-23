@@ -11,7 +11,9 @@ use common::{clicks, jitter, lengths, pulses, same_tape, speed, wobble};
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{block_duration, TSTATES_PER_SEC};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding, Loss};
+use tapeti_decode::entry::{
+    decode_file, decode_pulses, Channels, DecodeError, Decoded, Finding, Loss, PilotHeard,
+};
 use tapeti_decode::fallback::{sort, Part, TONE_RUN};
 use tapeti_decode::framing::{
     bit_timeout, leader_pair, pilot_pulse, pilot_run_at, BOUNCE_MOST, HALF_CREST, ONE_ABOVE,
@@ -281,6 +283,37 @@ fn a_pilot_whose_block_did_not_read_is_said_lost() {
     let got = decode(&of_blocks(&[pilot, gap, h.clone(), d.clone()]).unwrap());
     assert_eq!(datas(&got.blocks), datas(&[h, d]));
     assert!(!got.findings.iter().any(|f| matches!(f, Finding::Lost { .. })), "{:?}", got.findings);
+}
+
+#[test]
+fn a_pilot_a_dropout_breaks_starts_where_its_front_does() {
+    // A header's pilot, its 8,063 half-waves broken 3,000 in by a dropout where 18 should be,
+    // behind a block and a second of silence. The ROM locks on the part behind the dropout; the
+    // part in front is the same pilot's front, not something the pause holds, so the pause is
+    // the second.
+    let bits = |data: &[u8]| -> Vec<u64> {
+        data.iter()
+            .flat_map(|&b| (0..8).rev().map(move |k| if b >> k & 1 == 1 { 1710 } else { 855 }))
+            .flat_map(|t| [t, t])
+            .collect()
+    };
+    let block = with_checksum(0xFF, &[1, 2, 3]);
+    let [header, _] = code_pair(b"broken    ", 20, 9);
+    let Body::Standard { data: head, .. } = &header.body else { unreachable!() };
+    let mut l = vec![2168u64; 3223];
+    l.extend([667, 735]);
+    l.extend(bits(&block));
+    // The pause leaves the level low, so the pilot's first half has no edge of its own.
+    l.extend([3500, 3_496_500 + 2168]);
+    l.extend(vec![2168; 2999]);
+    l.extend([7431, 31593]);
+    l.extend(vec![2168; 5045]);
+    l.extend([667, 735]);
+    l.extend(bits(head));
+    l.push(3_500_000);
+    let got = decode(&pulses(&l));
+    assert_eq!(got.blocks, [standard(1000, block), standard(1000, head.clone())]);
+    assert!(!got.findings.iter().any(|f| matches!(f, Finding::Collapsed { .. })), "{:?}", got.findings);
 }
 
 #[test]
@@ -1112,26 +1145,42 @@ fn a_recording_that_ends_inside_a_block_says_it_stops_short() {
 fn a_recording_no_block_reads_in_says_so_and_a_pilot_in_it_is_a_tape_that_did_not_read() {
     // Silence: no first block for a lead-in to lead into.
     let got = decode(&pulses(&[3_500_000]));
-    assert_eq!(got.findings, [Finding::NoBlock { ms: 1000, pulses: 0, pilot: false }]);
+    assert_eq!(got.findings, [Finding::NoBlock { ms: 1000, pulses: 0, pilot: PilotHeard::None }]);
     assert!(!got.findings[0].is_problem());
     // Pulses that are no pilot and no block: said, no problem.
     let noise: Vec<u64> = (0..4000).map(|k| [300, 900, 5000, 1300][k % 4]).collect();
     let got = decode(&pulses(&noise));
     assert!(
-        matches!(got.findings[..], [Finding::NoBlock { pulses: 4000, pilot: false, .. }]),
+        matches!(got.findings[..], [Finding::NoBlock { pulses: 4000, pilot: PilotHeard::None, .. }]),
         "{:?}",
         got.findings
     );
     assert!(!got.findings[0].is_problem());
     // A header's pilot with nothing a Spectrum reads behind it: a tape that did not read.
-    let got = decode(&pulses(&[vec![2168; 8063], noise].concat()));
+    let got = decode(&pulses(&[vec![2168; 8063], noise.clone()].concat()));
     assert!(got.blocks.is_empty());
     assert!(
-        matches!(got.findings[..], [Finding::NoBlock { pulses: 12_063, pilot: true, .. }]),
+        matches!(got.findings[..], [Finding::NoBlock { pulses: 12_063, pilot: PilotHeard::Whole, .. }]),
         "{:?}",
         got.findings
     );
     assert!(got.findings[0].is_problem());
+    // The same pilot with a half split in two every `every` halves, as hiss splits one: the
+    // leader loop starts again at each split and never holds 256 pairs. In runs of 30 pairs it
+    // is the tape's pilot in pieces; in runs of 15, under a short leader's 16, it is not heard.
+    let split = |every: usize| -> Vec<u64> {
+        (0..8063).flat_map(|k| if k % every == every - 1 { vec![1084, 1084] } else { vec![2168] }).collect()
+    };
+    for (every, heard) in [(60, PilotHeard::Pieces), (30, PilotHeard::None)] {
+        let got = decode(&pulses(&[split(every), noise.clone()].concat()));
+        assert!(got.blocks.is_empty());
+        assert!(
+            matches!(got.findings[..], [Finding::NoBlock { pilot, .. }] if pilot == heard),
+            "every {every}: {:?}",
+            got.findings
+        );
+        assert_eq!(got.findings[0].is_problem(), heard == PilotHeard::Pieces);
+    }
 }
 
 /// A CODE header whose checksum's lowest bit, the block's last bit, is `last`, and its pulses with

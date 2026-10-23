@@ -27,7 +27,7 @@ use std::fmt::Debug;
 use std::sync::atomic::AtomicBool;
 use tapeti_core::audio::{encode_wav, playback_order, render_tape, FlowOptions, RenderOptions};
 use tapeti_core::types::{Block, Body};
-use tapeti_decode::entry::{decode_file, decode_pulses, tape_band, Channels, Decoded, Finding};
+use tapeti_decode::entry::{decode_file, decode_pulses, tape_band, Channels, Decoded, Finding, PilotHeard};
 use tapeti_decode::pulses::{of_blocks, Pulse};
 use tapeti_decode::readers::Channel;
 use tapeti_decode::waveform::edges::{detect_pulses, detect_pulses_band, Axis, Band};
@@ -118,8 +118,11 @@ enum Said {
     Lost,
     /// A last byte filled out with 0s past the bits read, which make its checksum hold.
     FilledOut,
-    /// No block read in the whole recording, and no pilot the ROM locks on heard in it.
+    /// No block read in the whole recording, and no pilot heard in it.
     NoBlock,
+    /// No block read in the whole recording, where a reading heard a pilot in pieces the ROM
+    /// never locks on.
+    NoBlockPieces,
     /// No block read in the whole recording, where a reading heard a pilot the ROM locks on.
     NoBlockPilot,
 }
@@ -178,8 +181,9 @@ fn outcome(got: &Decoded, want: &[Block], speed: (f64, f64)) -> Outcome {
             Finding::Collapsed { pilot: true, .. } => Some(Said::CollapsedPilot),
             Finding::Lost { .. } => Some(Said::Lost),
             Finding::PartialFinalByte { completes: true, .. } => Some(Said::FilledOut),
-            Finding::NoBlock { pilot: false, .. } => Some(Said::NoBlock),
-            Finding::NoBlock { pilot: true, .. } => Some(Said::NoBlockPilot),
+            Finding::NoBlock { pilot: PilotHeard::None, .. } => Some(Said::NoBlock),
+            Finding::NoBlock { pilot: PilotHeard::Pieces, .. } => Some(Said::NoBlockPieces),
+            Finding::NoBlock { pilot: PilotHeard::Whole, .. } => Some(Said::NoBlockPilot),
             _ => None,
         })
         .collect();
@@ -332,23 +336,18 @@ fn hissed(db: u32) -> Judged {
     judge(&hiss(&render(&tape()), db, 0x5EED), &tape(), same(db))
 }
 
-/// Hiss moves every crossing and cuts false edges into weak lobes; the band rides over it down to
-/// 10 dB under the signal (the tape's level over its pauses and all), the false edges in a pilot
-/// passed over as glitches. At 9 dB the data block comes back with a bad checksum, and the
-/// band-pass, which takes out the hiss above the tape's tones, reads it. From 7 dB the signal as
-/// it is reads no block at all, the noise line taking the whole recording for dead air, and the
-/// band-pass decode is kept whole; it reads to 5 dB. At 4 the data block's checksum fails through
-/// it too, the rest of the block said lost. At 1 no block is read, and the decode says so, with
-/// no pilot a Spectrum locks on among the pulses. A clean recording lies 34 dB or more over its
-/// hiss; a noisy one 14 to 26.
+/// Hiss moves every crossing and cuts false edges into weak lobes, passed over as glitches in a
+/// pilot. The signal as it is reads whole to 10 dB under it; from 9 the band-pass, which takes
+/// out the hiss above the tape's tones, carries the wall, and from 7, where the noise line takes
+/// the whole recording for dead air, its decode is kept whole, to 5 dB. At 4 the data block's
+/// checksum fails, and a sync the hiss makes inside the header's pilot reads a byte there, the
+/// header's pilot behind it still the header's; at 1 no block is read, and the decode says so.
+/// A clean recording lies 34 dB or more over its hiss; a noisy one 14 to 26.
 const HISS_WHOLE_DB: u32 = 5;
 const HISS_LOSS_DB: u32 = 4;
 
 fn hiss_lost() -> Judged {
-    (
-        Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal, Said::Collapsed, Said::Lost]),
-        Vec::new(),
-    )
+    (Outcome::Lost(vec![1], vec![Said::BadChecksum, Said::RawSignal, Said::Collapsed]), Vec::new())
 }
 
 #[test]
@@ -356,13 +355,31 @@ fn hiss_reads_whole_to_five_db() {
     holds(HISS_WHOLE_DB, HISS_LOSS_DB, hiss_lost(), hissed);
 }
 
+/// Past the hiss wall the band-pass reads what the signal as it is does not, and where no block
+/// reads at all the tape's pilot is still heard: as runs of a few dozen pairs the hiss breaks
+/// it into, short of the ROM's 256, at 1 dB on the band-pass's zero line some 250 of them, which
+/// together hold a leader many times over (`fallback::pilot_in_pieces`). Hiss alone as loud
+/// holds no run of even four pairs: no pilot.
 #[test]
-fn hiss_that_leaves_the_signal_no_block_is_read_through_the_band_pass_and_none_at_all_is_said() {
-    let at =
-        |db| decode(&encode_wav(&hiss(&render(&tape()), db, 0x5EED), RATE, 16), Channels::Only(Channel::Mix));
-    assert_eq!(at(7).findings[0], Finding::BandPassOnly);
-    let none = at(1);
-    assert!(matches!(none.findings[..], [Finding::NoBlock { pilot: false, .. }]), "{:?}", none.findings);
+fn hiss_that_leaves_the_signal_no_block_is_read_through_the_band_pass_and_a_pilot_in_pieces_is_said() {
+    let at = |x: &[f32]| decode(&encode_wav(x, RATE, 16), Channels::Only(Channel::Mix));
+    let x = render(&tape());
+    assert_eq!(at(&hiss(&x, 7, 0x5EED)).findings[0], Finding::BandPassOnly);
+    for db in [1, 0] {
+        let none = at(&hiss(&x, db, 0x5EED));
+        assert!(
+            matches!(none.findings[..], [Finding::NoBlock { pilot: PilotHeard::Pieces, .. }]),
+            "{db} dB: {:?}",
+            none.findings
+        );
+        assert!(none.findings[0].is_problem());
+        let alone = at(&hiss_under(&vec![0.0; x.len()], rms(&x), db, 0x5EED));
+        assert!(
+            matches!(alone.findings[..], [Finding::NoBlock { pilot: PilotHeard::None, .. }]),
+            "hiss alone at {db} dB: {:?}",
+            alone.findings
+        );
+    }
 }
 
 #[test]
@@ -1337,13 +1354,12 @@ fn pilot_hole(pairs: usize, hole: u64) -> Judged {
 }
 
 /// A hole in the pilot restarts the lock. The ROM needs 256 pairs behind it and loses the block
-/// with fewer, at every phase; the decoder locks on 16 (`SHORT_LEADER_PAIRS`) behind the one
-/// the leader takes unchecked, and keeps the block where it answers its header, so the block is
-/// read whole while 17 pairs follow the hole. Two recordings were this cell: a
-/// 25 ms hole 37 pairs before the sync, and a recording cut 200 pairs before it. Under 16 pairs
-/// no tone is left that makes the stretch block-shaped, and it plays as the header's pause, said
-/// as a block lost there: the pilot before the hole, which the ROM locks on, and the signal
-/// behind it.
+/// with fewer, at every phase; the decoder locks on 16 (`SHORT_LEADER_PAIRS`) behind the one the
+/// leader takes unchecked, so the block reads whole at 17 pairs, its pause as long as the tape's
+/// but for the hole's own time (`framing::tone_start`): a 25 ms hole 37 pairs before the sync,
+/// and a cut 200 pairs before it, are both this cell. At 16 pairs no tone is left that makes the
+/// stretch block-shaped: it plays as the header's pause, and the pilot before the hole, which the
+/// ROM locks on, is said lost there.
 const PILOT_HOLE_WHOLE_PAIRS: usize = 17;
 const PILOT_HOLE_LOSS_PAIRS: usize = 16;
 /// 25 ms, as measured.
@@ -1357,10 +1373,10 @@ fn pilot_hole_lost() -> Judged {
 
 #[test]
 fn a_hole_in_the_pilot_loses_the_block_unless_17_pairs_follow_it() {
-    // The pilot pulses before the hole play as the header's pause, which is then longer; the
-    // block they lead into is read, and nothing is said lost.
+    // The pilot pulses before the hole are the block's own pilot, not the header's pause; the
+    // block is read, and nothing is said lost.
     for n in [257, 37, PILOT_HOLE_WHOLE_PAIRS] {
-        assert_eq!(pilot_hole(n, PILOT_HOLE_T), (Outcome::Pause, Vec::new()), "{n}");
+        assert_eq!(pilot_hole(n, PILOT_HOLE_T), WHOLE, "{n}");
         let got = pilot_hole_decode(n, PILOT_HOLE_T);
         assert!(!got.findings.iter().any(|f| matches!(f, Finding::Lost { .. })), "{n}: {:?}", got.findings);
     }
@@ -1375,7 +1391,7 @@ fn a_hole_in_the_pilot_loses_the_block_unless_17_pairs_follow_it() {
 #[ignore]
 fn pilot_hole_sweep() {
     for n in [400, 300, 257, 256, 200, 100, 37, 20, PILOT_HOLE_WHOLE_PAIRS] {
-        assert_eq!(pilot_hole(n, PILOT_HOLE_T), (Outcome::Pause, Vec::new()), "{n}");
+        assert_eq!(pilot_hole(n, PILOT_HOLE_T), WHOLE, "{n}");
     }
     assert_eq!(pilot_hole(PILOT_HOLE_LOSS_PAIRS, PILOT_HOLE_T), pilot_hole_lost());
     for n in [15, 10, 4] {
@@ -1877,13 +1893,12 @@ fn syncs_of(blocks: &[Block]) -> Vec<usize> {
     (1..lens.len()).filter(|&i| lens[i] == 667 && lens[i - 1] == 2168).collect()
 }
 
-/// A comparator's bounce of a 1-bit capture in a pilot, near its start, where it breaks the
-/// leader loop, which starts again behind it on more than the ROM's 256 pairs, and near its
-/// end, inside the pilot pulses the sync loop takes one at a time, which fold it as the ROM's
-/// wait after an edge hides it (`framing::rom_pulse`); at the first edge out of a pause and in
-/// the pause, which play it as noise. Behind a headerless block saved with no pause, a bounce in
-/// the next pilot's first half-waves leaves every byte read and plays as a pause of a
-/// millisecond the tape does not have.
+/// A bounce of a 1-bit capture in a pilot, near its start, breaks the leader loop, which starts
+/// again behind it on more than the ROM's 256 pairs; near its end, inside the pulses the sync
+/// loop takes one at a time, the ROM's wait after an edge folds it away (`framing::rom_pulse`).
+/// At the first edge out of a pause, or in the pause, it plays as noise. Behind a headerless
+/// block saved with no pause, a bounce in the next pilot's first half-waves leaves every byte
+/// read, the pilot read from in front of it (`framing::tone_start`).
 #[test]
 fn a_bounce_in_a_pilot_or_a_gap_reads_whole() {
     for blocks in [tape(), headerless()] {
@@ -1906,10 +1921,9 @@ fn a_bounce_in_a_pilot_or_a_gap_reads_whole() {
     let t = three_blocks(0);
     let lens: Vec<u64> = of_blocks(&t).unwrap().iter().map(|q| q.tstates.round() as u64).collect();
     let pilot = (syncs_of(&t)[0]..lens.len()).find(|&i| lens[i] == 2168).unwrap();
-    assert_eq!(bounced_at(&t, pilot, 79, false).0, WHOLE);
-    for (i, end) in [(pilot, true), (pilot + 1, false)] {
+    for (i, end) in [(pilot, false), (pilot, true), (pilot + 1, false)] {
         let (j, f) = bounced_at(&t, i, 79, end);
-        assert_eq!(j, (Outcome::Lost(Vec::new(), vec![Said::Collapsed]), Vec::new()), "{f:?}");
+        assert_eq!(j, WHOLE, "{f:?}");
     }
 }
 

@@ -288,6 +288,9 @@ pub struct RawBlock {
     pub data: Vec<u8>,
     /// The first pulse of the pilot tone.
     pub tone: usize,
+    /// The first pulse of the tone the leader locked on: `tone`, or where `tone` reaches back
+    /// across a break in the pilot (`tone_start`), the first pulse behind the last break.
+    pub lock: usize,
     /// The pulse after the last whole byte.
     pub end: usize,
     /// Where the block's bits stop: past `end` where it runs on by whole bytes beyond the length
@@ -403,7 +406,7 @@ fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<us
     if bytes.is_empty() {
         return None;
     }
-    let tone = tone_start(pulses, from, first_checked);
+    let (tone, lock) = tone_start(pulses, from, first_checked, bits.pulse(), pilot_half, bytes[0]);
     // Only a length can stop the ROM short of the bits; the bytes run out where they do
     // otherwise.
     let stopped = gate.is_some_and(|n| bytes.len() >= n);
@@ -411,6 +414,7 @@ fn block_from(pulses: &[Pulse], from: usize, locked: Locked, expected: Option<us
     Some(RawBlock {
         data: bytes,
         tone,
+        lock,
         end,
         bits_end,
         pilot_half,
@@ -1157,12 +1161,53 @@ fn bits_end(pulses: &[Pulse], end: usize, read: usize, pilot_half: f64, pace: Pa
     whole
 }
 
-/// Where the tone holding the pair at `first_checked` begins: back over every pulse before it that
-/// the sync loop would take as more pilot ([`pilot_pulse`]), no further than `floor`.
-fn tone_start(pulses: &[Pulse], floor: usize, first_checked: usize) -> usize {
-    let mut i = first_checked;
-    while i > floor && pilot_pulse(pulses[i - 1].tstates) {
-        i -= 1;
+/// Where the tone holding the pair at `first_checked` begins, and where the run of it the leader
+/// locked on does: back over every pulse before it that the sync loop would take as more pilot
+/// ([`pilot_pulse`]), no further than `floor`.
+///
+/// The ROM saves its pilot as one unbroken tone, as many half-waves as the `flag` asks for. So a
+/// dropout or a click that breaks the tone does not end it: pilot heard in front of the break, a
+/// run of it ([`pilot_run_at`] at the block's `pilot_half`), is the same pilot's front, as long
+/// as it lies inside that many half-waves, counted back from the bits at `bits` past the sync.
+/// Counted as pause, it would lengthen the pause in front by its own length, and be said to be a
+/// pilot the pause holds. Noise with no pilot run in it moves nothing, and neither does a pilot
+/// heard whole: it fills the count by itself.
+fn tone_start(
+    pulses: &[Pulse],
+    floor: usize,
+    first_checked: usize,
+    bits: usize,
+    pilot_half: f64,
+    flag: u8,
+) -> (usize, usize) {
+    let back = |mut i: usize| {
+        while i > floor && pilot_pulse(pulses[i - 1].tstates) {
+            i -= 1;
+        }
+        i
+    };
+    let lock = back(first_checked);
+    let mut tone = lock;
+    let halves = if flag < 0x80 { RomTimings::PILOT_HEADER } else { RomTimings::PILOT_DATA };
+    let speed = Speed::of_pilot(pilot_half);
+    let most = f64::from(halves) * pilot_half
+        + speed.of(f64::from(RomTimings::SYNC1) + f64::from(RomTimings::SYNC2));
+    let mut held: f64 = pulses[tone..bits].iter().map(|p| p.tstates).sum();
+    let mut k = tone;
+    while k > floor {
+        k -= 1;
+        held += pulses[k].tstates;
+        if held > most {
+            break;
+        }
+        if pilot_run_at(pulses, k, pilot_half) {
+            // The run's front, as far as the count reaches.
+            while k > floor && pilot_pulse(pulses[k - 1].tstates) && held + pulses[k - 1].tstates <= most {
+                k -= 1;
+                held += pulses[k].tstates;
+            }
+            tone = k;
+        }
     }
-    i
+    (tone, lock)
 }
